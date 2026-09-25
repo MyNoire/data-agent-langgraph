@@ -1,0 +1,13 @@
+.venv/
+.idea/
+__pycache__/
+.pytest_cache/
+.env
+data/*.sqlite
+data/*.zip
+data/registry.json
+data/bird/
+evals/bird_smoke.json
+results/*.json
+!results/*-public.json
+*.pyc

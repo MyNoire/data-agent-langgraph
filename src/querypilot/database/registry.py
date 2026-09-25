@@ -1,0 +1,65 @@
+"""管理 database_id 到本地 SQLite 文件的持久化映射。"""
+
+import json
+import re
+import sqlite3
+from pathlib import Path
+
+
+class RegistryError(ValueError):
+    """注册信息无效或请求了未知数据库。"""
+
+    pass
+
+
+class DatabaseRegistry:
+    """只登记配置数据目录内的 SQLite 文件，避免任意文件路径访问。"""
+
+    def __init__(self, data_dir: Path):
+        """固定数据目录的真实路径，并准备 registry.json。"""
+        self.data_dir = data_dir.resolve()
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.index_path = self.data_dir / "registry.json"
+
+    def list(self) -> dict[str, str]:
+        """返回已登记的数据库 ID 与绝对文件路径。"""
+        if not self.index_path.exists():
+            return {}
+        return json.loads(self.index_path.read_text(encoding="utf-8"))
+
+    def register(self, database_id: str, path: Path) -> Path:
+        """验证 ID、路径和文件格式后登记数据库，返回真实路径。"""
+        if not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", database_id):
+            raise RegistryError("database_id must be lowercase letters, digits or underscore")
+        # resolve(strict=True) 同时检查文件存在并消除 ../ 与符号链接跳转。
+        resolved = path.resolve(strict=True)
+        if not resolved.is_relative_to(self.data_dir) or resolved.suffix.lower() not in {".db", ".sqlite", ".sqlite3"}:
+            raise RegistryError("SQLite path must be inside the configured data directory")
+        if not resolved.is_file():
+            raise RegistryError("SQLite path must be a file")
+        try:
+            # 以只读方式打开并读取系统表，确认它确实是可用的 SQLite 文件。
+            connection = sqlite3.connect(resolved.as_uri() + "?mode=ro", uri=True)
+            connection.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone()
+            connection.close()
+        except sqlite3.DatabaseError as exc:
+            raise RegistryError("invalid SQLite database") from exc
+        entries = self.list()
+        if database_id in entries and Path(entries[database_id]) != resolved:
+            raise RegistryError("database_id is already registered")
+        entries[database_id] = str(resolved)
+        # 先写临时文件再替换，避免进程中断留下半份 JSON。
+        temp = self.index_path.with_suffix(".tmp")
+        temp.write_text(json.dumps(entries, indent=2), encoding="utf-8")
+        temp.replace(self.index_path)
+        return resolved
+
+    def get(self, database_id: str) -> Path:
+        """查找数据库并再次确认登记路径没有逃出数据目录。"""
+        entry = self.list().get(database_id)
+        if entry is None:
+            raise RegistryError("unknown database_id")
+        path = Path(entry).resolve(strict=True)
+        if not path.is_relative_to(self.data_dir):
+            raise RegistryError("registered path escaped data directory")
+        return path

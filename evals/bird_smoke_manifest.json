@@ -1,0 +1,13 @@
+{
+  "dataset": "birdsql/bird_mini_dev",
+  "revision": "f65faf4",
+  "source_url": "https://huggingface.co/datasets/birdsql/bird_mini_dev/resolve/f65faf4/data/mini_dev_sqlite-00000-of-00001.json",
+  "source_sha256": "88ceb0710163cae46a256ecea8f0a8c98286599530b60587fda5c3cfe57d45d2",
+  "database_sha256": {
+    "california_schools": "c0903eec662e63068fd1d14403d3d6c1d473287fc10c4356333ea58f878db983",
+    "formula_1": "79770caf966707e35516fa566e24b40ae515c74ec1ec4631235245645b87b24d",
+    "student_club": "eb89bcfe97eefa386a27904ec5aa15159811a7eac894ec659a36e48fa9f76b77"
+  },
+  "selection": "12 questions from california_schools, formula_1 and student_club; 4 simple, 6 moderate, 2 challenging. Within each database/difficulty quota, choose the lowest SHA-256 of querypilot-bird-smoke-v1:<question_id> among gold SQL accepted by the Phase 0 AST guard. Selected before model evaluation.",
+  "question_ids": [50, 72, 77, 36, 859, 981, 931, 1001, 1409, 1368, 1317, 1387]
+}

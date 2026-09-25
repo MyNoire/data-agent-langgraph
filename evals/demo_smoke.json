@@ -1,0 +1,6 @@
+[
+  {"db_id": "demo", "question": "How many customers are there?", "SQL": "SELECT COUNT(*) AS n FROM customers"},
+  {"db_id": "demo", "question": "List customers in the East region.", "SQL": "SELECT name FROM customers WHERE region = 'East' ORDER BY name"},
+  {"db_id": "demo", "question": "What is the total paid order amount?", "SQL": "SELECT SUM(amount) AS total FROM orders WHERE status = 'paid'"},
+  {"db_id": "demo", "question": "Which customer has the highest paid order total?", "SQL": "SELECT c.name, SUM(o.amount) AS total FROM customers c JOIN orders o ON o.customer_id = c.id WHERE o.status = 'paid' GROUP BY c.id, c.name ORDER BY total DESC LIMIT 1"}
+]

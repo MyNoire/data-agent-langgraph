@@ -1,0 +1,126 @@
+{
+  "dataset_sha256": "c9193d6c7030740fb7c36268cf1b0f431be752bb29ee0798806853de430e6a7f",
+  "provider": "model",
+  "status": "completed",
+  "evidence_mode": "none",
+  "model": "gpt-5.5",
+  "model_temperature": null,
+  "prompt_version": "direct-v2",
+  "count": 12,
+  "max_rows": 100,
+  "query_timeout_ms": 3000,
+  "valid_sql_rate": 1.0,
+  "execution_accuracy": 0.3333333333333333,
+  "p50_latency_ms": 14546.5,
+  "p95_latency_ms": 46547.0,
+  "records": [
+    {
+      "index": 0,
+      "database_id": "california_schools",
+      "evidence_used": false,
+      "predicted_sql": "SELECT sc.School AS school_name, sc.MailStreet AS postal_street_address\nFROM satscores AS sat\nJOIN schools AS sc\n  ON sat.cds = sc.CDSCode\nWHERE sat.rtype = 'S'\n  AND sat.AvgScrMath IS NOT NULL\nORDER BY CAST(sat.AvgScrMath AS INTEGER) DESC\nLIMIT 1 OFFSET 6;",
+      "valid_sql": true,
+      "execution_match": false,
+      "latency_ms": 14015.0
+    },
+    {
+      "index": 1,
+      "database_id": "california_schools",
+      "evidence_used": false,
+      "predicted_sql": "SELECT SUM(\"Enrollment (Ages 5-17)\") AS enrolled_students\nFROM frpm\nWHERE \"Academic Year\" = '2014-2015'\n  AND \"District Name\" = 'Fremont'\n  AND \"School Name\" = 'State Special School';",
+      "valid_sql": true,
+      "execution_match": false,
+      "latency_ms": 20969.0
+    },
+    {
+      "index": 2,
+      "database_id": "california_schools",
+      "evidence_used": false,
+      "predicted_sql": "SELECT \"School Name\", \"Percent (%) Eligible FRPM (Ages 5-17)\"\nFROM frpm\nWHERE \"County Name\" = 'Los Angeles'\n  AND \"Low Grade\" = 'K'\n  AND \"High Grade\" = '9';",
+      "valid_sql": true,
+      "execution_match": false,
+      "latency_ms": 22047.0
+    },
+    {
+      "index": 3,
+      "database_id": "california_schools",
+      "evidence_used": false,
+      "predicted_sql": "SELECT TRIM(COALESCE(schools.AdmFName1, '') || ' ' || COALESCE(schools.AdmLName1, '')) AS Administrator\nFROM satscores\nJOIN schools ON satscores.cds = schools.CDSCode\nORDER BY satscores.NumGE1500 DESC\nLIMIT 1;",
+      "valid_sql": true,
+      "execution_match": false,
+      "latency_ms": 27437.0
+    },
+    {
+      "index": 4,
+      "database_id": "formula_1",
+      "evidence_used": false,
+      "predicted_sql": "SELECT q.q1\nFROM qualifying AS q\nJOIN drivers AS d ON q.driverId = d.driverId\nWHERE q.raceId = 354\n  AND d.forename = 'Bruno'\n  AND d.surname = 'Senna';",
+      "valid_sql": true,
+      "execution_match": true,
+      "latency_ms": 10391.0
+    },
+    {
+      "index": 5,
+      "database_id": "formula_1",
+      "evidence_used": false,
+      "predicted_sql": "SELECT r.year, r.name, r.date, r.time\nFROM drivers d\nJOIN qualifying q ON q.driverId = d.driverId\nJOIN races r ON r.raceId = q.raceId\nWHERE d.dob = (\n  SELECT MAX(d2.dob)\n  FROM drivers d2\n  JOIN qualifying q2 ON q2.driverId = d2.driverId\n)\nORDER BY r.date ASC, r.round ASC\nLIMIT 1;",
+      "valid_sql": true,
+      "execution_match": true,
+      "latency_ms": 46547.0
+    },
+    {
+      "index": 6,
+      "database_id": "formula_1",
+      "evidence_used": false,
+      "predicted_sql": "SELECT MAX(CAST(results.fastestLapSpeed AS REAL))\nFROM results\nJOIN races ON results.raceId = races.raceId\nWHERE races.year = 2009 AND races.name = 'Spanish Grand Prix';",
+      "valid_sql": true,
+      "execution_match": false,
+      "latency_ms": 6015.0
+    },
+    {
+      "index": 7,
+      "database_id": "formula_1",
+      "evidence_used": false,
+      "predicted_sql": "SELECT d.forename || ' ' || d.surname AS full_name\nFROM qualifying q\nJOIN races r ON q.raceId = r.raceId\nJOIN circuits c ON r.circuitId = c.circuitId\nJOIN drivers d ON q.driverId = d.driverId\nWHERE r.year = 2008\n  AND c.name = 'Marina Bay Street Circuit'\n  AND q.position = 1;",
+      "valid_sql": true,
+      "execution_match": false,
+      "latency_ms": 13454.0
+    },
+    {
+      "index": 8,
+      "database_id": "student_club",
+      "evidence_used": false,
+      "predicted_sql": "SELECT SUM(cost) AS total_expense\nFROM expense\nWHERE expense_date = '8/20/2019';",
+      "valid_sql": true,
+      "execution_match": false,
+      "latency_ms": 33187.0
+    },
+    {
+      "index": 9,
+      "database_id": "student_club",
+      "evidence_used": false,
+      "predicted_sql": "SELECT major.major_name\nFROM member\nJOIN major ON member.link_to_major = major.major_id\nWHERE member.phone = '809-555-3360';",
+      "valid_sql": true,
+      "execution_match": true,
+      "latency_ms": 6766.0
+    },
+    {
+      "index": 10,
+      "database_id": "student_club",
+      "evidence_used": false,
+      "predicted_sql": "SELECT COUNT(*)\nFROM attendance\nJOIN event ON attendance.link_to_event = event.event_id\nJOIN member ON attendance.link_to_member = member.member_id\nWHERE event.event_name = 'Women''s Soccer'\nAND LOWER(member.t_shirt_size) = 'medium';",
+      "valid_sql": true,
+      "execution_match": true,
+      "latency_ms": 15078.0
+    },
+    {
+      "index": 11,
+      "database_id": "student_club",
+      "evidence_used": false,
+      "predicted_sql": "SELECT DISTINCT m.first_name || ' ' || m.last_name AS student\nFROM event AS e\nJOIN budget AS b ON b.link_to_event = e.event_id\nJOIN expense AS x ON x.link_to_budget = b.budget_id\nJOIN member AS m ON m.member_id = x.link_to_member\nWHERE e.event_name = 'Yearly Kickoff';",
+      "valid_sql": true,
+      "execution_match": false,
+      "latency_ms": 13203.0
+    }
+  ]
+}
