@@ -9,6 +9,7 @@ dependencies = [
   "pydantic-settings>=2.5,<3",
   "sqlglot>=26,<30",
   "openai>=1.60,<3",
+  "langgraph>=1,<2",
 ]
 
 [project.optional-dependencies]

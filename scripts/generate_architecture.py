@@ -135,14 +135,14 @@ text("title", "QueryPilot｜面向业务分析的多轮 Text2SQL Agent", 40, 20,
 text("subtitle", "整体架构与实施状态 · 绿色 = Phase 0 已实现 · 蓝色虚线 = 后续目标 · 紫色 = 状态与治理 · 橙色 = 数据/评测", 40, 80, 1740, 36, size=17)
 
 # Left: the verified Phase 0 path. No LangGraph or RAG is implied here.
-panel("p0", "Phase 0｜已实现：单轮 direct-prompt baseline", 40, 140, 550, 860, fill="#F8FCF9", stroke="#31945C")
+panel("p0", "Phase 0｜保留作对照：单轮 direct-prompt baseline", 40, 140, 550, 860, fill="#F8FCF9", stroke="#31945C")
 box("p0_entry", "API / CLI 请求<br>指定 database_id", 80, 65, 470, 72, parent="p0", kind="current")
 box("p0_schema", "读取注册的 SQLite Schema<br>构造全量 Schema prompt", 80, 170, 470, 82, parent="p0", kind="current")
 box("p0_llm", "OpenAI-compatible 模型<br>直接生成 SQL", 80, 285, 470, 82, parent="p0", kind="current")
 box("p0_guard", "sqlglot AST 安全校验<br>只读语句 / LIMIT", 80, 400, 470, 82, parent="p0", kind="current")
 box("p0_exec", "SQLite 只读执行器<br>超时与行数限制", 80, 515, 470, 82, parent="p0", kind="current")
 box("p0_eval", "离线评测：pytest + 固定 BIRD 12 题 smoke set<br>结果、错误与延迟记录", 80, 640, 470, 96, parent="p0", kind="current")
-text("p0_note", "当前没有自动选库、RAG、Graph、记忆、修复循环或分析子图。", 80, 770, 470, 56, parent="p0", size=15, color="#41624B")
+text("p0_note", "Phase 1 已新增线性 Graph；选库、RAG、记忆与修复仍待实现。", 80, 770, 470, 56, parent="p0", size=15, color="#41624B")
 for i, (a, b) in enumerate([
     ("p0_entry", "p0_schema"), ("p0_schema", "p0_llm"),
     ("p0_llm", "p0_guard"), ("p0_guard", "p0_exec"),

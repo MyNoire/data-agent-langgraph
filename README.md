@@ -6,7 +6,7 @@ The [architecture diagram](docs/querypilot-architecture.drawio.png) shows the cu
 
 The first real-model BIRD smoke run is recorded in the [Phase 0.5 baseline report](docs/phase-0.5-baseline.md). It is a 12-question development result, not official BIRD EX.
 
-Phase 0 uses Python 3.11/3.12, uv, FastAPI, Pydantic v2, sqlglot, and SQLite. The model client accepts an OpenAI-compatible URL and model name, including a locally served Qwen model. LangGraph and PostgreSQL are planned, not implemented.
+The foundation uses Python 3.11/3.12, uv, FastAPI, Pydantic v2, sqlglot, and SQLite. The model client accepts an OpenAI-compatible URL and model name, including a locally served Qwen model. Phase 1 now has a single linear LangGraph path; PostgreSQL and the larger agent architecture remain planned.
 
 ## Local setup
 
@@ -36,6 +36,18 @@ uv run python scripts/run_eval.py --provider model --cases evals/demo_smoke.json
 
 The runner records prediction-level SQL, errors, execution match, valid execution rate, and P50/P95 latency. The demo set is four original examples, not BIRD. Current execution matching is a smoke metric under the configured row cap; it is not the official BIRD evaluator.
 
+## Phase 1: first LangGraph path
+
+The first graph requires a registered `database_id` and question. Its four nodes load the current SQLite schema, generate SQL with the existing model adapter, validate the SQL AST, and execute it through the existing read-only executor. It returns the guarded SQL and query result. The graph has no router, retrieval, repair, checkpointer, or memory yet.
+
+```powershell
+uv run python scripts/create_demo.py
+uv run python scripts/ask_graph.py --database-id demo --question "How many customers are in the East region?"
+uv run pytest -q tests/test_single_graph.py
+```
+
+The implementation is in [single.py](src/querypilot/graph/single.py), with a deterministic SQLite-backed test that replaces only the model call. See the [architecture notes](docs/architecture.md) for the state and node boundaries.
+
 `evidence` is an optional hint about business meaning or values that may not be clear from the question and table names. The demo set has no `evidence`. BIRD Mini-Dev includes expert-annotated evidence in its question records. The model baseline now defaults to `--evidence-mode none`: the prompt contains only the question and Schema. To measure a separate, oracle-assisted setting, pass `--evidence-mode oracle`; this includes the case's annotated evidence. Each result records `evidence_mode` and whether evidence was used for each question. Keep the two settings separate when reporting scores. Phase 0 does not retrieve evidence on its own.
 
 ## BIRD Mini-Dev preparation
@@ -60,4 +72,4 @@ The importer accepts `mini_dev_sqlite.json` or the Hugging Face shard filename, 
 
 ## Scope
 
-Implemented: configurable OpenAI-compatible direct prompt, registered local SQLite data sources, AST guard, read-only execution, API health/schema/query endpoints, JSON logging, tests, and smoke evaluation. Pending: LangGraph, durable checkpoints, PostgreSQL/pgvector, retrieval, SQL repair, multi-turn context/memory, Python analysis, SSE, and production authentication.
+Implemented: configurable OpenAI-compatible direct prompt, registered local SQLite data sources, AST guard, read-only execution, API health/schema/query endpoints, JSON logging, tests, smoke evaluation, and one linear LangGraph workflow. Pending: durable checkpoints, PostgreSQL/pgvector, retrieval, SQL repair, multi-turn context/memory, Python analysis, SSE, and production authentication.
