@@ -48,6 +48,8 @@ uv run pytest -q tests/test_single_graph.py
 
 The implementation is in [single.py](src/querypilot/graph/single.py), with a deterministic SQLite-backed test that replaces only the model call. See the [architecture notes](docs/architecture.md) for the state and node boundaries.
 
+If you want to type this workflow yourself from the Phase 0.5 Git snapshot, follow the [Phase 1 hands-on guide](docs/phase-1-handson.md).
+
 `evidence` is an optional hint about business meaning or values that may not be clear from the question and table names. The demo set has no `evidence`. BIRD Mini-Dev includes expert-annotated evidence in its question records. The model baseline now defaults to `--evidence-mode none`: the prompt contains only the question and Schema. To measure a separate, oracle-assisted setting, pass `--evidence-mode oracle`; this includes the case's annotated evidence. Each result records `evidence_mode` and whether evidence was used for each question. Keep the two settings separate when reporting scores. Phase 0 does not retrieve evidence on its own.
 
 ## BIRD Mini-Dev preparation

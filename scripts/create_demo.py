@@ -8,7 +8,15 @@ from querypilot.database.registry import DatabaseRegistry
 
 
 def main() -> None:
-    """首次运行时创建 demo.sqlite，并把它登记为 `demo` 数据库。"""
+    """创建或复用演示 SQLite 数据库并登记为 demo。
+
+    参数:
+        无函数参数；数据目录从 Settings 读取。
+    返回:
+        None；把数据库写入数据目录并打印登记路径。
+    异常:
+        RegistryError: 已有 demo ID 指向其他文件或文件无效。
+    """
     data_dir = get_settings().data_dir.resolve()
     data_dir.mkdir(parents=True, exist_ok=True)
     path = data_dir / "demo.sqlite"

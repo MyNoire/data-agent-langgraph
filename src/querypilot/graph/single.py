@@ -1,14 +1,14 @@
-"""A single, linear Text2SQL graph with an explicit database ID.
+"""要求显式指定数据库的单条线性 Text2SQL 工作流。
 
-This first graph makes state transitions observable while reusing the Phase 0
-model adapter, AST guard, and read-only executor. It has no routing, retry loop,
-checkpoint, or long-term memory yet.
+此图复用 Phase 0 的模型适配器、AST 校验器和只读执行器。
+目前不含选库、重试、checkpoint 或长期记忆。
 """
 
 from dataclasses import asdict
 from typing import Any, Callable, NotRequired, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.graph.state import CompiledStateGraph
 
 from querypilot.config import Settings
 from querypilot.database.executor import execute_readonly
@@ -19,21 +19,21 @@ from querypilot.sql.guard import guard_sql
 
 
 class QueryInput(TypedDict):
-    """Caller-supplied values; database selection is still explicit."""
+    """图的输入：调用者提供数据库 ID 和自然语言问题。"""
 
     database_id: str
     question: str
 
 
 class QueryOutput(TypedDict):
-    """Public graph result after SQL validation and execution."""
+    """图的输出：校验后的 SQL 与只读执行结果。"""
 
     sql: str
     result: dict[str, Any]
 
 
 class QueryState(QueryInput):
-    """Intermediate values handed from one node to the next."""
+    """节点之间传递的状态；可选字段由对应节点逐步写入。"""
 
     schema: NotRequired[str]
     allowed_tables: NotRequired[list[str]]
@@ -42,32 +42,71 @@ class QueryState(QueryInput):
     result: NotRequired[dict[str, Any]]
 
 
+# 生成器参数依次为问题、Schema、证据、运行配置；返回候选 SQL。
 SqlGenerator = Callable[[str, str, str, Settings], str]
 
 
-def build_single_query_graph(settings: Settings, *, generator: SqlGenerator = generate_sql):
-    """Compile Schema → model → guard → read-only execution.
+def build_single_query_graph(settings: Settings, *, generator: SqlGenerator = generate_sql) -> CompiledStateGraph:
+    """编译 Schema → 模型 → SQL 校验 → 只读执行的线性图。
 
-    The generator argument allows tests to provide a deterministic model result.
-    Credentials and database paths remain in the closure, outside graph state.
+    参数:
+        settings: 数据目录、模型连接信息及 SQL 执行上限。
+        generator: SQL 生成函数；默认调用真实模型，测试可注入固定结果。
+    返回:
+        可调用的已编译 LangGraph；输入为 QueryInput，输出为 QueryOutput。
+    说明:
+        凭据和数据库路径留在节点闭包内，不写入图状态。
     """
     registry = DatabaseRegistry(settings.data_dir)
 
     def load_schema(state: QueryState) -> dict[str, Any]:
-        """Resolve the registered database and expose its current table names."""
+        """读取已登记数据库的当前表列信息。
+
+        参数:
+            state: 至少包含 database_id 的图状态。
+        返回:
+            含 schema 文本及 allowed_tables 表名列表的状态增量。
+        异常:
+            RegistryError: database_id 未登记或登记路径无效。
+        """
         schema = inspect_sqlite(registry.get(state["database_id"]))
         return {"schema": format_schema(schema), "allowed_tables": list(schema)}
 
     def generate(state: QueryState) -> dict[str, str]:
-        """Reuse the Phase 0 prompt/model adapter without oracle evidence."""
+        """根据问题和 Schema 生成候选 SQL，不注入 oracle evidence。
+
+        参数:
+            state: 含 question 和 load_schema 产出的 schema 的图状态。
+        返回:
+            含 generated_sql 候选语句的状态增量。
+        异常:
+            模型调用失败时向上抛出适配器异常，本阶段不重试。
+        """
         return {"generated_sql": generator(state["question"], state["schema"], "", settings)}
 
     def validate(state: QueryState) -> dict[str, str]:
-        """Reject unsafe SQL before it reaches the execution node."""
+        """校验候选 SQL 的 AST 并施加行数上限。
+
+        参数:
+            state: 含 generated_sql 和 allowed_tables 的图状态。
+        返回:
+            含 sql 字段的状态增量；该字段是允许执行的受限 SQL。
+        异常:
+            SqlRejected: 语句不是受允许的单条只读查询。
+        """
         return {"sql": guard_sql(state["generated_sql"], set(state["allowed_tables"]), settings.max_rows)}
 
     def execute(state: QueryState) -> dict[str, dict[str, Any]]:
-        """Run through the existing SQLite read-only boundary."""
+        """使用 Phase 0 只读执行器运行通过校验的 SQL。
+
+        参数:
+            state: 含 database_id 和校验后 sql 的图状态。
+        返回:
+            含 result 的状态增量；result 包含 SQL、列、行数和耗时。
+        异常:
+            QueryLimitError: 查询超时或响应超限。
+            sqlite3.DatabaseError: SQLite 无法执行该查询。
+        """
         result = execute_readonly(
             registry.get(state["database_id"]),
             state["sql"],

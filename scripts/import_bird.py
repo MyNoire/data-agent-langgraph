@@ -9,7 +9,15 @@ from querypilot.database.registry import DatabaseRegistry
 
 
 def main() -> None:
-    """读取题目 JSON，选取前 N 题并登记所需数据库文件。"""
+    """按固定清单或临时规则生成 BIRD smoke 题集。
+
+    参数:
+        无函数参数；从 --root、--manifest、--limit 等命令行选项读取输入。
+    返回:
+        None；写入所选题目的 JSON，并在非 questions-only 模式登记数据库。
+    异常:
+        SystemExit: 题目来源、清单校验、数据库文件或路径边界不符合要求。
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=Path("data/bird"))
     parser.add_argument("--limit", type=int, default=20)

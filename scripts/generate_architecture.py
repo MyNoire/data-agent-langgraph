@@ -1,7 +1,7 @@
-"""Generate the editable QueryPilot architecture diagram.
+"""生成可编辑的 QueryPilot 整体架构图。
 
-Green denotes the verified Phase 0 path. Blue denotes the planned system.
-Run with: python scripts/generate_architecture.py
+绿色表示已验证的 Phase 0 路径；蓝色表示规划中的目标系统。
+运行命令：python scripts/generate_architecture.py
 """
 
 from pathlib import Path
@@ -12,6 +12,16 @@ OUT = Path(__file__).resolve().parents[1] / "docs" / "querypilot-architecture.dr
 
 
 def style(fill: str, stroke: str, *, size: int = 16, dashed: bool = False) -> str:
+    """构造 draw.io 矩形节点的样式字符串。
+
+    参数:
+        fill: 节点填充色。
+        stroke: 节点边框色。
+        size: 标签字号。
+        dashed: 是否使用虚线边框。
+    返回:
+        可写入 mxCell.style 属性的样式字符串。
+    """
     return (
         "rounded=1;arcSize=12;whiteSpace=wrap;html=1;align=center;"
         "verticalAlign=middle;spacing=10;fontFamily=Microsoft YaHei;"
@@ -43,6 +53,23 @@ ET.SubElement(graph_root, "mxCell", id="1", parent="0")
 
 
 def box(id: str, label: str, x: int, y: int, w: int, h: int, *, parent: str = "1", kind: str = "planned", font: int = 16) -> None:
+    """在 XML 根节点中加入一个业务模块方框。
+
+    参数:
+        id: draw.io 节点的唯一标识。
+        label: 方框中显示的 HTML 文本。
+        x: 相对父容器的水平坐标。
+        y: 相对父容器的垂直坐标。
+        w: 方框宽度。
+        h: 方框高度。
+        parent: 父容器的节点 ID。
+        kind: 颜色语义类别，例如 current 或 planned。
+        font: 标签字号。
+    返回:
+        None；直接向 graph_root 增加 mxCell。
+    异常:
+        KeyError: kind 不在预设颜色类别中。
+    """
     palettes = {
         "current": ("#E8F6EC", "#31945C"),
         "planned": ("#EAF3FF", "#477DBB"),
@@ -64,6 +91,22 @@ def box(id: str, label: str, x: int, y: int, w: int, h: int, *, parent: str = "1
 
 
 def text(id: str, label: str, x: int, y: int, w: int, h: int, *, parent: str = "1", size: int = 16, color: str = "#26445E", bold: bool = False) -> None:
+    """在 XML 中加入一个不带边框的文本标签。
+
+    参数:
+        id: 标签节点的唯一标识。
+        label: 显示的文本。
+        x: 相对父容器的水平坐标。
+        y: 相对父容器的垂直坐标。
+        w: 标签宽度。
+        h: 标签高度。
+        parent: 父容器节点 ID。
+        size: 字号。
+        color: 字体颜色。
+        bold: 是否加粗。
+    返回:
+        None；直接向 graph_root 增加 mxCell。
+    """
     cell = ET.SubElement(
         graph_root,
         "mxCell",
@@ -81,6 +124,23 @@ def text(id: str, label: str, x: int, y: int, w: int, h: int, *, parent: str = "
 
 
 def panel(id: str, label: str, x: int, y: int, w: int, h: int, *, fill: str, stroke: str, header: int = 38, font: int = 18, parent: str = "1") -> None:
+    """在 XML 中加入带标题栏的分组容器。
+
+    参数:
+        id: 容器节点的唯一标识。
+        label: 标题栏文本。
+        x: 相对父容器的水平坐标。
+        y: 相对父容器的垂直坐标。
+        w: 容器宽度。
+        h: 容器高度。
+        fill: 容器填充色。
+        stroke: 容器边框色。
+        header: 标题栏高度。
+        font: 标题字号。
+        parent: 父容器节点 ID。
+    返回:
+        None；直接向 graph_root 增加 swimlane 节点。
+    """
     cell = ET.SubElement(
         graph_root,
         "mxCell",
@@ -100,6 +160,23 @@ def panel(id: str, label: str, x: int, y: int, w: int, h: int, *, fill: str, str
 
 
 def arrow(id: str, source: str, target: str, *, from_side: str = "right", to_side: str = "left", dashed: bool = False, color: str = "#6C8195", label: str = "", waypoints: tuple[tuple[int, int], ...] = ()) -> None:
+    """在两个 draw.io 节点之间加入有向连接线。
+
+    参数:
+        id: 连接线的唯一标识。
+        source: 起点节点 ID。
+        target: 终点节点 ID。
+        from_side: 起点边界方位，可为上下左右。
+        to_side: 终点边界方位，可为上下左右。
+        dashed: 是否使用虚线。
+        color: 连接线颜色。
+        label: 连接线上的文本。
+        waypoints: 可选的折线路径坐标序列。
+    返回:
+        None；直接向 graph_root 增加 edge 节点。
+    异常:
+        KeyError: from_side 或 to_side 不是受支持方位。
+    """
     sides = {
         "right": (1, 0.5), "left": (0, 0.5),
         "top": (0.5, 0), "bottom": (0.5, 1),
@@ -134,7 +211,7 @@ def arrow(id: str, source: str, target: str, *, from_side: str = "right", to_sid
 text("title", "QueryPilot｜面向业务分析的多轮 Text2SQL Agent", 40, 20, 1740, 58, size=30, bold=True)
 text("subtitle", "整体架构与实施状态 · 绿色 = Phase 0 已实现 · 蓝色虚线 = 后续目标 · 紫色 = 状态与治理 · 橙色 = 数据/评测", 40, 80, 1740, 36, size=17)
 
-# Left: the verified Phase 0 path. No LangGraph or RAG is implied here.
+# 左侧：经过验证的 Phase 0 链路；图中不暗示该阶段已有 LangGraph 或 RAG。
 panel("p0", "Phase 0｜保留作对照：单轮 direct-prompt baseline", 40, 140, 550, 860, fill="#F8FCF9", stroke="#31945C")
 box("p0_entry", "API / CLI 请求<br>指定 database_id", 80, 65, 470, 72, parent="p0", kind="current")
 box("p0_schema", "读取注册的 SQLite Schema<br>构造全量 Schema prompt", 80, 170, 470, 82, parent="p0", kind="current")
@@ -150,7 +227,7 @@ for i, (a, b) in enumerate([
 ]):
     arrow(f"p0_flow_{i}", a, b, from_side="bottom", to_side="top", color="#31945C", dashed=i == 4)
 
-# Right: target architecture. All blue boxes are planned unless also shown on the left.
+# 右侧：目标架构；蓝色模块代表仍需实现的完整能力。
 panel("target", "目标架构｜LangGraph 业务分析助手（规划）", 630, 140, 1150, 860, fill="#F9FBFF", stroke="#477DBB")
 box("request", "业务问题 + 会话", 40, 65, 260, 70, parent="target", kind="neutral")
 box("api", "FastAPI 入口<br>身份 / 授权 / 流式响应", 345, 65, 320, 70, parent="target")

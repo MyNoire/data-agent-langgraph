@@ -9,7 +9,15 @@ from querypilot.evals.baseline import run_eval
 
 
 def main() -> None:
-    """解析评测参数、写入逐题 JSON，并在终端显示汇总。"""
+    """解析评测选项并调用 direct-prompt smoke 评测。
+
+    参数:
+        无函数参数；从 --cases、--provider、--evidence-mode、--output 读取输入。
+    返回:
+        None；写入逐题 JSON 文件，并将汇总打印到标准输出。
+    异常:
+        题集无效、数据库缺失或输出写入失败时向上抛出对应异常。
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--cases", type=Path, default=Path("evals/demo_smoke.json"))
     parser.add_argument("--provider", choices=["model", "fixture"], default="model")

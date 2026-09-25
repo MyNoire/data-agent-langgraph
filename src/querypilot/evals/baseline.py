@@ -19,7 +19,15 @@ PROMPT_VERSION = "direct-v2"
 
 
 def direct_prompt(question: str, schema: str, evidence: str = "") -> str:
-    """拼接问题和 Schema；仅在调用者明确传入时加入业务规则证据。"""
+    """把问题和 Schema 拼成 direct-prompt 模型输入。
+
+    参数:
+        question: 用户的自然语言问题。
+        schema: 当前数据库的表列说明文本。
+        evidence: 可选业务证据；空字符串表示不提供 oracle 证据。
+    返回:
+        要求模型只输出一条 SQLite SELECT 的 Prompt 文本。
+    """
     evidence_line = f"Evidence: {evidence}\n" if evidence else ""
     return (
         "Generate exactly one read-only SQLite SELECT query. Return SQL only, without Markdown.\n"
@@ -30,7 +38,18 @@ def direct_prompt(question: str, schema: str, evidence: str = "") -> str:
 
 
 def generate_sql(question: str, schema: str, evidence: str, settings: Settings) -> str:
-    """通过配置化的 OpenAI-compatible 接口请求一条 SQL。"""
+    """调用 OpenAI-compatible 服务生成候选 SQL。
+
+    参数:
+        question: 用户自然语言问题。
+        schema: 当前数据库的表列说明文本。
+        evidence: 可选业务证据；生产路径和无证据基线传空字符串。
+        settings: 模型地址、名称、密钥和可选温度配置。
+    返回:
+        去掉首尾 Markdown SQL 代码围栏后的模型输出文本。
+    异常:
+        模型服务或网络失败时向上抛出 OpenAI 客户端异常。
+    """
     client = OpenAI(base_url=settings.model_base_url, api_key=settings.model_api_key, timeout=60)
     request = {
         "model": settings.model_name,
@@ -44,16 +63,32 @@ def generate_sql(question: str, schema: str, evidence: str, settings: Settings) 
 
 
 def _normalized_rows(rows: list[list[object]]) -> Counter[tuple[str, ...]]:
-    """把结果转成保留重复行、但不依赖行顺序的多重集合。"""
+    """把结果行标准化为不依赖顺序的多重集合。
+
+    参数:
+        rows: SQL 执行器返回的二维结果行列表。
+    返回:
+        以序列化行元组为键的 Counter；保留重复行数量。
+    """
     return Counter(tuple(json.dumps(value, sort_keys=True, default=str) for value in row) for row in rows)
 
 
 def run_eval(cases_path: Path, settings: Settings, *, provider: str = "model",
              evidence_mode: str = "none", output: Path | None = None) -> dict:
-    """逐题生成并执行预测 SQL，保存可追溯的 smoke 结果。
+    """逐题生成、执行并比较预测 SQL，形成 smoke 结果。
 
-    `fixture` 直接使用标准 SQL，只验证评测管线，不代表模型能力。
-    当前比较会受执行器行数上限影响，不能作为官方 BIRD EX 指标。
+    参数:
+        cases_path: JSON 题集文件路径，题目需包含 db_id、question 和 SQL。
+        settings: 数据库目录、模型连接及执行资源限制。
+        provider: ``model`` 调用真实模型；``fixture`` 直接使用标准 SQL。
+        evidence_mode: ``none`` 不提供标注证据；``oracle`` 提供题目 evidence。
+        output: 可选 JSON 输出路径；为空时只返回内存结果。
+    返回:
+        包含配置、逐题记录、有效 SQL 率、执行匹配率和延迟的字典。
+    异常:
+        ValueError: provider 或 evidence_mode 取值无效。
+    说明:
+        fixture 仅验证管线；当前行数上限和比较器不等于官方 BIRD EX。
     """
     if provider not in {"model", "fixture"}:
         raise ValueError("provider must be model or fixture")

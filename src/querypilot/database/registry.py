@@ -16,19 +16,41 @@ class DatabaseRegistry:
     """只登记配置数据目录内的 SQLite 文件，避免任意文件路径访问。"""
 
     def __init__(self, data_dir: Path):
-        """固定数据目录的真实路径，并准备 registry.json。"""
+        """定位数据库文件和注册表的根目录。
+
+        参数:
+            data_dir: 允许登记 SQLite 文件的目录。
+        返回:
+            None；初始化 data_dir 和 index_path 实例属性。
+        """
         self.data_dir = data_dir.resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.index_path = self.data_dir / "registry.json"
 
     def list(self) -> dict[str, str]:
-        """返回已登记的数据库 ID 与绝对文件路径。"""
+        """读取持久化的数据库登记映射。
+
+        参数:
+            无。
+        返回:
+            database_id 到 SQLite 绝对路径字符串的映射；无登记时为空。
+        """
         if not self.index_path.exists():
             return {}
         return json.loads(self.index_path.read_text(encoding="utf-8"))
 
     def register(self, database_id: str, path: Path) -> Path:
-        """验证 ID、路径和文件格式后登记数据库，返回真实路径。"""
+        """验证 ID、路径和 SQLite 文件后持久化登记。
+
+        参数:
+            database_id: 仅含小写字母、数字和下划线的数据库 ID。
+            path: 必须位于数据目录内的 SQLite 文件路径。
+        返回:
+            经 resolve 解析后的 SQLite 文件绝对路径。
+        异常:
+            RegistryError: ID、路径、文件内容无效，或 ID 已绑定其他文件。
+            OSError: 文件读写失败。
+        """
         if not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", database_id):
             raise RegistryError("database_id must be lowercase letters, digits or underscore")
         # resolve(strict=True) 同时检查文件存在并消除 ../ 与符号链接跳转。
@@ -55,7 +77,16 @@ class DatabaseRegistry:
         return resolved
 
     def get(self, database_id: str) -> Path:
-        """查找数据库并再次确认登记路径没有逃出数据目录。"""
+        """根据 ID 查找数据库并重新验证路径边界。
+
+        参数:
+            database_id: 已登记的数据库 ID。
+        返回:
+            当前真实的 SQLite 文件绝对路径。
+        异常:
+            RegistryError: ID 未登记或登记路径逃出数据目录。
+            OSError: 登记的文件已不存在或不可访问。
+        """
         entry = self.list().get(database_id)
         if entry is None:
             raise RegistryError("unknown database_id")

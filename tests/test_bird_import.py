@@ -10,6 +10,13 @@ from pathlib import Path
 
 
 def test_bird_import_script_with_tiny_local_fixture(tmp_path):
+    """用微型题集验证导入脚本登记数据库并生成 smoke 文件。
+
+    参数:
+        tmp_path: pytest 提供的隔离临时目录。
+    返回:
+        None；通过断言报告测试结果。
+    """
     root = tmp_path / "bird"
     database_folder = root / "dev_databases" / "tiny"
     database_folder.mkdir(parents=True)
@@ -32,6 +39,13 @@ def test_bird_import_script_with_tiny_local_fixture(tmp_path):
 
 
 def test_fixed_manifest_prepares_questions_and_rejects_source_changes(tmp_path):
+    """检查固定清单顺序、数据库哈希及题目来源哈希。
+
+    参数:
+        tmp_path: pytest 提供的隔离临时目录。
+    返回:
+        None；通过断言报告测试结果。
+    """
     root = tmp_path / "bird"
     root.mkdir()
     source = root / "mini_dev_sqlite.json"

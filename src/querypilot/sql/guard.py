@@ -14,14 +14,15 @@ BLOCKED_FUNCTIONS = {"load_extension", "readfile", "writefile", "sqlite_version"
 
 
 def guard_sql(sql: str, allowed_tables: set[str], max_rows: int) -> str:
-    """校验单条只读查询，并返回施加行数上限后的 SQLite SQL。
+    """解析并校验单条只读查询，必要时收紧 LIMIT。
 
-    Args:
-        sql: 用户或模型提供的原始 SQL。
-        allowed_tables: 当前数据库 Schema 中允许引用的表名。
+    参数:
+        sql: 用户或模型提供的原始 SQL 文本。
+        allowed_tables: 当前数据库 Schema 中允许引用的表名集合。
         max_rows: 查询结果允许的最大行数。
-
-    Raises:
+    返回:
+        符合 SQLite 方言、最多返回 max_rows 行的 SQL 文本。
+    异常:
         SqlRejected: 解析失败、引用越界或使用了不允许的语句结构。
     """
     try:

@@ -32,10 +32,23 @@ class QueryResult:
 
 def execute_readonly(path: Path, sql: str, *, database_id: str, max_rows: int = 100,
                      timeout_ms: int = 3000, max_response_bytes: int = 262144) -> QueryResult:
-    """执行单条受控 SELECT，拒绝写入、长时间运行和过大响应。
+    """校验并执行单条 SQLite 只读查询。
 
-    `guard_sql` 负责事前 AST 校验；SQLite 的只读模式、authorizer 和进度回调
-    是运行时的第二道限制。此函数适用于本地 SQLite 基线，尚非多租户服务。
+    参数:
+        path: 已登记的 SQLite 文件路径。
+        sql: 待校验和执行的 SQL 文本。
+        database_id: 日志审计所用的数据库 ID。
+        max_rows: 最多返回的结果行数。
+        timeout_ms: 允许的最大执行时长，单位为毫秒。
+        max_response_bytes: 允许的最大 JSON 响应大小，单位为字节。
+    返回:
+        QueryResult：实际执行的 SQL、列名、结果行、行数及耗时。
+    异常:
+        SqlRejected: SQL 不符合只读语句或表访问规则。
+        QueryLimitError: 查询超时或结果超过字节上限。
+        sqlite3.DatabaseError: SQLite 查询执行失败。
+    说明:
+        AST 校验之外仍使用只读连接、authorizer 和进度回调；尚非多租户服务。
     """
     schema = inspect_sqlite(path)
     started = time.monotonic()
@@ -51,7 +64,17 @@ def execute_readonly(path: Path, sql: str, *, database_id: str, max_rows: int = 
     connection.execute("PRAGMA query_only=ON")
 
     def authorize(action: int, arg1: str | None, arg2: str | None, _db: str | None, _source: str | None) -> int:
-        """在 SQLite 编译 SQL 时只放行读取、查询及非禁用函数。"""
+        """在 SQLite 编译查询时决定操作是否允许。
+
+        参数:
+            action: SQLite authorizer 的操作码。
+            arg1: 操作相关的第一个名称；当前策略不使用。
+            arg2: 操作相关的第二个名称；函数调用时为函数名。
+            _db: SQLite 提供的数据库名；当前策略不使用。
+            _source: SQLite 提供的触发源；当前策略不使用。
+        返回:
+            SQLITE_OK 表示允许；SQLITE_DENY 表示拒绝。
+        """
         if action in (sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ, sqlite3.SQLITE_RECURSIVE):
             return sqlite3.SQLITE_OK
         if action == sqlite3.SQLITE_FUNCTION and (arg2 or "").lower() not in {"load_extension", "readfile", "writefile"}:
@@ -59,7 +82,13 @@ def execute_readonly(path: Path, sql: str, *, database_id: str, max_rows: int = 
         return sqlite3.SQLITE_DENY
 
     def progress() -> int:
-        """每执行一批虚拟机指令检查耗时；返回非零值将中断查询。"""
+        """在 SQLite 进度回调中检查运行时长。
+
+        参数:
+            无。
+        返回:
+            超时返回 1 以中断查询；未超时返回 0。
+        """
         return int((time.monotonic() - started) * 1000 > timeout_ms)
 
     connection.set_authorizer(authorize)

@@ -8,6 +8,13 @@ from pathlib import Path
 
 
 def test_archive_path_traversal_rejected(tmp_path):
+    """检查下载脚本拒绝 ZIP 路径穿越条目。
+
+    参数:
+        tmp_path: pytest 提供的隔离临时目录。
+    返回:
+        None；通过断言报告测试结果。
+    """
     archive = tmp_path / "bad.zip"
     destination = tmp_path / "out"
     destination.mkdir()

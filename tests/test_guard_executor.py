@@ -10,6 +10,13 @@ from querypilot.sql.guard import SqlRejected, guard_sql
 
 @pytest.fixture
 def sample(tmp_path):
+    """创建包含两条记录的 SQLite 测试库。
+
+    参数:
+        tmp_path: pytest 提供的隔离临时目录。
+    返回:
+        新建 SQLite 文件的路径。
+    """
     path = tmp_path / "sample.sqlite"
     with sqlite3.connect(path) as db:
         db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)")
@@ -24,11 +31,25 @@ def sample(tmp_path):
     "WITH RECURSIVE seq(n) AS (SELECT 1) SELECT * FROM seq",
 ])
 def test_guard_rejects(sql):
+    """检查危险语句和不受支持语法均被拒绝。
+
+    参数:
+        sql: pytest 参数化提供的待校验 SQL。
+    返回:
+        None；通过断言报告测试结果。
+    """
     with pytest.raises(SqlRejected):
         guard_sql(sql, {"items"}, 10)
 
 
 def test_cte_limit_and_readonly(sample):
+    """检查只读 CTE、LIMIT 收紧和写入拦截。
+
+    参数:
+        sample: 已填入两条记录的 SQLite 文件路径。
+    返回:
+        None；通过断言报告测试结果。
+    """
     result = execute_readonly(sample, "WITH x AS (SELECT * FROM items) SELECT name FROM x ORDER BY name", database_id="sample", max_rows=1)
     assert result.rows == [["a"]]
     assert "LIMIT 1" in result.sql
@@ -40,11 +61,25 @@ def test_cte_limit_and_readonly(sample):
 
 
 def test_response_byte_limit(sample):
+    """检查响应超过字节上限时抛出限制异常。
+
+    参数:
+        sample: 已填入两条记录的 SQLite 文件路径。
+    返回:
+        None；通过断言报告测试结果。
+    """
     with pytest.raises(QueryLimitError):
         execute_readonly(sample, "SELECT name FROM items", database_id="sample", max_response_bytes=10)
 
 
 def test_recursive_query_timeout(sample):
+    """检查递归查询超时后被中断。
+
+    参数:
+        sample: 已填入两条记录的 SQLite 文件路径。
+    返回:
+        None；通过断言报告测试结果。
+    """
     query = "WITH RECURSIVE seq AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM seq WHERE n < 100000000) SELECT SUM(n) FROM seq"
     with pytest.raises(QueryLimitError, match="timed out"):
         execute_readonly(sample, query, database_id="sample", timeout_ms=1)

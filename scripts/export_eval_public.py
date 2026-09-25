@@ -1,7 +1,7 @@
-"""Export a reviewable eval artifact without provider connection details.
+"""导出不含模型服务连接地址的可公开评测结果。
 
-The full local result remains under ``results/`` and is Git-ignored. The
-published artifact retains per-case SQL and outcomes so failures can be audited.
+完整本地结果保留在 Git 忽略的 ``results/`` 路径中；公开结果保留逐题
+SQL 和匹配标记，便于复核失败案例。
 """
 
 import argparse
@@ -22,6 +22,16 @@ RECORD = (
 
 
 def main() -> None:
+    """读取原始评测 JSON 并按字段白名单导出公开副本。
+
+    参数:
+        无函数参数；从命令行读取输入和输出文件路径。
+    返回:
+        None；写入去掉服务地址等字段的 JSON 并打印输出路径。
+    异常:
+        KeyError: 原始结果缺少 records 字段。
+        OSError: 输入读取或输出写入失败。
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("input", type=Path)
     parser.add_argument("output", type=Path)

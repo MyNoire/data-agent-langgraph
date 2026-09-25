@@ -22,5 +22,13 @@ class Settings(BaseSettings):
 
 
 def get_settings() -> Settings:
-    """读取当前进程的配置；测试可以直接构造 Settings 覆盖默认值。"""
+    """读取环境变量和项目 .env 中的运行配置。
+
+    参数:
+        无。
+    返回:
+        已经过 Pydantic 校验的 Settings 实例。
+    异常:
+        ValidationError: 配置值不满足字段约束。
+    """
     return Settings()

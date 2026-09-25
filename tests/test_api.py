@@ -9,6 +9,13 @@ from querypilot.config import Settings
 
 
 def test_health_register_schema_and_query(tmp_path):
+    """覆盖健康检查、数据库登记、Schema 查询和 SQL 错误映射。
+
+    参数:
+        tmp_path: pytest 提供的隔离临时目录。
+    返回:
+        None；通过断言报告测试结果。
+    """
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     path = data_dir / "sample.sqlite"

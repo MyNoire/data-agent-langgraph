@@ -8,7 +8,17 @@ from pathlib import Path
 
 
 def extract_checked(archive: Path, destination: Path) -> None:
-    """拒绝会越过目标目录的 ZIP 路径，再解压归档。"""
+    """校验 ZIP 条目路径并解压到目标目录。
+
+    参数:
+        archive: 待解压的 ZIP 文件路径。
+        destination: 解压目标目录路径。
+    返回:
+        None；把安全的归档条目写到目标目录。
+    异常:
+        SystemExit: ZIP 条目解析后越过目标目录。
+        zipfile.BadZipFile: 输入不是有效的 ZIP 文件。
+    """
     with zipfile.ZipFile(archive) as source:
         for entry in source.infolist():
             resolved = (destination / entry.filename).resolve()
@@ -18,7 +28,16 @@ def extract_checked(archive: Path, destination: Path) -> None:
 
 
 def main() -> None:
-    """从 URL 或本地 ZIP 取文件，先核对 SHA-256，再处理嵌套数据库包。"""
+    """获取并校验 BIRD 归档，再解压外层和嵌套数据库包。
+
+    参数:
+        无函数参数；从 --url/--archive、--sha256 和 --dest 读取输入。
+    返回:
+        None；写入下载文件、解压数据和 DOWNLOAD.sha256，并打印目标目录。
+    异常:
+        SystemExit: 下载校验和不一致或归档路径不安全。
+        OSError: 下载、读取或写入文件失败。
+    """
     parser = argparse.ArgumentParser()
     source_group = parser.add_mutually_exclusive_group(required=True)
     source_group.add_argument("--url", help="Canonical archive URL selected from BIRD Mini-Dev")
