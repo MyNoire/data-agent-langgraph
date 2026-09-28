@@ -19,7 +19,7 @@ def main() -> None:
         题集无效、数据库缺失或输出写入失败时向上抛出对应异常。
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument("--cases", type=Path, default=Path("evals/demo_smoke.json"))
+    parser.add_argument("--cases", type=Path, default=Path("evals/bird_smoke.json"))
     parser.add_argument("--provider", choices=["model", "fixture"], default="model")
     parser.add_argument("--evidence-mode", choices=["none", "oracle"], default="none",
                         help="none: question + schema only; oracle: include annotated case evidence")

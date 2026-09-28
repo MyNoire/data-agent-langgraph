@@ -3,11 +3,11 @@
 __pycache__/
 .pytest_cache/
 .env
-data/*.sqlite
-data/*.zip
-data/registry.json
-data/bird/
+data/
 evals/bird_smoke.json
+evals/bird_final100.json
 results/*.json
+results/*.jsonl
+results/*.tmp
 !results/*-public.json
 *.pyc
