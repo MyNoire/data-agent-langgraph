@@ -2,10 +2,15 @@
 
 import json
 import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pytest
 
 from querypilot.config import Settings
 from querypilot.database.registry import DatabaseRegistry
 from querypilot.evals.baseline import direct_prompt, run_eval
+from querypilot.evals.naming import result_path
 
 
 def test_fixture_eval_plumbing(tmp_path):
@@ -29,6 +34,12 @@ def test_fixture_eval_plumbing(tmp_path):
     result = run_eval(cases, Settings(data_dir=data), provider="fixture", output=output)
     assert result["provider"] == "fixture"
     assert result["execution_accuracy"] == 1
+    assert result["summary"] == {
+        "total": 1, "success": 1, "failure": 0, "mismatch": 0,
+        "error": 0, "no_prediction": 0, "valid_sql": 1,
+    }
+    assert result["records"][0]["outcome"] == "matched"
+    assert result["max_response_bytes"] == Settings(data_dir=data).max_response_bytes
     assert json.loads(output.read_text(encoding="utf-8"))["count"] == 1
 
 
@@ -140,3 +151,85 @@ def test_unavailable_model_does_not_report_zero_accuracy(tmp_path, monkeypatch):
     result = run_eval(cases, Settings(data_dir=data), provider="model")
     assert result["status"] == "model_unavailable"
     assert result["execution_accuracy"] is None
+    assert result["summary"]["failure"] == 1
+    assert result["summary"]["no_prediction"] == 1
+
+
+def test_eval_summary_separates_matches_mismatches_and_errors(tmp_path, monkeypatch):
+    """用四种确定性结果验证汇总计数与逐题标签。
+
+    参数:
+        tmp_path: pytest 提供的隔离临时目录。
+        monkeypatch: 用假生成器替换真实模型调用。
+    返回:
+        None；成功、结果不匹配、SQL 错误和生成错误必须分别计数。
+    """
+    data = tmp_path / "data"
+    data.mkdir()
+    path = data / "items.sqlite"
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE items (id INTEGER)")
+        db.execute("INSERT INTO items VALUES (1)")
+    DatabaseRegistry(data).register("items", path)
+    cases = tmp_path / "cases.json"
+    cases.write_text(json.dumps([
+        {"question_id": index, "db_id": "items", "question": question,
+         "SQL": "SELECT id FROM items"}
+        for index, question in enumerate(("match", "mismatch", "bad SQL", "offline"), 1)
+    ]), encoding="utf-8")
+
+    def fake_generate(question, _schema, _evidence, _settings):
+        """按题目返回测试 SQL 或模拟生成失败。
+
+        参数:
+            question: 用作测试分支选择的题目文本。
+            _schema: 未使用的表结构文本。
+            _evidence: 未使用的证据文本。
+            _settings: 未使用的模型配置。
+        返回:
+            固定的预测 SQL；offline 分支抛出 RuntimeError。
+        """
+        if question == "offline":
+            raise RuntimeError("model offline")
+        return {"match": "SELECT id FROM items",
+                "mismatch": "SELECT 999",
+                "bad SQL": "DELETE FROM items"}[question]
+
+    monkeypatch.setattr("querypilot.evals.baseline.generate_sql", fake_generate)
+    result = run_eval(cases, Settings(data_dir=data), provider="model")
+    assert result["summary"] == {
+        "total": 4, "success": 1, "failure": 3, "mismatch": 1,
+        "error": 2, "no_prediction": 1, "valid_sql": 2,
+    }
+    assert [record["outcome"] for record in result["records"]] == [
+        "matched", "mismatched", "error", "error",
+    ]
+    assert [record["question_id"] for record in result["records"]] == [1, 2, 3, 4]
+    assert result["execution_accuracy"] == .25
+
+
+def test_result_filename_and_existing_output_guard(tmp_path):
+    """验证自动命名可辨认且旧评测文件不会被覆盖。
+
+    参数:
+        tmp_path: pytest 提供的隔离临时目录。
+    返回:
+        None；文件名包含题集、模型、证据模式、时间，重名时保留原文件。
+    """
+    timestamp = datetime(2026, 9, 28, 12, 30, 0, tzinfo=timezone.utc)
+    named = result_path(Path("evals/bird_final100.json"), "model",
+                        "Qwen/Qwen2.5-Coder", "none", timestamp=timestamp)
+    assert named == Path(
+        "results/bird-final100__model-qwen-qwen2-5-coder__direct-v2__"
+        "evidence-none__20260928T123000000000Z.json"
+    )
+    assert result_path(Path("evals/bird_smoke.json"), "fixture", "unused", "none",
+                       timestamp=timestamp) == Path(
+        "results/bird-smoke__fixture__20260928T123000000000Z.json"
+    )
+    output = tmp_path / "existing.json"
+    output.write_text("original", encoding="utf-8")
+    with pytest.raises(FileExistsError):
+        run_eval(tmp_path / "missing.json", Settings(data_dir=tmp_path),
+                 provider="fixture", output=output)
+    assert output.read_text(encoding="utf-8") == "original"

@@ -22,7 +22,7 @@ Health: `GET http://127.0.0.1:8001/health`. After importing the BIRD databases b
 
 ```powershell
 uv run pytest -q
-uv run python scripts/run_eval.py --provider fixture --cases evals/bird_smoke.json --output results/bird_fixture.json
+uv run python scripts/run_eval.py --provider fixture --cases evals/bird_smoke.json
 ```
 
 The fixture command needs the generated BIRD case file and imported databases described below.
@@ -32,10 +32,12 @@ The fixture provider feeds gold SQL back into the runner and only validates data
 Create a local `.env` from `.env.example` and fill in your own credentials. For a third-party Chat Completions endpoint serving GPT-5.5, set the model name to `gpt-5.5` (without LangChain's `openai:` prefix). `QUERYPILOT_MODEL_TEMPERATURE` is optional and omitted by default because some reasoning endpoints reject it. Do not commit `.env` or place credentials in `.env.example`.
 
 ```powershell
-uv run python scripts/run_eval.py --provider model --cases evals/bird_smoke.json --output results/direct-bird-smoke.json
+uv run python scripts/run_eval.py --provider model --cases evals/bird_smoke.json
 ```
 
-The runner records prediction-level SQL, errors, execution match, valid execution rate, and P50/P95 latency. Current execution matching is a smoke metric under the configured row cap; it is not the official BIRD evaluator. The 12 questions are for quick iteration. Keep the 100-question set separate for less frequent comparisons.
+The runner records prediction-level SQL, errors, execution match, valid execution rate, and P50/P95 latency. Its JSON and terminal output contain a `summary` with `total`, `success`, `failure`, `mismatch`, `error`, `no_prediction`, and `valid_sql` counts. Success means a capped-row execution match; failure combines mismatches and errors, with no-prediction cases included under errors. Each record has an `outcome` and, for BIRD, a `question_id` for follow-up analysis. Current execution matching is a smoke metric, not official BIRD EX. The 12 questions are for quick iteration; keep the 100-question set separate for less frequent comparisons.
+
+Without `--output`, files are named `results/<dataset>__model-<model>__<prompt>__evidence-<mode>__<UTC timestamp>.json` or `results/<dataset>__fixture__<UTC timestamp>.json`. The command prints the actual `output_file`. An explicit `--output` is allowed but refuses to replace an existing file. Raw results stay Git-ignored; the public exporter can copy selected fields into a separately named `*-public.json`.
 
 ## Phase 1: first LangGraph path
 
@@ -65,9 +67,9 @@ On a fresh checkout, obtain the [complete database package linked by BIRD](https
 ```powershell
 uv run python scripts/fetch_bird.py --archive data/mini_dev_download.zip --sha256 "<64-hex-sha256>"
 uv run python scripts/import_bird.py --root data/bird --manifest evals/bird_smoke_manifest.json --output evals/bird_smoke.json
-uv run python scripts/run_eval.py --provider model --cases evals/bird_smoke.json --output results/direct-bird.json
+uv run python scripts/run_eval.py --provider model --cases evals/bird_smoke.json
 # Optional assisted comparison using expert annotations:
-uv run python scripts/run_eval.py --provider model --evidence-mode oracle --cases evals/bird_smoke.json --output results/oracle-bird.json
+uv run python scripts/run_eval.py --provider model --evidence-mode oracle --cases evals/bird_smoke.json
 ```
 
 The importer accepts `mini_dev_sqlite.json` or the Hugging Face shard filename, plus `<db_id>.sqlite` for each selected database. The manifest prevents accidentally evaluating a different question revision. The database files are never modified or bundled in Git. This is a fixed development smoke set, not the official BIRD EX evaluation; the current runner caps result rows and uses simplified execution matching. [LiveSQLBench Base Lite SQLite](https://huggingface.co/datasets/birdsql/livesqlbench-base-lite-sqlite) is a separate benchmark whose public release omits gold SQL and includes management tasks, so it is not used in this read-only baseline. Dataset terms and project provenance are in [attribution](docs/attribution.md).
@@ -82,10 +84,12 @@ uv run python scripts/import_bird.py --root data/bird --manifest evals/bird_fina
 $env:QUERYPILOT_MAX_ROWS = '10000'
 $env:QUERYPILOT_QUERY_TIMEOUT_MS = '20000'
 $env:QUERYPILOT_MAX_RESPONSE_BYTES = '10485760'
-uv run python scripts/run_eval.py --provider fixture --cases evals/bird_final100.json --output results/bird_final100_fixture.json
+uv run python scripts/run_eval.py --provider fixture --cases evals/bird_final100.json
 ```
 
 The preparation script verifies checksums before copying databases into ignored `data/bird/`. Fixture results verify the evaluation path; they are not model accuracy. Before a model comparison, keep the frozen IDs and `--evidence-mode` fixed, and record the model, prompt, execution caps, and raw result file. The three environment values above match the manifest preflight for this set.
+
+When ready for the first real-model 100-question baseline, use the same three execution limits and run `uv run python scripts/run_eval.py --provider model --evidence-mode none --cases evals/bird_final100.json`. This command invokes the configured model 100 times; it has not been run for this set yet.
 
 ## Scope
 

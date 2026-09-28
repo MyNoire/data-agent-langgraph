@@ -82,11 +82,12 @@ def run_eval(cases_path: Path, settings: Settings, *, provider: str = "model",
         settings: 数据库目录、模型连接及执行资源限制。
         provider: ``model`` 调用真实模型；``fixture`` 直接使用标准 SQL。
         evidence_mode: ``none`` 不提供标注证据；``oracle`` 提供题目 evidence。
-        output: 可选 JSON 输出路径；为空时只返回内存结果。
+        output: 可选 JSON 输出路径；为空时只返回内存结果，已有文件不会被覆盖。
     返回:
-        包含配置、逐题记录、有效 SQL 率、执行匹配率和延迟的字典。
+        包含配置、逐题结果标签、成功/失败计数、执行匹配率和延迟的字典。
     异常:
         ValueError: provider 或 evidence_mode 取值无效。
+        FileExistsError: output 已存在，避免覆盖先前的评测结果。
     说明:
         fixture 仅验证管线；当前行数上限和比较器不等于官方 BIRD EX。
     """
@@ -94,6 +95,8 @@ def run_eval(cases_path: Path, settings: Settings, *, provider: str = "model",
         raise ValueError("provider must be model or fixture")
     if evidence_mode not in {"none", "oracle"}:
         raise ValueError("evidence_mode must be none or oracle")
+    if output is not None and output.exists():
+        raise FileExistsError(f"evaluation output already exists: {output}")
     case_bytes = cases_path.read_bytes()
     cases = json.loads(case_bytes)
     registry = DatabaseRegistry(settings.data_dir)
@@ -104,7 +107,8 @@ def run_eval(cases_path: Path, settings: Settings, *, provider: str = "model",
         path = registry.get(database_id)
         schema = format_schema(inspect_sqlite(path))
         evidence = case.get("evidence", "") if provider == "model" and evidence_mode == "oracle" else ""
-        record = {"index": index, "database_id": database_id, "question": case["question"],
+        record = {"index": index, "question_id": case.get("question_id"),
+                  "database_id": database_id, "question": case["question"],
                   "evidence_used": bool(evidence), "valid_sql": False, "execution_match": False}
         try:
             # fixture 是管线自检；只有 model 模式才实际调用 Text2SQL 模型。
@@ -119,20 +123,40 @@ def run_eval(cases_path: Path, settings: Settings, *, provider: str = "model",
             record["execution_match"] = _normalized_rows(actual.rows) == _normalized_rows(gold.rows)
         except Exception as exc:
             record["error"] = f"{type(exc).__name__}: {exc}"
+        if "error" in record:
+            record["outcome"] = "error"
+        elif record["execution_match"]:
+            record["outcome"] = "matched"
+        else:
+            record["outcome"] = "mismatched"
         record["latency_ms"] = round((time.monotonic() - started) * 1000, 3)
         records.append(record)
     latencies = sorted(record["latency_ms"] for record in records)
+    outcomes = Counter(record["outcome"] for record in records)
+    # failure 包含结果不匹配和评测错误；no_prediction 是 error 中的子集。
+    summary = {
+        "total": len(records),
+        "success": outcomes["matched"],
+        "failure": outcomes["mismatched"] + outcomes["error"],
+        "mismatch": outcomes["mismatched"],
+        "error": outcomes["error"],
+        "no_prediction": sum("predicted_sql" not in record for record in records),
+        "valid_sql": sum(record["valid_sql"] for record in records),
+    }
     # 若所有题目都没拿到预测 SQL，报告模型不可用而非虚构 0% 准确率。
     model_unavailable = provider == "model" and bool(records) and all("predicted_sql" not in item for item in records)
     result = {
         "dataset": str(cases_path), "dataset_sha256": hashlib.sha256(case_bytes).hexdigest(),
         "provider": provider, "status": "model_unavailable" if model_unavailable else "completed",
+        "summary": summary,
         "evidence_mode": evidence_mode if provider == "model" else None,
         "model": settings.model_name if provider == "model" else None,
         "model_base_url": settings.model_base_url if provider == "model" else None,
         "model_temperature": settings.model_temperature if provider == "model" else None,
         "prompt_version": PROMPT_VERSION if provider == "model" else None,
-        "count": len(records), "max_rows": settings.max_rows, "query_timeout_ms": settings.query_timeout_ms,
+        "count": len(records), "max_rows": settings.max_rows,
+        "query_timeout_ms": settings.query_timeout_ms,
+        "max_response_bytes": settings.max_response_bytes,
         "valid_sql_rate": sum(item["valid_sql"] for item in records) / len(records) if records and not model_unavailable else None,
         "execution_accuracy": sum(item["execution_match"] for item in records) / len(records) if records and not model_unavailable else None,
         "p50_latency_ms": statistics.median(latencies) if latencies else None,
@@ -141,5 +165,8 @@ def run_eval(cases_path: Path, settings: Settings, *, provider: str = "model",
     }
     if output:
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
+        # 独占创建，避免重复运行或并行任务覆盖此前的原始评测证据。
+        with output.open("x", encoding="utf-8") as stream:
+            json.dump(result, stream, indent=2, ensure_ascii=False)
+            stream.write("\n")
     return result
