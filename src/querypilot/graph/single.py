@@ -27,6 +27,9 @@ class QueryInput(TypedDict):
     database_id: str
     question: str
     run_id: NotRequired[str]
+    parent_run_id: NotRequired[str]
+    question_id: NotRequired[int | str | None]
+    case_index: NotRequired[int]
 
 
 class QueryOutput(TypedDict):
@@ -84,6 +87,9 @@ def build_single_query_graph(settings: Settings, *, generator: SqlGenerator = ge
             run_id = state.get("run_id") or uuid4().hex
             fields = {"run_id": run_id, "component": "graph", "node": node,
                       "database_id": state["database_id"]}
+            for key in ("parent_run_id", "question_id", "case_index"):
+                if key in state:
+                    fields[key] = state[key]
             started = time.monotonic()
             progress.info("graph_node_started", extra=fields)
             try:

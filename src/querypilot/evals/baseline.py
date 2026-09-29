@@ -1,12 +1,10 @@
 """Direct-prompt Text2SQL 基线及逐题 smoke 评测。"""
 
 import json
-import hashlib
 import logging
-import statistics
 import time
-from collections import Counter
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 from openai import OpenAI
@@ -15,6 +13,10 @@ from querypilot.config import Settings
 from querypilot.database.executor import execute_readonly
 from querypilot.database.registry import DatabaseRegistry
 from querypilot.database.schema import format_schema, inspect_sqlite
+from querypilot.evals.compare import normalized_rows
+from querypilot.evals.results import (
+    CaseRecord, EvalReport, build_report, finish_case_record, new_case_record, write_report,
+)
 
 
 PROMPT_VERSION = "direct-v2"
@@ -64,20 +66,9 @@ def generate_sql(question: str, schema: str, evidence: str, settings: Settings) 
     return (response.choices[0].message.content or "").strip().removeprefix("```sql").removesuffix("```").strip()
 
 
-def _normalized_rows(rows: list[list[object]]) -> Counter[tuple[str, ...]]:
-    """把结果行标准化为不依赖顺序的多重集合。
-
-    参数:
-        rows: SQL 执行器返回的二维结果行列表。
-    返回:
-        以序列化行元组为键的 Counter；保留重复行数量。
-    """
-    return Counter(tuple(json.dumps(value, sort_keys=True, default=str) for value in row) for row in rows)
-
-
-def run_eval(cases_path: Path, settings: Settings, *, provider: str = "model",
-             evidence_mode: str = "none", output: Path | None = None,
-             run_id: str | None = None) -> dict:
+def run_eval(cases_path: Path, settings: Settings, *, provider: Literal["model", "fixture"] = "model",
+             evidence_mode: Literal["none", "oracle"] = "none", output: Path | None = None,
+             run_id: str | None = None) -> EvalReport:
     """逐题生成、执行并比较预测 SQL，形成 smoke 结果。
 
     参数:
@@ -112,7 +103,7 @@ def run_eval(cases_path: Path, settings: Settings, *, provider: str = "model",
         "evidence_mode": evidence_mode if provider == "model" else None,
         "total_cases": len(cases),
     })
-    records = []
+    records: list[CaseRecord] = []
     success_count = 0
     failure_count = 0
     for index, case in enumerate(cases):
@@ -126,9 +117,7 @@ def run_eval(cases_path: Path, settings: Settings, *, provider: str = "model",
         path = registry.get(database_id)
         schema = format_schema(inspect_sqlite(path))
         evidence = case.get("evidence", "") if provider == "model" and evidence_mode == "oracle" else ""
-        record = {"index": index, "question_id": case.get("question_id"),
-                  "database_id": database_id, "question": case["question"],
-                  "evidence_used": bool(evidence), "valid_sql": False, "execution_match": False}
+        record = new_case_record(index, case, evidence_used=bool(evidence))
         try:
             # fixture 是管线自检；只有 model 模式才实际调用 Text2SQL 模型。
             prediction = case["SQL"] if provider == "fixture" else generate_sql(case["question"], schema, evidence, settings)
@@ -139,16 +128,10 @@ def run_eval(cases_path: Path, settings: Settings, *, provider: str = "model",
             gold = execute_readonly(path, case["SQL"], database_id=database_id, max_rows=settings.max_rows,
                                     timeout_ms=settings.query_timeout_ms, max_response_bytes=settings.max_response_bytes)
             # 同一列位置的值需要相等；行顺序不影响结果，重复行仍计入。
-            record["execution_match"] = _normalized_rows(actual.rows) == _normalized_rows(gold.rows)
+            record["execution_match"] = normalized_rows(actual.rows) == normalized_rows(gold.rows)
         except Exception as exc:
             record["error"] = f"{type(exc).__name__}: {exc}"
-        if "error" in record:
-            record["outcome"] = "error"
-        elif record["execution_match"]:
-            record["outcome"] = "matched"
-        else:
-            record["outcome"] = "mismatched"
-        record["latency_ms"] = round((time.monotonic() - started) * 1000, 3)
+        finish_case_record(record, started)
         records.append(record)
         success_count += int(record["execution_match"])
         failure_count += int(not record["execution_match"])
@@ -162,45 +145,14 @@ def run_eval(cases_path: Path, settings: Settings, *, provider: str = "model",
             "eta_seconds": round((time.monotonic() - run_started) / completed
                                  * (len(cases) - completed), 1),
         })
-    latencies = sorted(record["latency_ms"] for record in records)
-    outcomes = Counter(record["outcome"] for record in records)
-    # failure 包含结果不匹配和评测错误；no_prediction 是 error 中的子集。
-    summary = {
-        "total": len(records),
-        "success": outcomes["matched"],
-        "failure": outcomes["mismatched"] + outcomes["error"],
-        "mismatch": outcomes["mismatched"],
-        "error": outcomes["error"],
-        "no_prediction": sum("predicted_sql" not in record for record in records),
-        "valid_sql": sum(record["valid_sql"] for record in records),
-    }
-    # 若所有题目都没拿到预测 SQL，报告模型不可用而非虚构 0% 准确率。
-    model_unavailable = provider == "model" and bool(records) and all("predicted_sql" not in item for item in records)
-    result = {
-        "dataset": str(cases_path), "dataset_sha256": hashlib.sha256(case_bytes).hexdigest(),
-        "provider": provider, "status": "model_unavailable" if model_unavailable else "completed",
-        "run_id": run_id,
-        "summary": summary,
-        "evidence_mode": evidence_mode if provider == "model" else None,
-        "model": settings.model_name if provider == "model" else None,
-        "model_base_url": settings.model_base_url if provider == "model" else None,
-        "model_temperature": settings.model_temperature if provider == "model" else None,
-        "prompt_version": PROMPT_VERSION if provider == "model" else None,
-        "count": len(records), "max_rows": settings.max_rows,
-        "query_timeout_ms": settings.query_timeout_ms,
-        "max_response_bytes": settings.max_response_bytes,
-        "valid_sql_rate": sum(item["valid_sql"] for item in records) / len(records) if records and not model_unavailable else None,
-        "execution_accuracy": sum(item["execution_match"] for item in records) / len(records) if records and not model_unavailable else None,
-        "p50_latency_ms": statistics.median(latencies) if latencies else None,
-        "p95_latency_ms": latencies[min(len(latencies) - 1, int(len(latencies) * .95))] if latencies else None,
-        "records": records,
-    }
-    if output:
-        output.parent.mkdir(parents=True, exist_ok=True)
-        # 独占创建，避免重复运行或并行任务覆盖此前的原始评测证据。
-        with output.open("x", encoding="utf-8") as stream:
-            json.dump(result, stream, indent=2, ensure_ascii=False)
-            stream.write("\n")
+    result = build_report(
+        cases_path=cases_path, case_bytes=case_bytes, settings=settings,
+        provider=provider, run_id=run_id, records=records,
+        evidence_mode=evidence_mode if provider == "model" else None,
+        prompt_version=PROMPT_VERSION if provider == "model" else None,
+    )
+    write_report(result, output)
+    summary = result["summary"]
     progress.info("eval_finished", extra={
         "run_id": run_id, "component": "evaluation", "status": result["status"],
         "completed_cases": summary["total"], "total_cases": summary["total"],

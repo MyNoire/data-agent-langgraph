@@ -13,7 +13,7 @@ def result_path(cases: Path, provider: str, model: str, evidence_mode: str,
 
     参数:
         cases: 题集 JSON 路径；文件名用于区分 12 题和 100 题。
-        provider: model 或 fixture。
+        provider: model、fixture 或 graph。
         model: 模型配置名称；仅在 model 模式写入文件名。
         evidence_mode: none 或 oracle；仅在 model 模式写入文件名。
         timestamp: 可选 UTC 时间，主要用于确定性测试；为空时取当前时间。
@@ -27,5 +27,8 @@ def result_path(cases: Path, provider: str, model: str, evidence_mode: str,
         run_name = "fixture"
     else:
         model_slug = re.sub(r"[^a-z0-9]+", "-", model.lower()).strip("-")[:60] or "unknown"
-        run_name = f"model-{model_slug}__{PROMPT_VERSION}__evidence-{evidence_mode}"
+        if provider == "graph":
+            run_name = f"graph-single-v1__model-{model_slug}__{PROMPT_VERSION}__evidence-none"
+        else:
+            run_name = f"model-{model_slug}__{PROMPT_VERSION}__evidence-{evidence_mode}"
     return Path("results") / f"{dataset}__{run_name}__{stamp_text}.json"

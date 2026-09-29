@@ -35,6 +35,7 @@ def test_fixture_eval_plumbing(tmp_path):
     output = tmp_path / "result.json"
     result = run_eval(cases, Settings(data_dir=data), provider="fixture", output=output)
     assert result["provider"] == "fixture"
+    assert "graph_version" not in result
     assert result["execution_accuracy"] == 1
     assert result["summary"] == {
         "total": 1, "success": 1, "failure": 0, "mismatch": 0,

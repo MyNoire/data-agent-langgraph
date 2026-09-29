@@ -12,12 +12,12 @@ from pathlib import Path
 TOP_LEVEL = (
     "dataset_sha256", "provider", "status", "run_id", "summary",
     "evidence_mode", "model",
-    "model_temperature", "prompt_version", "count", "max_rows",
+    "model_temperature", "prompt_version", "graph_version", "count", "max_rows",
     "query_timeout_ms", "max_response_bytes", "valid_sql_rate", "execution_accuracy",
     "p50_latency_ms", "p95_latency_ms",
 )
 RECORD = (
-    "index", "question_id", "database_id", "evidence_used", "predicted_sql",
+    "index", "question_id", "database_id", "graph_run_id", "evidence_used", "predicted_sql",
     "valid_sql", "execution_match", "outcome", "latency_ms",
 )
 

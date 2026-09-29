@@ -10,7 +10,7 @@ from typing import Iterator, TextIO
 
 
 PROGRESS_FIELDS = (
-    "run_id", "component", "node", "status", "question_id", "case_index",
+    "run_id", "parent_run_id", "graph_run_id", "component", "node", "status", "question_id", "case_index",
     "completed_cases", "total_cases", "success_count", "failure_count",
     "eta_seconds", "provider", "evidence_mode", "log_file",
 )

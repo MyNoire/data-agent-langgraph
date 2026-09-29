@@ -93,6 +93,24 @@ The preparation script verifies checksums before copying databases into ignored 
 
 When ready for the first real-model 100-question baseline, use the same three execution limits and run `uv run python scripts/run_eval.py --provider model --evidence-mode none --cases evals/bird_final100.json`. This command invokes the configured model 100 times; it has not been run for this set yet.
 
+## Single-graph evaluation with node progress
+
+`scripts/run_graph_eval.py` evaluates the same frozen cases through the four-node LangGraph workflow. It is a separate run from `scripts/run_eval.py`'s direct-prompt baseline. Every case has its own graph `run_id`; node events carry the batch `parent_run_id`, `question_id`, and `case_index`. The result JSON includes per-case outcomes and a summary. Progress is printed to standard error and saved in a matching `.events.jsonl` file. No model calls are made until you run one of the following commands yourself.
+
+From the project root, first check the graph path on the 12-question smoke set, then run the frozen 100-question set. The three limits match the 100-question manifest and should be kept fixed for comparisons:
+
+```powershell
+$env:QUERYPILOT_MAX_ROWS = '10000'
+$env:QUERYPILOT_QUERY_TIMEOUT_MS = '20000'
+$env:QUERYPILOT_MAX_RESPONSE_BYTES = '10485760'
+uv run python scripts/run_graph_eval.py --cases evals/bird_smoke.json
+uv run python scripts/run_graph_eval.py --cases evals/bird_final100.json
+```
+
+The graph uses the same direct prompt without oracle evidence, then validates and executes SQL in separate nodes. The reported execution match is this project's capped-row smoke metric, not official BIRD EX. The 100-question graph model run has not been executed yet.
+
+Both evaluation paths share the [result contract and summary rules](docs/evaluation-results.md), while keeping their generation and execution flows separate.
+
 ## Scope
 
 Implemented: configurable OpenAI-compatible direct prompt, registered local SQLite data sources, AST guard, read-only execution, API health/schema/query endpoints, JSON logging, tests, smoke evaluation, and one linear LangGraph workflow. Pending: durable checkpoints, PostgreSQL/pgvector, retrieval, SQL repair, multi-turn context/memory, Python analysis, SSE, and production authentication.
