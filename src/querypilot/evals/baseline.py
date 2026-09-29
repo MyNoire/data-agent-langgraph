@@ -2,10 +2,12 @@
 
 import json
 import hashlib
+import logging
 import statistics
 import time
 from collections import Counter
 from pathlib import Path
+from uuid import uuid4
 
 from openai import OpenAI
 
@@ -74,7 +76,8 @@ def _normalized_rows(rows: list[list[object]]) -> Counter[tuple[str, ...]]:
 
 
 def run_eval(cases_path: Path, settings: Settings, *, provider: str = "model",
-             evidence_mode: str = "none", output: Path | None = None) -> dict:
+             evidence_mode: str = "none", output: Path | None = None,
+             run_id: str | None = None) -> dict:
     """逐题生成、执行并比较预测 SQL，形成 smoke 结果。
 
     参数:
@@ -83,6 +86,7 @@ def run_eval(cases_path: Path, settings: Settings, *, provider: str = "model",
         provider: ``model`` 调用真实模型；``fixture`` 直接使用标准 SQL。
         evidence_mode: ``none`` 不提供标注证据；``oracle`` 提供题目 evidence。
         output: 可选 JSON 输出路径；为空时只返回内存结果，已有文件不会被覆盖。
+        run_id: 可选日志关联 ID；为空时为本次评测生成随机 ID。
     返回:
         包含配置、逐题结果标签、成功/失败计数、执行匹配率和延迟的字典。
     异常:
@@ -100,10 +104,25 @@ def run_eval(cases_path: Path, settings: Settings, *, provider: str = "model",
     case_bytes = cases_path.read_bytes()
     cases = json.loads(case_bytes)
     registry = DatabaseRegistry(settings.data_dir)
+    run_id = run_id or uuid4().hex
+    progress = logging.getLogger("querypilot.progress")
+    run_started = time.monotonic()
+    progress.info("eval_started", extra={
+        "run_id": run_id, "component": "evaluation", "provider": provider,
+        "evidence_mode": evidence_mode if provider == "model" else None,
+        "total_cases": len(cases),
+    })
     records = []
+    success_count = 0
+    failure_count = 0
     for index, case in enumerate(cases):
         started = time.monotonic()
         database_id = case["db_id"]
+        progress.info("eval_case_started", extra={
+            "run_id": run_id, "component": "evaluation", "database_id": database_id,
+            "question_id": case.get("question_id"), "case_index": index + 1,
+            "total_cases": len(cases),
+        })
         path = registry.get(database_id)
         schema = format_schema(inspect_sqlite(path))
         evidence = case.get("evidence", "") if provider == "model" and evidence_mode == "oracle" else ""
@@ -131,6 +150,18 @@ def run_eval(cases_path: Path, settings: Settings, *, provider: str = "model",
             record["outcome"] = "mismatched"
         record["latency_ms"] = round((time.monotonic() - started) * 1000, 3)
         records.append(record)
+        success_count += int(record["execution_match"])
+        failure_count += int(not record["execution_match"])
+        completed = index + 1
+        progress.info("eval_case_finished", extra={
+            "run_id": run_id, "component": "evaluation", "database_id": database_id,
+            "question_id": case.get("question_id"), "case_index": completed,
+            "completed_cases": completed, "total_cases": len(cases),
+            "status": record["outcome"], "elapsed_ms": record["latency_ms"],
+            "success_count": success_count, "failure_count": failure_count,
+            "eta_seconds": round((time.monotonic() - run_started) / completed
+                                 * (len(cases) - completed), 1),
+        })
     latencies = sorted(record["latency_ms"] for record in records)
     outcomes = Counter(record["outcome"] for record in records)
     # failure 包含结果不匹配和评测错误；no_prediction 是 error 中的子集。
@@ -148,6 +179,7 @@ def run_eval(cases_path: Path, settings: Settings, *, provider: str = "model",
     result = {
         "dataset": str(cases_path), "dataset_sha256": hashlib.sha256(case_bytes).hexdigest(),
         "provider": provider, "status": "model_unavailable" if model_unavailable else "completed",
+        "run_id": run_id,
         "summary": summary,
         "evidence_mode": evidence_mode if provider == "model" else None,
         "model": settings.model_name if provider == "model" else None,
@@ -169,4 +201,10 @@ def run_eval(cases_path: Path, settings: Settings, *, provider: str = "model",
         with output.open("x", encoding="utf-8") as stream:
             json.dump(result, stream, indent=2, ensure_ascii=False)
             stream.write("\n")
+    progress.info("eval_finished", extra={
+        "run_id": run_id, "component": "evaluation", "status": result["status"],
+        "completed_cases": summary["total"], "total_cases": summary["total"],
+        "success_count": summary["success"], "failure_count": summary["failure"],
+        "elapsed_ms": round((time.monotonic() - run_started) * 1000, 3),
+    })
     return result

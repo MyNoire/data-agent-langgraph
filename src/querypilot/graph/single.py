@@ -5,7 +5,10 @@
 """
 
 from dataclasses import asdict
+import logging
+import time
 from typing import Any, Callable, NotRequired, TypedDict
+from uuid import uuid4
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -23,6 +26,7 @@ class QueryInput(TypedDict):
 
     database_id: str
     question: str
+    run_id: NotRequired[str]
 
 
 class QueryOutput(TypedDict):
@@ -58,6 +62,46 @@ def build_single_query_graph(settings: Settings, *, generator: SqlGenerator = ge
         凭据和数据库路径留在节点闭包内，不写入图状态。
     """
     registry = DatabaseRegistry(settings.data_dir)
+    progress = logging.getLogger("querypilot.progress")
+
+    def observed(node: str, action: Callable[[QueryState], dict[str, Any]]) -> Callable[[QueryState], dict[str, Any]]:
+        """给单个图节点增加开始、成功和失败事件。
+
+        参数:
+            node: 用于关联日志的节点名称。
+            action: 原节点函数，输入图状态并返回状态增量。
+        返回:
+            保持原节点行为的包装函数，额外传递本次运行 ID。
+        """
+        def invoke(state: QueryState) -> dict[str, Any]:
+            """执行节点并记录耗时，异常保持原样向上抛出。
+
+            参数:
+                state: 当前节点可见的图状态。
+            返回:
+                原节点增量及 run_id；不向日志写入问题、Schema 或 SQL。
+            """
+            run_id = state.get("run_id") or uuid4().hex
+            fields = {"run_id": run_id, "component": "graph", "node": node,
+                      "database_id": state["database_id"]}
+            started = time.monotonic()
+            progress.info("graph_node_started", extra=fields)
+            try:
+                update = action(state)
+            except Exception as exc:
+                progress.warning("graph_node_finished", extra={
+                    **fields, "status": "error", "error_type": type(exc).__name__,
+                    "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+                })
+                raise
+            finished = {**fields, "status": "success",
+                        "elapsed_ms": round((time.monotonic() - started) * 1000, 3)}
+            if node == "execute_sql":
+                finished["row_count"] = update["result"]["row_count"]
+            progress.info("graph_node_finished", extra=finished)
+            return {"run_id": run_id, **update}
+
+        return invoke
 
     def load_schema(state: QueryState) -> dict[str, Any]:
         """读取已登记数据库的当前表列信息。
@@ -118,10 +162,10 @@ def build_single_query_graph(settings: Settings, *, generator: SqlGenerator = ge
         return {"result": asdict(result)}
 
     builder = StateGraph(QueryState, input_schema=QueryInput, output_schema=QueryOutput)
-    builder.add_node("load_schema", load_schema)
-    builder.add_node("generate_sql", generate)
-    builder.add_node("validate_sql", validate)
-    builder.add_node("execute_sql", execute)
+    builder.add_node("load_schema", observed("load_schema", load_schema))
+    builder.add_node("generate_sql", observed("generate_sql", generate))
+    builder.add_node("validate_sql", observed("validate_sql", validate))
+    builder.add_node("execute_sql", observed("execute_sql", execute))
     builder.add_edge(START, "load_schema")
     builder.add_edge("load_schema", "generate_sql")
     builder.add_edge("generate_sql", "validate_sql")

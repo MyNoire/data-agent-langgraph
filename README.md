@@ -39,6 +39,8 @@ The runner records prediction-level SQL, errors, execution match, valid executio
 
 Without `--output`, files are named `results/<dataset>__model-<model>__<prompt>__evidence-<mode>__<UTC timestamp>.json` or `results/<dataset>__fixture__<UTC timestamp>.json`. The command prints the actual `output_file`. An explicit `--output` is allowed but refuses to replace an existing file. Raw results stay Git-ignored; the public exporter can copy selected fields into a separately named `*-public.json`.
 
+Single-graph and evaluation commands emit live progress events to standard error and an ignored JSONL file. Progress events have a `run_id` and omit questions, SQL, Schema, rows, and credentials; separate SQL audit logs can contain SQL. See the [logging design](docs/observability.md) and [event interface](docs/observability-interface.md).
+
 ## Phase 1: first LangGraph path
 
 The first graph requires a registered `database_id` and question. Its four nodes load the current SQLite schema, generate SQL with the existing model adapter, validate the SQL AST, and execute it through the existing read-only executor. It returns the guarded SQL and query result. The graph has no router, retrieval, repair, checkpointer, or memory yet.

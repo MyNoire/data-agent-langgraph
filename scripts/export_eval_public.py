@@ -10,7 +10,8 @@ from pathlib import Path
 
 
 TOP_LEVEL = (
-    "dataset_sha256", "provider", "status", "summary", "evidence_mode", "model",
+    "dataset_sha256", "provider", "status", "run_id", "summary",
+    "evidence_mode", "model",
     "model_temperature", "prompt_version", "count", "max_rows",
     "query_timeout_ms", "max_response_bytes", "valid_sql_rate", "execution_accuracy",
     "p50_latency_ms", "p95_latency_ms",

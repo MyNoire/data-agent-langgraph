@@ -3,6 +3,7 @@
 import json
 import sqlite3
 from datetime import datetime, timezone
+from io import StringIO
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from querypilot.config import Settings
 from querypilot.database.registry import DatabaseRegistry
 from querypilot.evals.baseline import direct_prompt, run_eval
 from querypilot.evals.naming import result_path
+from querypilot.logging import progress_logging
 
 
 def test_fixture_eval_plumbing(tmp_path):
@@ -196,7 +198,9 @@ def test_eval_summary_separates_matches_mismatches_and_errors(tmp_path, monkeypa
                 "bad SQL": "DELETE FROM items"}[question]
 
     monkeypatch.setattr("querypilot.evals.baseline.generate_sql", fake_generate)
-    result = run_eval(cases, Settings(data_dir=data), provider="model")
+    events_path = tmp_path / "eval.events.jsonl"
+    with progress_logging(events_path, stream=StringIO()):
+        result = run_eval(cases, Settings(data_dir=data), provider="model")
     assert result["summary"] == {
         "total": 4, "success": 1, "failure": 3, "mismatch": 1,
         "error": 2, "no_prediction": 1, "valid_sql": 2,
@@ -206,6 +210,20 @@ def test_eval_summary_separates_matches_mismatches_and_errors(tmp_path, monkeypa
     ]
     assert [record["question_id"] for record in result["records"]] == [1, 2, 3, 4]
     assert result["execution_accuracy"] == .25
+    raw_events = events_path.read_text(encoding="utf-8")
+    events = [json.loads(line) for line in raw_events.splitlines()]
+    assert [event["event"] for event in events] == [
+        "eval_started", "eval_case_started", "eval_case_finished",
+        "eval_case_started", "eval_case_finished",
+        "eval_case_started", "eval_case_finished",
+        "eval_case_started", "eval_case_finished", "eval_finished",
+    ]
+    assert all(event["run_id"] == result["run_id"] for event in events)
+    assert events[-1]["success_count"] == 1
+    assert events[-1]["failure_count"] == 3
+    assert events[-2]["eta_seconds"] == 0
+    assert "SELECT id FROM items" not in raw_events
+    assert "bad SQL" not in raw_events
 
 
 def test_result_filename_and_existing_output_guard(tmp_path):
