@@ -2,14 +2,14 @@
 
 import argparse
 import json
-import logging
 from pathlib import Path
 from uuid import uuid4
 
 from querypilot.config import get_settings
 from querypilot.evals.graph import run_graph_eval
 from querypilot.evals.naming import result_path
-from querypilot.logging import progress_logging
+from querypilot.graph.single import query_result_row_count
+from querypilot.observability import graph_logging
 
 
 def main() -> None:
@@ -33,11 +33,13 @@ def main() -> None:
         raise FileExistsError(f"evaluation output already exists: {output}")
     events = output.with_suffix(".events.jsonl")
     run_id = uuid4().hex
-    with progress_logging(events):
+    with graph_logging(events, row_count=query_result_row_count) as logs:
         try:
-            result = run_graph_eval(args.cases, settings, output=output, run_id=run_id)
+            result = run_graph_eval(
+                args.cases, settings, output=output, run_id=run_id, middleware=logs,
+            )
         except Exception as exc:
-            logging.getLogger("querypilot.progress").warning("eval_aborted", extra={
+            logs.logger.warning("eval_aborted", extra={
                 "run_id": run_id, "component": "evaluation", "provider": "graph",
                 "status": "error", "error_type": type(exc).__name__,
             })

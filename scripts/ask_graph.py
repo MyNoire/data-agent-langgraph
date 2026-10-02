@@ -7,8 +7,8 @@ from pathlib import Path
 from uuid import uuid4
 
 from querypilot.config import get_settings
-from querypilot.graph.single import build_single_query_graph
-from querypilot.logging import progress_logging
+from querypilot.graph.single import build_single_query_graph, query_result_row_count
+from querypilot.observability import graph_logging
 
 
 def main() -> None:
@@ -28,45 +28,12 @@ def main() -> None:
     graph = build_single_query_graph(get_settings())
     run_id = uuid4().hex
     events = Path("results") / f"graph__{run_id}.events.jsonl"
-    with progress_logging(events):
-        progress = logging.getLogger("querypilot.progress")
-        started = time.monotonic()
-        fields = {"run_id": run_id, "component": "graph", "database_id": args.database_id}
-        progress.info("graph_started", extra={**fields, "log_file": str(events)})
-        try:
-            answer: dict[str, object] = {}
-            for part in graph.stream(
-                    {
-                        "database_id": args.database_id,
-                        "question": args.question,
-                        "run_id": run_id,
-                    },
-                    stream_mode="updates",
-                    version="v2",
-            ):
-                if part["type"] != "updates":
-                    continue
-                for delta in part["data"].values():
-                    if not isinstance(delta, dict):
-                        continue
-                    if "sql" in delta:
-                        answer["sql"] = delta["sql"]
-                    if "result" in delta:
-                        answer["result"] = delta["result"]
-
-            if set(answer) != {"sql", "result"}:
-                raise RuntimeError("graph stream ended without a complete answer")
-        except Exception as exc:
-            progress.warning("graph_finished", extra={
-                **fields, "status": "error", "error_type": type(exc).__name__,
-                "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
-            })
-            raise
-        progress.info("graph_finished", extra={
-            **fields, "status": "success",
-            "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
-        })
-    print(json.dumps(answer, indent=2, ensure_ascii=False, default=str))
+    with graph_logging(events, row_count=query_result_row_count) as logs:
+        result = graph.invoke(
+            {"database_id": args.database_id, "question": args.question},
+            config=logs.config(run_id=run_id, database_id=args.database_id),
+        )
+    print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
 
 
 if __name__ == "__main__":

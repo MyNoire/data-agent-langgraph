@@ -26,10 +26,6 @@ class QueryInput(TypedDict):
 
     database_id: str
     question: str
-    run_id: NotRequired[str]
-    parent_run_id: NotRequired[str]
-    question_id: NotRequired[int | str | None]
-    case_index: NotRequired[int]
 
 
 class QueryOutput(TypedDict):
@@ -52,6 +48,18 @@ class QueryState(QueryInput):
 # 生成器参数依次为问题、Schema、证据、运行配置；返回候选 SQL。
 SqlGenerator = Callable[[str, str, str, Settings], str]
 
+def query_result_row_count(output: Any) -> int | None:
+    """从 QueryPilot 输出中只提取安全的行数。
+
+    参数:
+        output: 节点增量或图最终输出，也可能不是字典。
+    返回:
+        result.row_count 为非负整数时返回该值，否则返回 None。
+        不修改 output，不返回 SQL、列名或结果行。
+    """
+    result = output.get("result") if isinstance(output, dict) else None
+    count = result.get("row_count") if isinstance(result, dict) else None
+    return count if type(count) is int and count >= 0 else None
 
 def build_single_query_graph(settings: Settings, *, generator: SqlGenerator = generate_sql) -> CompiledStateGraph:
     """编译 Schema → 模型 → SQL 校验 → 只读执行的线性图。
@@ -65,49 +73,6 @@ def build_single_query_graph(settings: Settings, *, generator: SqlGenerator = ge
         凭据和数据库路径留在节点闭包内，不写入图状态。
     """
     registry = DatabaseRegistry(settings.data_dir)
-    progress = logging.getLogger("querypilot.progress")
-
-    def observed(node: str, action: Callable[[QueryState], dict[str, Any]]) -> Callable[[QueryState], dict[str, Any]]:
-        """给单个图节点增加开始、成功和失败事件。
-
-        参数:
-            node: 用于关联日志的节点名称。
-            action: 原节点函数，输入图状态并返回状态增量。
-        返回:
-            保持原节点行为的包装函数，额外传递本次运行 ID。
-        """
-        def invoke(state: QueryState) -> dict[str, Any]:
-            """执行节点并记录耗时，异常保持原样向上抛出。
-
-            参数:
-                state: 当前节点可见的图状态。
-            返回:
-                原节点增量及 run_id；不向日志写入问题、Schema 或 SQL。
-            """
-            run_id = state.get("run_id") or uuid4().hex
-            fields = {"run_id": run_id, "component": "graph", "node": node,
-                      "database_id": state["database_id"]}
-            for key in ("parent_run_id", "question_id", "case_index"):
-                if key in state:
-                    fields[key] = state[key]
-            started = time.monotonic()
-            progress.info("graph_node_started", extra=fields)
-            try:
-                update = action(state)
-            except Exception as exc:
-                progress.warning("graph_node_finished", extra={
-                    **fields, "status": "error", "error_type": type(exc).__name__,
-                    "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
-                })
-                raise
-            finished = {**fields, "status": "success",
-                        "elapsed_ms": round((time.monotonic() - started) * 1000, 3)}
-            if node == "execute_sql":
-                finished["row_count"] = update["result"]["row_count"]
-            progress.info("graph_node_finished", extra=finished)
-            return {"run_id": run_id, **update}
-
-        return invoke
 
     def load_schema(state: QueryState) -> dict[str, Any]:
         """读取已登记数据库的当前表列信息。
@@ -168,13 +133,13 @@ def build_single_query_graph(settings: Settings, *, generator: SqlGenerator = ge
         return {"result": asdict(result)}
 
     builder = StateGraph(QueryState, input_schema=QueryInput, output_schema=QueryOutput)
-    builder.add_node("load_schema", observed("load_schema", load_schema))
-    builder.add_node("generate_sql", observed("generate_sql", generate))
-    builder.add_node("validate_sql", observed("validate_sql", validate))
-    builder.add_node("execute_sql", observed("execute_sql", execute))
+    builder.add_node("load_schema", load_schema)
+    builder.add_node("generate_sql", generate)
+    builder.add_node("validate_sql", validate)
+    builder.add_node("execute_sql", execute)
     builder.add_edge(START, "load_schema")
     builder.add_edge("load_schema", "generate_sql")
     builder.add_edge("generate_sql", "validate_sql")
     builder.add_edge("validate_sql", "execute_sql")
     builder.add_edge("execute_sql", END)
-    return builder.compile()
+    return builder.compile(name="querypilot_single")

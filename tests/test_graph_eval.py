@@ -10,6 +10,8 @@ from querypilot.database.registry import DatabaseRegistry
 from querypilot.evals.graph import run_graph_eval
 from querypilot.evals.naming import result_path
 from querypilot.logging import progress_logging
+from querypilot.graph.single import query_result_row_count
+from querypilot.observability import graph_logging
 
 
 def test_graph_eval_records_match_mismatch_and_guard_failure(tmp_path, monkeypatch, capsys):
@@ -58,10 +60,10 @@ def test_graph_eval_records_match_mismatch_and_guard_failure(tmp_path, monkeypat
 
     output = tmp_path / "graph-result.json"
     events_path = tmp_path / "graph-events.jsonl"
-    with progress_logging(events_path, stream=StringIO()):
+    with graph_logging(events_path, stream=StringIO(), row_count=query_result_row_count) as logs:
         result = run_graph_eval(
             cases, Settings(data_dir=data_dir), output=output,
-            run_id="batch-001", generator=fake_generator,
+            run_id="batch-001", generator=fake_generator, middleware=logs,
         )
     assert result["provider"] == "graph"
     assert result["graph_version"] == "single-v1"
@@ -73,6 +75,7 @@ def test_graph_eval_records_match_mismatch_and_guard_failure(tmp_path, monkeypat
         "matched", "mismatched", "error",
     ]
     assert result["records"][2]["error_type"] == "SqlRejected"
+    assert result["records"][2]["predicted_sql"] == "DELETE FROM items"
     assert json.loads(output.read_text(encoding="utf-8"))["run_id"] == "batch-001"
 
     raw = events_path.read_text(encoding="utf-8")
@@ -88,10 +91,17 @@ def test_graph_eval_records_match_mismatch_and_guard_failure(tmp_path, monkeypat
         assert [event["event"] for event in case_events] == [
             "eval_case_started", "eval_case_finished",
         ]
+        assert node_events
         assert all(event["parent_run_id"] == "batch-001" for event in node_events)
         assert all(event["question_id"] == index for event in node_events)
         assert all(event["case_index"] == index for event in node_events)
     assert not any(event.get("node") == "execute_sql" and event.get("case_index") == 3 for event in events)
+    mismatch_root = next(event for event in events
+                         if event["event"] == "graph_span_finished"
+                         and event["run_id"] == "batch-001:case:2"
+                         and event["parent_span_id"] is None)
+    assert mismatch_root["status"] == "success"
+    assert result["records"][1]["outcome"] == "mismatched"
     assert "SECRET" not in raw
     assert "DELETE FROM items" not in raw
 
@@ -158,7 +168,8 @@ def test_graph_eval_cli_uses_graph_and_keeps_model_runs_separate(tmp_path, monke
     assert "graph-single-v1" in summary["output_file"]
     events_path = tmp_path / summary["event_file"]
     events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
-    assert sum(event["event"] == "graph_node_finished" for event in events) == 4
+    assert sum(event["event"] == "graph_span_finished" and event.get("parent_span_id") is not None
+               for event in events) == 4
     assert "graph-single-v1" in result_path(cases, "graph", "test-model", "none").name
     assert "graph-single-v1" not in result_path(cases, "model", "test-model", "none").name
     monkeypatch.setattr(graph_module, "build_single_query_graph", real_builder)

@@ -14,14 +14,16 @@ from querypilot.evals.compare import normalized_rows
 from querypilot.evals.results import (
     CaseRecord, EvalReport, build_report, finish_case_record, new_case_record, write_report,
 )
-from querypilot.graph.single import SqlGenerator, build_single_query_graph
+from querypilot.graph.single import SqlGenerator, build_single_query_graph, query_result_row_count
+from querypilot.observability import GraphLogMiddleware
 
 
 GRAPH_VERSION = "single-v1"
 
 
 def run_graph_eval(cases_path: Path, settings: Settings, *, output: Path | None = None,
-                   run_id: str | None = None, generator: SqlGenerator = generate_sql) -> EvalReport:
+                   run_id: str | None = None, generator: SqlGenerator = generate_sql,
+                   middleware: GraphLogMiddleware | None = None) -> EvalReport:
     """用同一个编译图逐题运行题集，比较执行结果并记录逐节点进度。
 
     参数:
@@ -30,6 +32,7 @@ def run_graph_eval(cases_path: Path, settings: Settings, *, output: Path | None 
         output: 可选原始 JSON 结果路径；已存在时拒绝覆盖。
         run_id: 可选批次 ID；每题另外生成关联到批次的图运行 ID。
         generator: 单图 SQL 生成函数；默认调用真实模型，测试可注入替身。
+        middleware: 可选日志中间件；未提供时沿用已配置的全局进度 logger。
     返回:
         包含逐题记录、汇总及当前执行配置的字典。
     异常:
@@ -48,7 +51,10 @@ def run_graph_eval(cases_path: Path, settings: Settings, *, output: Path | None 
     batch_run_id = run_id or uuid4().hex
     graph = build_single_query_graph(settings, generator=generator)
     registry = DatabaseRegistry(settings.data_dir)
-    progress = logging.getLogger("querypilot.progress")
+    middleware = middleware or GraphLogMiddleware(
+        logging.getLogger("querypilot.progress"), row_count=query_result_row_count,
+    )
+    progress = middleware.logger
     run_started = time.monotonic()
     progress.info("eval_started", extra={
         "run_id": batch_run_id, "component": "evaluation", "provider": "graph",
@@ -73,11 +79,11 @@ def run_graph_eval(cases_path: Path, settings: Settings, *, output: Path | None 
         try:
             answer: dict[str, object] = {}
             for part in graph.stream(
-                {
-                    "database_id": database_id, "question": case["question"],
-                    "run_id": graph_run_id, "parent_run_id": batch_run_id,
-                    "question_id": case.get("question_id"), "case_index": index,
-                },
+                {"database_id": database_id, "question": case["question"]},
+                config=middleware.config(
+                    run_id=graph_run_id, parent_run_id=batch_run_id,
+                    database_id=database_id, question_id=case.get("question_id"), case_index=index,
+                ),
                 stream_mode="updates", version="v2",
             ):
                 if part["type"] != "updates":

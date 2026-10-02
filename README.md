@@ -107,9 +107,14 @@ uv run python scripts/run_graph_eval.py --cases evals/bird_smoke.json
 uv run python scripts/run_graph_eval.py --cases evals/bird_final100.json
 ```
 
-The graph uses the same direct prompt without oracle evidence, then validates and executes SQL in separate nodes. The reported execution match is this project's capped-row smoke metric, not official BIRD EX. The 100-question graph model run has not been executed yet.
+The graph uses the same direct prompt without oracle evidence, then validates and executes SQL in separate nodes. The reported execution match is this project's capped-row smoke metric, not official BIRD EX.
+
+The first 100-question graph model run completed on 2026-10-02 using the configured `gpt-5.5` model, `direct-v2`, `single-v1`, and no evidence or RAG. It recorded 30 matched cases, 66 mismatches, and 4 errors (70 failures in total). Execution match was 30%; `valid_sql_rate` was 96% (successful graph execution, not syntax validation alone). Per-case evaluation latency was P50 14.063 s and P95 54.421 s, including reference SQL execution and result comparison. Execution limits were 10,000 rows, 20,000 ms per SQL execution, and 10 MiB per response; model temperature was not explicitly set.
+
+The local raw report is `results/bird-final100__graph-single-v1__model-gpt-5-5__direct-v2__evidence-none__20261002T073342236010Z.json` (SHA-256: `d4293131528a4723112bca18e2a9feeb0e8bdc39554186d8cb85c62ef96cb70c`). Its paired `.events.jsonl` contains progress events. Raw reports and event logs remain ignored by Git; retain both local files for later RAG comparisons. The evaluated case file has SHA-256 `e29ab5ed86a793884bcff26e5e602ed56efda019bf95b4bd7f9f4a16762c4b8f`.
 
 Both evaluation paths share the [result contract and summary rules](docs/evaluation-results.md), while keeping their generation and execution flows separate.
+For a step-by-step explanation of the single-graph evaluator, see the [learning guide](docs/learning/single-graph-evaluation.md).
 
 ## Scope
 
