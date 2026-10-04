@@ -116,6 +116,10 @@ The local raw report is `results/bird-final100__graph-single-v1__model-gpt-5-5__
 Both evaluation paths share the [result contract and summary rules](docs/evaluation-results.md), while keeping their generation and execution flows separate.
 For a step-by-step explanation of the single-graph evaluator, see the [learning guide](docs/learning/single-graph-evaluation.md).
 
+The next-stage [RAG knowledge-store design](docs/rag-knowledge-design.md) includes the three-table schema, ingestion/versioning contract, retrieval queries, and evaluation plan. It is a design artifact; PostgreSQL ingestion and RAG integration are not implemented yet.
+
+For the guided implementation sequence and stage acceptance criteria, see the [RAG work plan](docs/learning/rag-work-plan.md). The first exercise prepares a read-only catalog for one small database before adding PostgreSQL or embeddings.
+
 ## Scope
 
 Implemented: configurable OpenAI-compatible direct prompt, registered local SQLite data sources, AST guard, read-only execution, API health/schema/query endpoints, JSON logging, tests, smoke evaluation, and one linear LangGraph workflow. Pending: durable checkpoints, PostgreSQL/pgvector, retrieval, SQL repair, multi-turn context/memory, Python analysis, SSE, and production authentication.
