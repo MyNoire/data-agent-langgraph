@@ -120,6 +120,10 @@ The next-stage [RAG knowledge-store design](docs/rag-knowledge-design.md) includ
 
 For the guided implementation sequence and stage acceptance criteria, see the [RAG work plan](docs/learning/rag-work-plan.md). The first exercise prepares a read-only catalog for one small database before adding PostgreSQL or embeddings.
 
+For the implemented R1.1–R1.2 architecture, design decisions, verified limitations, and Agent engineering interview questions, see the [knowledge preparation interview guide](docs/interview/r1-1-r1-2-agent-knowledge-preparation.md) (Chinese).
+
+The approved Toxicology description corrections can be rebuilt with `scripts/curate_catalog.py` and the pinned plan in `config/catalog_corrections/toxicology-v1.json`. The [correction guide](docs/catalog-quality-corrections.md) records the command, provenance, and formal input bundle for R1.3. This remains an offline preparation step; runtime retrieval is pending.
+
 ## Scope
 
 Implemented: configurable OpenAI-compatible direct prompt, registered local SQLite data sources, AST guard, read-only execution, API health/schema/query endpoints, JSON logging, tests, smoke evaluation, and one linear LangGraph workflow. Pending: durable checkpoints, PostgreSQL/pgvector, retrieval, SQL repair, multi-turn context/memory, Python analysis, SSE, and production authentication.
