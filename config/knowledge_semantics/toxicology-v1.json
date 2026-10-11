@@ -1,0 +1,53 @@
+{
+  "format_version": "knowledge-semantics-v1",
+  "database_id": "toxicology",
+  "schema_name": "main",
+  "version": "toxicology-inferred-v1",
+  "origin": "inferred",
+  "author": "Codex，根据字段说明和声明外键离线推断",
+  "tables": {
+    "molecule": {
+      "purpose": "记录分子及其致癌性标签，是按分子筛选、比较致癌性的分析入口。",
+      "row_grain": "一个分子。"
+    },
+    "atom": {
+      "purpose": "记录分子中的原子及其元素类型，用于分析分子的元素组成或按元素筛选原子。",
+      "row_grain": "一个原子，关联其所属分子。"
+    },
+    "bond": {
+      "purpose": "记录分子中的化学键及键型，用于分析分子的成键结构。",
+      "row_grain": "一条化学键，关联其所属分子。"
+    },
+    "connected": {
+      "purpose": "记录两个原子之间由哪条化学键连接，将原子与化学键组织成可查询的连接关系。",
+      "row_grain": "一对原子及连接它们的化学键。"
+    }
+  },
+  "relationships": [
+    {
+      "source_table": "atom", "source_columns": ["molecule_id"],
+      "target_table": "molecule", "target_columns": ["molecule_id"],
+      "meaning": "原子属于该分子；可将原子元素组成与分子的致癌性标签关联分析。"
+    },
+    {
+      "source_table": "bond", "source_columns": ["molecule_id"],
+      "target_table": "molecule", "target_columns": ["molecule_id"],
+      "meaning": "化学键属于该分子；可将键型与分子的致癌性标签关联分析。"
+    },
+    {
+      "source_table": "connected", "source_columns": ["bond_id"],
+      "target_table": "bond", "target_columns": ["bond_id"],
+      "meaning": "这条连接记录使用的化学键；可查询两个原子之间的键型。"
+    },
+    {
+      "source_table": "connected", "source_columns": ["atom_id"],
+      "target_table": "atom", "target_columns": ["atom_id"],
+      "meaning": "连接关系中的第一个原子；可查询第一端原子的元素属性。"
+    },
+    {
+      "source_table": "connected", "source_columns": ["atom_id2"],
+      "target_table": "atom", "target_columns": ["atom_id"],
+      "meaning": "连接关系中的第二个原子；可查询第二端原子的元素属性，与 atom_id 的第一端角色区分。"
+    }
+  ]
+}

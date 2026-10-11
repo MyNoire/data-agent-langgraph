@@ -124,6 +124,10 @@ For the implemented R1.1–R1.2 architecture, design decisions, verified limitat
 
 The approved Toxicology description corrections can be rebuilt with `scripts/curate_catalog.py` and the pinned plan in `config/catalog_corrections/toxicology-v1.json`. The [correction guide](docs/catalog-quality-corrections.md) records the command, provenance, and formal input bundle for R1.3. This remains an offline preparation step; runtime retrieval is pending.
 
+The [R1.3 rendering tutorial](docs/learning/rag-r1-3-rendering-tutorial.md) (Chinese) explains how the implemented offline renderer turns the approved Toxicology catalog into document, chunk, and relation drafts. The source is in `src/querypilot/knowledge/`, the CLI is `scripts/render_knowledge.py`, and focused tests are in `tests/test_knowledge_render.py`. Its output remains an unpublished draft: corpus IDs, deterministic UUIDs, embeddings, PostgreSQL ingestion, and runtime retrieval are later steps.
+
+The [semantic context update](docs/knowledge-semantic-context.md) adds compact, inferred table purposes and relationship meanings from the versioned profile in `config/knowledge_semantics/toxicology-v1.json`, together with role distinctions and complete candidate JOIN conditions. Pass `--semantics` to build its separate draft output in `data/rag/toxicology/r1-3-semantic-v2/`; retrieval and model accuracy gains have not been measured.
+
 ## Scope
 
 Implemented: configurable OpenAI-compatible direct prompt, registered local SQLite data sources, AST guard, read-only execution, API health/schema/query endpoints, JSON logging, tests, smoke evaluation, and one linear LangGraph workflow. Pending: durable checkpoints, PostgreSQL/pgvector, retrieval, SQL repair, multi-turn context/memory, Python analysis, SSE, and production authentication.
