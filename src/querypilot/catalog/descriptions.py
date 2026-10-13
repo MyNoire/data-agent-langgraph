@@ -63,6 +63,22 @@ def _read_csv(path: Path, source_file: str) -> tuple[DescriptionSource, list[Sou
         OSError: 文件不可读。
     """
     raw = path.read_bytes()
+    return read_description_bytes(raw, source_file)
+
+
+def read_description_bytes(raw: bytes, source_file: str) -> tuple[DescriptionSource, list[SourceRecord]]:
+    """解析固定 CSV 原字节，供文件导入和快照核验共用。
+
+    参数:
+        raw: 已固定的 UTF-8 或 UTF-8-sig 字节。
+        source_file: 逻辑来源位置。
+    返回:
+        文件级来源及带物理行号、原记录和单元格的记录列表。
+    异常:
+        DescriptionError / csv.Error: 编码、表头或 CSV 格式不合法。
+    副作用:
+        无文件读写；规则与旧 _read_csv 相同。
+    """
     encoding = "utf-8-sig" if raw.startswith(b"\xef\xbb\xbf") else "utf-8"
     try:
         text = raw.decode(encoding)

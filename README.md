@@ -4,9 +4,22 @@ QueryPilot's target is a multi-turn natural-language business data assistant: se
 
 The [architecture diagram](docs/querypilot-architecture.drawio.png) shows the current Phase 0 path alongside the planned LangGraph system. Its [editable draw.io source](docs/querypilot-architecture.drawio) is also included.
 
-The first real-model BIRD smoke run is recorded in the [Phase 0.5 baseline report](docs/phase-0.5-baseline.md). It is a 12-question development result, not official BIRD EX. A separate, frozen 100-question set is available for later model comparisons; no real-model score has been reported for that set.
+The first real-model BIRD smoke run is recorded in the [Phase 0.5 baseline report](docs/phase-0.5-baseline.md). It is a 12-question development result, not official BIRD EX. The frozen 100-question real-model baseline is recorded in the [RAG work plan](docs/learning/rag-work-plan.md); later comparisons must preserve its dataset and evaluation protocol.
 
 The foundation uses Python 3.11/3.12, uv, FastAPI, Pydantic v2, sqlglot, and SQLite. The model client accepts an OpenAI-compatible URL and model name, including a locally served Qwen model. Phase 1 now has a single linear LangGraph path; PostgreSQL and the larger agent architecture remain planned.
+
+## 离线知识快照（R1.4）
+
+已实现固定批准包与语义配置的 corpus 构建、确定性身份、来源/引用/文件完整性核验，以及已有一致目标的只读复用。Toxicology 正式离线快照为 `validated`；R1.3 草稿仍为 `draft`。快照状态不代表推断业务语义已获证明，也不代表检索或 Text2SQL 效果改善。PostgreSQL 导入、Embedding 和在线 RAG 留待后续阶段。
+
+```powershell
+uv run --frozen python scripts/build_corpus.py --database-id toxicology --bundle data/rag/toxicology/r1-2-curated-v1 --semantics config/knowledge_semantics/toxicology-v1.json --output-dir data/rag/toxicology/r1-4-corpus
+uv run --frozen python scripts/verify_corpus.py --corpus-dir data/rag/toxicology/r1-4-corpus
+```
+
+首次成功返回 `built`，已有目标完整且与候选一致时返回 `reused`，不重写文件；独立核验通过返回 `verified`。无效或不同目标拒绝，不支持 force/resume。快照在本地 `data/` 下，来源和正文不进入进度日志或公开提交。
+
+格式、服务接口和实际验收见 [R1.4 规格目录](specs/001-r1-4-corpus/quickstart.md)。输入包/语义文件是必需前置，克隆源码并不自动获得被忽略的本地资料。
 
 ## Local setup
 
@@ -127,6 +140,10 @@ The approved Toxicology description corrections can be rebuilt with `scripts/cur
 The [R1.3 rendering tutorial](docs/learning/rag-r1-3-rendering-tutorial.md) (Chinese) explains how the implemented offline renderer turns the approved Toxicology catalog into document, chunk, and relation drafts. The source is in `src/querypilot/knowledge/`, the CLI is `scripts/render_knowledge.py`, and focused tests are in `tests/test_knowledge_render.py`. Its output remains an unpublished draft: corpus IDs, deterministic UUIDs, embeddings, PostgreSQL ingestion, and runtime retrieval are later steps.
 
 The [semantic context update](docs/knowledge-semantic-context.md) adds compact, inferred table purposes and relationship meanings from the versioned profile in `config/knowledge_semantics/toxicology-v1.json`, together with role distinctions and complete candidate JOIN conditions. Pass `--semantics` to build its separate draft output in `data/rag/toxicology/r1-3-semantic-v2/`; retrieval and model accuracy gains have not been measured.
+
+## Development workflow
+
+Spec Kit 1.1.3 is installed as an independent uv tool, with Codex skills and PowerShell scripts configured in this repository. See the [Chinese setup and usage guide](docs/learning/spec-kit-setup.md), [SDD workflow](specs/README.md), and [project constitution](.specify/memory/constitution.md). New features start with a bounded specification; Agent core learning tasks retain the paired programming approach in `AGENTS.md`.
 
 ## Scope
 

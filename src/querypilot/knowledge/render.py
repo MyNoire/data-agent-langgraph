@@ -187,7 +187,25 @@ def _load_semantics(
     """
     if semantic_file is None:
         return None, {}, {}
-    raw = semantic_file.read_bytes()
+    return _parse_semantics(semantic_file.read_bytes(), semantic_file.name, catalog)
+
+
+def _parse_semantics(
+    raw: bytes, semantic_name: str, catalog: CatalogSnapshot,
+) -> tuple[SemanticProfile, dict[str, str], dict[str, Any]]:
+    """解析同一份语义原字节，避免摘要与正文使用不同版本。
+
+    参数:
+        raw: 配置原字节。
+        semantic_name: 原配置 basename。
+        catalog: 原始结构。
+    返回:
+        配置、关系映射及 metadata。
+    异常:
+        KnowledgeError / ValueError: 配置或引用无效。
+    副作用:
+        无文件读写；不改变结构顺序。
+    """
     profile = SemanticProfile.model_validate_json(raw)
     _require(profile.database_id == catalog.database_id and profile.schema_name == catalog.schema_name,
              "语义配置 database_id/schema_name 与当前库不一致")
@@ -205,7 +223,7 @@ def _load_semantics(
             meanings[key] = item.meaning
     return profile, meanings, {
         "semantic_origin": profile.origin,
-        "semantic_profile": {"file": semantic_file.name, "sha256": sha256(raw).hexdigest(),
+        "semantic_profile": {"file": semantic_name, "sha256": sha256(raw).hexdigest(),
                              "version": profile.version, "author": profile.author},
     }
 
@@ -237,6 +255,31 @@ def _load_bundle(bundle_dir: Path) -> _Bundle:
         raw = path.read_bytes()
         _require(sha256(raw).hexdigest() == expected, f"产物 hash 不一致: {relative}")
         verified[relative] = raw
+    return _parse_bundle(manifest_bytes, verified)
+
+
+def _parse_bundle(manifest_bytes: bytes, verified: dict[str, bytes]) -> _Bundle:
+    """核对固定输入字节，供旧文件入口与 corpus 内存入口共用。
+
+    参数:
+        manifest_bytes: 原清单字节。
+        verified: 清单文件名到原字节的映射。
+    返回:
+        完成批准范围、摘要和 lineage 核对的包。
+    异常:
+        KnowledgeError / ValueError: 文件或引用不一致。
+    副作用:
+        无文件读写，保留原顺序。
+    """
+    manifest = json.loads(manifest_bytes)
+    status = "approved_corrections_applied"
+    _require(manifest.get("format_version") == "description-curation-v1"
+             and manifest.get("status") == status, "需要已批准的 v1 修正包")
+    artifacts = manifest["artifacts_sha256"]
+    _require(set(verified) == set(artifacts), "输入文件与清单不一致")
+    for relative, expected in artifacts.items():
+        _require(sha256(verified[relative]).hexdigest() == expected,
+                 f"产物 hash 不一致: {relative}")
     required = {"enriched_catalog.json", "import_warnings.json", "correction_report.json"}
     _require(required <= verified.keys(), "修正包缺少必要产物")
     enriched = EnrichedCatalog.model_validate_json(verified["enriched_catalog.json"])
@@ -321,9 +364,51 @@ def render_knowledge(bundle_dir: Path, semantic_file: Path | None = None) -> Kno
         只读取本地输入，不写文件，不调用模型、SQLite 或向量数据库。
     """
     bundle = _load_bundle(bundle_dir)
+    return _render_bundle(bundle, *_load_semantics(semantic_file, bundle.enriched.catalog))
+
+
+def render_knowledge_inputs(
+    manifest_bytes: bytes, input_files: dict[str, bytes],
+    semantic_bytes: bytes, semantic_name: str,
+) -> KnowledgeDraft:
+    """从固定输入字节生成与 R1.3 文件入口相同的草稿。
+
+    参数:
+        manifest_bytes: curation_manifest 原字节。
+        input_files: 清单声明的相对文件名到原字节的映射。
+        semantic_bytes: 必需语义配置原字节。
+        semantic_name: 原 basename，用于保留定位。
+    返回:
+        原有 KnowledgeDraft，状态仍为 draft。
+    异常:
+        KnowledgeError / ValueError: 输入或语义无效。
+    副作用:
+        无；路径及来源范围由调用方校验。
+    """
+    bundle = _parse_bundle(manifest_bytes, input_files)
+    return _render_bundle(bundle, *_parse_semantics(
+        semantic_bytes, semantic_name, bundle.enriched.catalog,
+    ))
+
+
+def _render_bundle(
+    bundle: _Bundle, profile: SemanticProfile | None,
+    relation_meanings: dict[str, str], semantic_metadata: dict[str, Any],
+) -> KnowledgeDraft:
+    """渲染已核对的内容，保持原知识表达及成员顺序。
+
+    参数:
+        bundle: 批准包。
+        profile: 可选推断配置。
+        relation_meanings: 关系语义映射。
+        semantic_metadata: 配置来源和版本。
+    返回:
+        文档、三类块和关系草稿。
+    副作用:
+        无文件读写，不排序原结构。
+    """
     enriched, manifest, report = bundle.enriched, bundle.manifest, bundle.report
     catalog = enriched.catalog
-    profile, relation_meanings, semantic_metadata = _load_semantics(semantic_file, catalog)
     db, schema = catalog.database_id, catalog.schema_name
     notes = {(note.table_name, note.column_name): note for note in enriched.descriptions}
     lineage = {(item["table_name"], item["column_name"]): item for item in report["lineage"]}

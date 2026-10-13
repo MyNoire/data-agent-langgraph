@@ -54,6 +54,12 @@ QueryPilot 是独立的 Python + LangGraph 项目，目标是面向业务分析�
 
 Codex 默认起草这些文档。用户重点审查 Agent 行为、边界、实验口径和需亲手实现的核心逻辑；非 Agent 的局部实现无需等待额外的文档仪式。小型缺陷修复可在任务记录中写清复现、预期与验证，不强制为每次修复创建三份文件。`AGENTS.md` 是长期协作规则，单项 `spec.md` 是该功能的验收契约，计划和任务不能悄悄改变规格。SDD 工具是可选的，不把安装工具当成实施功能的前提。
 
+### Spec Kit 项目入口
+
+已接入 Spec Kit 1.1.3，使用 `.agents/skills/speckit-*` 的 Codex 技能和 `.specify/scripts/powershell/` 的脚本。项目原则在 `.specify/memory/constitution.md`，操作说明在 `docs/learning/spec-kit-setup.md`。生成的 spec、plan、tasks 和解释使用中文；上游技能、脚本及模板保留原文，项目规则写在本文件和 constitution 中。
+
+新功能使用编号目录，保留已有 R1.3 规格和轻量模板。运行 plan/tasks/analyze/implement 前确认当前 feature；`.specify/feature.json` 是被忽略的本机选择记录，不作为共享契约。tasks 中注明“Codex 实现”或“结对”，implement 遇到结对核心段时按第 2 节教学，不自动代写整段，除非用户明确交接。不自动覆盖本文件、不自动提交或创建外部 issue；不因模板示例额外要求全面 TDD 或付费评测。
+
 ## 4. 原项目与资料的使用
 
 参照原 Kotlin 项目的业务流程和已验证代码事实：Schema/业务知识召回、关系扩展、规划与人工反馈、SQL/Python 执行、报告及前端进度。新项目按自己的安全边界和可评测需求决定实施顺序；A2A、前端、Python 沙箱等不是仅因原项目存在就必须立即复制。
