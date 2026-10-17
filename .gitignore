@@ -3,6 +3,8 @@
 __pycache__/
 .pytest_cache/
 .env
+.env.*
+!.env.example
 data/
 evals/bird_smoke.json
 evals/bird_final100.json
@@ -11,3 +13,5 @@ results/*.jsonl
 results/*.tmp
 !results/*-public.json
 *.pyc
+dist/
+*.egg-info/

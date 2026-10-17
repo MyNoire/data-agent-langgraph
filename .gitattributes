@@ -1,0 +1,2 @@
+# 迁移按原字节计算 checksum，跨平台检出必须保留 LF。
+src/querypilot/knowledge/migrations/*.sql text eol=lf

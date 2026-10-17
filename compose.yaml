@@ -1,0 +1,23 @@
+name: querypilot-knowledge
+
+services:
+  knowledge-db:
+    # 必须显式配置固定版本/真实 digest，避免无意升级已有持久化卷。
+    image: ${QUERYPILOT_PG_IMAGE:?请配置 PostgreSQL18/pgvector0.8.7 镜像}
+    environment:
+      POSTGRES_DB: querypilot_knowledge
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${QUERYPILOT_PG_ADMIN_PASSWORD:?请配置本机管理员密码}
+    ports:
+      - "127.0.0.1:${QUERYPILOT_PG_PORT:-5432}:5432"
+    volumes:
+      - knowledge-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d querypilot_knowledge"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  knowledge-data:

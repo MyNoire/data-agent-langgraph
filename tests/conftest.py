@@ -5,9 +5,37 @@ from hashlib import sha256
 import json
 from pathlib import Path
 
+import pytest
+
 from querypilot.catalog.corrections import build_curated_catalog
 from querypilot.catalog.descriptions import enrich_catalog
 from querypilot.catalog.models import CatalogSnapshot, ColumnSchema, ForeignKeySchema, TableSchema
+
+
+def pytest_addoption(parser) -> None:
+    """输入：pytest 解析器；输出：None；注册缺实库必须失败的显式验收开关。"""
+    parser.addoption("--require-postgres", action="store_true", default=False,
+                     help="R2 实库验收：缺驱动/DSN/服务时失败，不能以 skip 通过")
+
+
+@pytest.fixture
+def r2_corpus(tmp_path):
+    """输入：临时目录；输出：原创两列复合 FK 正式快照；仅写临时文件。"""
+    from querypilot.knowledge.corpus import build_knowledge_corpus
+    bundle = _bundle(tmp_path)
+    semantic = tmp_path / "config" / "semantics.json"
+    semantic.parent.mkdir()
+    _write_json(semantic, {
+        "database_id": "demo", "version": "r2-fixture-v1", "author": "原创测试",
+        "tables": {"items": {"purpose": "租户内物品。", "row_grain": "一件物品。"},
+                   "events": {"purpose": "物品事件。", "row_grain": "一次事件。"}},
+        "relationships": [{"source_table": "events", "source_columns": ["tenant_ref", "item_ref"],
+                           "target_table": "items", "target_columns": ["tenant_id", "item_id"],
+                           "meaning": "事件关联同租户物品。"}],
+    })
+    target = tmp_path / "corpus"
+    build_knowledge_corpus(bundle, semantic, target, "demo")
+    return target
 
 def _write_json(path: Path, payload: dict) -> None:
     """写入测试使用的 JSON 文件。

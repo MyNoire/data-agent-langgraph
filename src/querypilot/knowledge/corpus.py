@@ -27,6 +27,7 @@ from querypilot.knowledge.corpus_models import (
     SourceEntry, UNVERIFIED, ValidationReport, VerificationSummary,
 )
 from querypilot.knowledge.models import KnowledgeDraft
+from querypilot.knowledge.storage_models import VerifiedCorpus
 from querypilot.knowledge.render import KnowledgeError, render_knowledge_inputs
 
 REQUIRED_BUNDLE = {
@@ -451,6 +452,32 @@ def _verify(root: Path, manifest: CorpusManifest, *, precommit: bool = False) ->
     return candidate
 
 
+def load_verified_corpus(corpus_dir: Path) -> VerifiedCorpus:
+    """加载并完整核验正式快照，返回当前调用持有的全部对象。
+
+    参数：corpus_dir 为完整 R1.4 目录。
+    返回：VerifiedCorpus，包含清单、报告、三类对象 tuple；不得修改嵌套内容。
+    异常：CorpusError，沿用现有来源/身份/文件检查，保留底层 cause。
+    副作用：只读，不调用模型/数据库；后续使用者无需未经验证二次读 JSONL。
+    """
+    try:
+        root = Path(corpus_dir).resolve()
+        manifest = _model(CorpusManifest, _parse(_read(root, "manifest.json"), "manifest.json"), "manifest.json")
+        candidate = _verify(root, manifest)
+        return VerifiedCorpus(
+            manifest=manifest, validation=candidate.report,
+            **{name: tuple(model.model_validate(row) for row in candidate.rows[name])
+               for name, (model, _, _) in GROUPS.items()},
+        )
+    except CorpusError:
+        raise
+    except OSError as exc:
+        message = "快照缺少必需文件" if isinstance(exc, FileNotFoundError) else "当前无法读取快照完成核验"
+        raise CorpusError("artifact_integrity", message) from exc
+    except (ValueError, KeyError, TypeError, RuntimeError) as exc:
+        raise CorpusError("artifact_integrity", "快照结构或来源引用不合法") from exc
+
+
 def verify_knowledge_corpus(corpus_dir: Path) -> VerificationSummary:
     """只读独立核验正式快照。
 
@@ -460,11 +487,9 @@ def verify_knowledge_corpus(corpus_dir: Path) -> VerificationSummary:
     副作用: 只读；不修复、不撤销状态，不调用模型或数据库。
     """
     try:
-        root = Path(corpus_dir).resolve()
-        manifest = _model(CorpusManifest, _parse(_read(root, "manifest.json"), "manifest.json"), "manifest.json")
-        candidate = _verify(root, manifest)
-        return VerificationSummary(corpus_id=manifest.corpus_id, counts=candidate.report.counts,
-                                   checks=candidate.report.checks)
+        snapshot = load_verified_corpus(corpus_dir)
+        return VerificationSummary(corpus_id=snapshot.manifest.corpus_id, counts=snapshot.validation.counts,
+                                   checks=snapshot.validation.checks)
     except CorpusError:
         raise
     except OSError as exc:

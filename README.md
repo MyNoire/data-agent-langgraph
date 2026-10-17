@@ -6,11 +6,11 @@ The [architecture diagram](docs/querypilot-architecture.drawio.png) shows the cu
 
 The first real-model BIRD smoke run is recorded in the [Phase 0.5 baseline report](docs/phase-0.5-baseline.md). It is a 12-question development result, not official BIRD EX. The frozen 100-question real-model baseline is recorded in the [RAG work plan](docs/learning/rag-work-plan.md); later comparisons must preserve its dataset and evaluation protocol.
 
-The foundation uses Python 3.11/3.12, uv, FastAPI, Pydantic v2, sqlglot, and SQLite. The model client accepts an OpenAI-compatible URL and model name, including a locally served Qwen model. Phase 1 now has a single linear LangGraph path; PostgreSQL and the larger agent architecture remain planned.
+The foundation uses Python 3.11/3.12, uv, FastAPI, Pydantic v2, sqlglot, and SQLite. The model client accepts an OpenAI-compatible URL and model name, including a locally served Qwen model. Phase 1 has a single linear LangGraph path. R2 PostgreSQL knowledge storage passed real database acceptance on 2026-10-17; runtime retrieval remains a later stage.
 
 ## 离线知识快照（R1.4）
 
-已实现固定批准包与语义配置的 corpus 构建、确定性身份、来源/引用/文件完整性核验，以及已有一致目标的只读复用。Toxicology 正式离线快照为 `validated`；R1.3 草稿仍为 `draft`。快照状态不代表推断业务语义已获证明，也不代表检索或 Text2SQL 效果改善。PostgreSQL 导入、Embedding 和在线 RAG 留待后续阶段。
+已实现固定批准包与语义配置的 corpus 构建、确定性身份、来源/引用/文件完整性核验，以及已有一致目标的只读复用。Toxicology 正式离线快照为 `validated`；R1.3 草稿仍为 `draft`。快照状态不代表推断业务语义已获证明，也不代表检索或 Text2SQL 效果改善。PostgreSQL 导入代码见下节；Embedding 和在线 RAG 尚未实现。
 
 ```powershell
 uv run --frozen python scripts/build_corpus.py --database-id toxicology --bundle data/rag/toxicology/r1-2-curated-v1 --semantics config/knowledge_semantics/toxicology-v1.json --output-dir data/rag/toxicology/r1-4-corpus
@@ -20,6 +20,12 @@ uv run --frozen python scripts/verify_corpus.py --corpus-dir data/rag/toxicology
 首次成功返回 `built`，已有目标完整且与候选一致时返回 `reused`，不重写文件；独立核验通过返回 `verified`。无效或不同目标拒绝，不支持 force/resume。快照在本地 `data/` 下，来源和正文不进入进度日志或公开提交。
 
 格式、服务接口和实际验收见 [R1.4 规格目录](specs/001-r1-4-corpus/quickstart.md)。输入包/语义文件是必需前置，克隆源码并不自动获得被忽略的本地资料。
+
+## PostgreSQL 知识存储（R2，已完成实库验收）
+
+已新增 Compose、`knowledge` 可选依赖、编号迁移和三个入口：`manage_knowledge_db.py`、`import_corpus.py`、`verify_corpus_import.py`。四张业务表分别保存 corpus 登记、文档、块和关系；另有迁移记录表。导入完整核验 R1.4 源后才进入事务，同一 corpus 使用事务锁，重复导入全字段比较而不覆盖。成功摘要分别提供内容与首次时间指纹。
+
+2026-10-17 实测 PostgreSQL **18.6** / pgvector **0.8.7**：**26 项实库测试通过**；本地相关回归 **87 passed / 1 skipped**（系统不允许目录符号链接）。真实 Toxicology 4 documents / 20 chunks / 5 relations 首导、复用及独立复验通过；重启后内容和首次时间指纹保持一致。安装、命令和证据见 [R2 最终验收](specs/002-r2-postgres-import/quickstart.md#9-r2-最终实库验收2026-10-17)。按 `.env.example` 增加专用配置，保留已有模型设置；旧 SQLite/评测入口无需 PG。R2 不生成向量，也不向图接入检索。
 
 ## Local setup
 
@@ -129,7 +135,7 @@ The local raw report is `results/bird-final100__graph-single-v1__model-gpt-5-5__
 Both evaluation paths share the [result contract and summary rules](docs/evaluation-results.md), while keeping their generation and execution flows separate.
 For a step-by-step explanation of the single-graph evaluator, see the [learning guide](docs/learning/single-graph-evaluation.md).
 
-The next-stage [RAG knowledge-store design](docs/rag-knowledge-design.md) includes the three-table schema, ingestion/versioning contract, retrieval queries, and evaluation plan. It is a design artifact; PostgreSQL ingestion and RAG integration are not implemented yet.
+The [RAG knowledge-store design](docs/rag-knowledge-design.md) records the earlier three-table draft and retrieval/evaluation ideas. R2 storage uses the newer [feature data model](specs/002-r2-postgres-import/data-model.md), adding a corpus ledger. Real database storage acceptance is complete; runtime RAG remains unimplemented.
 
 For the guided implementation sequence and stage acceptance criteria, see the [RAG work plan](docs/learning/rag-work-plan.md). The first exercise prepares a read-only catalog for one small database before adding PostgreSQL or embeddings.
 
@@ -147,4 +153,4 @@ Spec Kit 1.1.3 is installed as an independent uv tool, with Codex skills and Pow
 
 ## Scope
 
-Implemented: configurable OpenAI-compatible direct prompt, registered local SQLite data sources, AST guard, read-only execution, API health/schema/query endpoints, JSON logging, tests, smoke evaluation, and one linear LangGraph workflow. Pending: durable checkpoints, PostgreSQL/pgvector, retrieval, SQL repair, multi-turn context/memory, Python analysis, SSE, and production authentication.
+Implemented: configurable OpenAI-compatible direct prompt, registered local SQLite data sources, AST guard, read-only execution, API health/schema/query endpoints, JSON logging, tests, smoke evaluation, one linear LangGraph workflow, validated offline knowledge snapshots, and PostgreSQL/pgvector knowledge storage with atomic import and independent verification. Pending: embeddings, durable checkpoints, retrieval, SQL repair, multi-turn context/memory, Python analysis, SSE, and production authentication.
