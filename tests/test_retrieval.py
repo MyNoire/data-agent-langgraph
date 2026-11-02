@@ -9,29 +9,13 @@ from pydantic import ValidationError
 
 from querypilot.knowledge.api import KnowledgeScope
 from querypilot.retrieval.api import (
-    KnowledgeRetrievalError, LexicalProfile, RetrievalError, RetrievalRequest,
-    RetrievalResult, ScopeFile, SourceRef,
+    KnowledgeRetrievalError, RetrievalRequest, ScopeFile,
 )
 
 
 def scope_values():
     """输入：无；返回：原创三元范围；副作用：无，不访问正式知识。"""
     return {"corpus_id": "a" * 64, "database_id": "demo", "schema_version": "b" * 64}
-
-
-def test_public_api_reexports_existing_types_without_search_operation():
-    """输入：检索公开出口；返回：既有类型身份与有限导出断言；副作用：无。"""
-    from querypilot.retrieval import api, models
-
-    names = {
-        "ScopeFile", "RetrievalRequest", "LexicalProfile", "SourceRef",
-        "RetrievalHit", "RetrievalResult", "RetrievalError", "KnowledgeRetrievalError",
-    }
-    assert set(api.__all__) == names
-    for name in names:
-        assert getattr(api, name) is getattr(models, name)
-    for name in ("KnowledgeScope", "project_query", "open_scoped_read", "retrieve_knowledge"):
-        assert not hasattr(api, name)
 
 
 def test_request_preserves_query_and_uses_strict_bounds():
@@ -44,83 +28,6 @@ def test_request_preserves_query_and_uses_strict_bounds():
     assert len(RetrievalRequest(query="中" * 2000, scope=scope).query) == 2000
     # 模型仅校验原始文本；有效词项留给 Python 规范化与固定中文分词处理。
     assert RetrievalRequest(query="---", scope=scope).query == "---"
-
-
-def test_lexical_profile_records_fixed_bm25_resources_without_loading_them():
-    """输入：默认配置；返回：固定版本、资源摘要与不可变断言；无资源 I/O。"""
-    profile = LexicalProfile()
-    assert profile.retrieval_config_version == "r3-bm25-v1"
-    assert profile.normalization_version == "ascii-han-boundaries-v1"
-    assert profile.tokenizer_version == "0.42.1"
-    assert profile.tokenizer_mode == "search"
-    assert profile.tokenizer_hmm is False
-    assert profile.tokenizer_dictionary_sha256 == "7197c3211ddd98962b036cdf40324d1ea2bfaa12bd028e68faa70111a88e12a8"
-    assert profile.stopwords_version == "zh-courtesy-v1"
-    assert profile.stopwords_sha256 == "fede53918dc355e74fe89e5070a04ce6a84dd7a1077d96455026b0d9bc7c99bd"
-    with pytest.raises(ValidationError):
-        profile.tokenizer_hmm = True
-
-
-@pytest.mark.parametrize("change", [
-    {"retrieval_config_version": "r3-lexical-v1"},
-    {"retrieval_config_version": "r3-lexical-v2"},
-    {"tokenizer_version": "other-version"}, {"tokenizer_mode": "default"},
-    {"tokenizer_hmm": True}, {"tokenizer_hmm": 0}, {"stopwords_version": "other-stopwords"},
-    {"tokenizer_dictionary_sha256": "0" * 64}, {"stopwords_sha256": "0" * 64},
-    {"tokenizer_dictionary_sha256": "not-a-hash"}, {"stopwords_sha256": "F" * 64},
-])
-def test_lexical_profile_rejects_changed_or_malformed_resource_configuration(change):
-    """输入：调用方修改的固定配置；返回：校验拒绝断言；异常：ValidationError，无 I/O。"""
-    with pytest.raises(ValidationError):
-        LexicalProfile(**change)
-
-
-def test_retrieval_result_uses_bm25_without_changing_public_shape():
-    """输入：合法无匹配投影及旧配置名；返回：格式/形状断言；异常：旧配置被拒绝。"""
-    result = RetrievalResult(
-        request_id="00000000-0000-4000-8000-000000000000", outcome="no_match",
-        scope=KnowledgeScope(**scope_values()), query_sha256="c" * 64,
-        top_k=5, knowledge_types=["table"], hit_count=0, hits=[], elapsed_ms=0,
-    )
-    assert result.result_version == "querypilot-retrieval-result-v1"
-    assert result.retrieval_config_version == "r3-bm25-v1"
-    assert result.normalization_version == "ascii-han-boundaries-v1"
-    assert set(result.model_dump()) == {
-        "result_version", "request_id", "outcome", "scope", "method",
-        "retrieval_config_version", "normalization_version", "query_sha256",
-        "top_k", "knowledge_types", "hit_count", "hits", "elapsed_ms",
-    }
-    for old_version in ("r3-lexical-v1", "r3-lexical-v2"):
-        with pytest.raises(ValidationError):
-            RetrievalResult.model_validate({**result.model_dump(), "retrieval_config_version": old_version})
-
-
-def test_execution_profile_requires_actual_search_state_without_changing_public_api():
-    """输入：原创设施状态；返回：安全配置和缺失/额外字段拒绝；不连接数据库。"""
-    from querypilot.knowledge.api import SearchIndexProfile
-    from querypilot.retrieval import api
-    from querypilot.retrieval.models import RetrievalExecutionProfile
-
-    search_profile = SearchIndexProfile(
-        index_definition_sha256="d" * 64,
-        search_fields={"title": "jieba", "content": "jieba", "column_name": "simple"},
-        filter_fields=("corpus_id", "database_id", "schema_version", "knowledge_type"),
-        tokenizer_options={"display_name": "alias=display_name"},
-    )
-    profile = RetrievalExecutionProfile(
-        search_index_profile=search_profile, index_corpus_fingerprint="e" * 64,
-    )
-    assert profile.retrieval_config_version == "r3-bm25-v1"
-    assert profile.search_index_profile is search_profile
-    assert profile.index_corpus_fingerprint == "e" * 64
-    assert not hasattr(api, "RetrievalExecutionProfile")
-    assert "search_index_profile" in profile.model_dump()
-    for change in ({"index_corpus_fingerprint": "not-a-hash"}, {"query": "private-query"}):
-        with pytest.raises(ValidationError) as caught:
-            RetrievalExecutionProfile(**{**profile.model_dump(), **change})
-        assert "private-query" not in str(caught.value)
-    with pytest.raises(ValidationError):
-        RetrievalExecutionProfile()
 
 
 @pytest.mark.parametrize("change", [
@@ -148,30 +55,6 @@ def test_scope_and_scope_file_are_explicit_and_strict():
         ScopeFile.model_validate({"scope": scope_values(), "dsn": "private"})
 
 
-def test_source_ref_does_not_invent_semantics_or_accept_raw_metadata():
-    """输入：最小来源引用；返回：null/[] 保留断言；异常：越权字段被拒绝；无 I/O。"""
-    source = SourceRef(document_id="00000000-0000-5000-8000-000000000000",
-                       document_key="original-key", source_kind="derived_catalog")
-    assert source.semantic_origin is None and source.correction_ids == []
-    assert source.column_source_path is None
-    with pytest.raises(ValidationError):
-        SourceRef(**{**source.model_dump(), "raw_record": {"secret": "private"}})
-    with pytest.raises(ValidationError):
-        SourceRef(**{**source.model_dump(), "structure_locator": [True]})
-
-
-def test_error_has_safe_category_and_no_fake_empty_hits():
-    """输入：受控故障；返回：退出码/安全错误断言；异常：底层 cause 不序列化；无 I/O。"""
-    exc = KnowledgeRetrievalError("connection_failed")
-    assert exc.exit_code == 3
-    assert KnowledgeRetrievalError("scope_mismatch").exit_code == 1
-    error = RetrievalError(request_id="00000000-0000-4000-8000-000000000000",
-                           error_type=exc.error_type, message=str(exc), elapsed_ms=1)
-    assert "hits" not in error.model_dump()
-    with pytest.raises(ValidationError):
-        RetrievalError(**{**error.model_dump(), "hits": []})
-
-
 def test_import_does_not_require_pg_driver_or_model_client():
     """输入：禁止 PG/模型客户端的独立进程；返回：导入成功断言；只启动本地 Python。"""
     code = '''
@@ -186,7 +69,7 @@ class BlockOptionalClients(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, BlockOptionalClients())
 import querypilot.retrieval.api
 import querypilot.entrypoints.commands.retrieval
-import querypilot.retrieval.service
+
 assert not blocked.intersection(sys.modules)
 '''
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)

@@ -352,7 +352,7 @@ def _evaluation_fixture_files() -> dict[str, str]:
     ("querypilot.evaluation.sql._compare", "evaluation.sql"),
     ("querypilot.evaluation.retrieval._runner", "evaluation.retrieval"),
     ("querypilot.evaluation.datasets._fetch", "evaluation.datasets"),
-    ("querypilot.retrieval.service", "retrieval"),
+    ("querypilot.retrieval._search", "retrieval"),
 ])
 def test_evaluation_subcapability_ownership(module_name: str, expected: str) -> None:
     """验证评测子目录独立归属，且不会与检索本体混为同一能力。"""

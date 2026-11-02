@@ -10,7 +10,7 @@ import re
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
 
-from querypilot.retrieval._profile import (
+from querypilot.retrieval.models import (
     STOPWORDS_SHA256,
     STOPWORDS_VERSION,
     TOKENIZER_DICTIONARY_SHA256,
@@ -107,7 +107,7 @@ def load_text_resources() -> TextResources:
             tokenizer.tmp_dir = None
         return TextResources(tokenizer, stopwords, LexicalProfile())
     except Exception as exc:
-        raise KnowledgeRetrievalError("configuration_error") from exc
+        raise KnowledgeRetrievalError("configuration_error", "检索分词资源不可用") from exc
 
 
 def _prepare_han_terms(fragment: str, resources: TextResources) -> list[str]:
