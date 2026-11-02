@@ -74,6 +74,7 @@ TDD 测的是确定性行为（guard、路由、重试上限、融合排序）�
 
 - 改动前看相关代码、测试和 Git 状态；保留用户未提交的工作，不擅自 reset、删除或大范围格式化。
 - 跨模块从各模块的 `api.py` 导入；`tests/architecture/test_module_boundaries.py` 守住依赖方向。
+- 项目里新写或改写的 md 文档（规格、工单、术语表、ADR、说明）用中文书写，代码标识符保留英文原名。
 - 注释和 docstring 用中文，**描述代码现在做什么**，不写"原……""保留旧行为"这类历史；历史交给 Git。公开入口和不显然的逻辑写 docstring，简单函数不强求。
 - 交付时说明改了什么、跑了哪些测试（实际命令与结果）、哪些没验证；区分"测试通过""正式代码已实现""真实模型实验已完成"。
 - **Git**：每项功能在 `master` 之外新建分支，可在分支上按小步自动提交；合并回 `master` 须经用户同意。不推送、不创建外部 issue。
@@ -81,3 +82,17 @@ TDD 测的是确定性行为（guard、路由、重试上限、融合排序）�
 ## 8. 背景资料
 
 `README.md`、`docs/modules.md`（模块与入口）、`docs/product-evaluation-roadmap.md`、`docs/learning/rag-work-plan.md`、`docs/rag-knowledge-design.md`、`docs/attribution.md`。它们可能落后于代码，冲突时以代码为准并更新文档。
+
+## Agent skills
+
+### Issue tracker
+
+工单与规格以本地 markdown 存放在 `.scratch/<功能名>/`。See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+使用默认五个标签（needs-triage / needs-info / ready-for-agent / ready-for-human / wontfix），写在工单的 `Status:` 行。See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+single-context：根目录 `GLOSSARY.md` + `docs/adr/`。See `docs/agents/domain.md`.
