@@ -129,7 +129,7 @@ def _prepare_han_terms(fragment: str, resources: TextResources) -> list[str]:
     return result
 
 
-def _prepare_query_terms(prepared: PreparedQuery) -> list[str]:
+def prepare_query_terms(prepared: PreparedQuery) -> list[str]:
     """将已规范化查询的中英文片段组织成完整检索词列表。
 
     参数：prepared 为 prepare_query 返回的对象；fragments 保留原始片段顺序，

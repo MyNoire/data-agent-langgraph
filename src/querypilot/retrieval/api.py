@@ -34,13 +34,11 @@ def retrieve_knowledge(request: RetrievalRequest, settings: KnowledgeStorageSett
     """
     started = time.perf_counter()
     try:
+        prepared_query = _text.prepare_query(request.query)
+        prepared_terms = _text.prepare_query_terms(prepared_query)
         with open_read_scope(request.scope, settings) as session:
-            # ===== 结对核心：从这里开始 =====
-            # 依次完成：准备查询词 → 搜索 → 按 ID 读回 → 按搜索顺序组装 Hit。
-            # 可用的零件：_text.prepare_query、_text._prepare_query_terms、
-            #            _search.search_chunks、_search.load_chunks、RetrievalHit。
-            raise NotImplementedError("retrieve_knowledge 的主流程待结对完成")
-            # ===== 结对核心：到这里结束 =====
+            rows = _search.search_chunks(session, request, prepared_terms)
+        hits = [RetrievalHit(rank=i, **row) for i, row in enumerate(rows, start=1)]
     except KnowledgeReadError as exc:
         raise KnowledgeRetrievalError(exc.error_type, str(exc)) from exc
 
