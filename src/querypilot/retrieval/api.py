@@ -9,7 +9,6 @@ from querypilot.knowledge.api import KnowledgeReadError, KnowledgeStorageSetting
 from . import _search, _text
 from .models import (
     KnowledgeRetrievalError,
-    LexicalProfile,
     RetrievalHit,
     RetrievalRequest,
     RetrievalResult,
@@ -34,10 +33,9 @@ def retrieve_knowledge(request: RetrievalRequest, settings: KnowledgeStorageSett
     """
     started = time.perf_counter()
     try:
-        prepared_query = _text.prepare_query(request.query)
-        prepared_terms = _text.prepare_query_terms(prepared_query)
+        terms = _text.query_terms(request.query)
         with open_read_scope(request.scope, settings) as session:
-            rows = _search.search_chunks(session, request, prepared_terms)
+            rows = _search.search_chunks(session, request, terms)
         hits = [RetrievalHit(rank=i, **row) for i, row in enumerate(rows, start=1)]
     except KnowledgeReadError as exc:
         raise KnowledgeRetrievalError(exc.error_type, str(exc)) from exc
@@ -61,6 +59,5 @@ __all__ = [
     "RetrievalResult",
     "RetrievalHit",
     "KnowledgeRetrievalError",
-    "LexicalProfile",
     "ScopeFile",
 ]

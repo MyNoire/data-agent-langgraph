@@ -10,13 +10,13 @@ import re
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
 
-from querypilot.retrieval.models import (
+from .models import (
     STOPWORDS_SHA256,
     STOPWORDS_VERSION,
     TOKENIZER_DICTIONARY_SHA256,
     TOKENIZER_VERSION,
+    KnowledgeRetrievalError,
 )
-from querypilot.retrieval.models import KnowledgeRetrievalError, LexicalProfile
 
 if TYPE_CHECKING:
     from jieba import Tokenizer
@@ -61,11 +61,10 @@ def prepare_query(query: str) -> PreparedQuery:
 
 @dataclass(frozen=True)
 class TextResources:
-    """内部固定资源：独立分词器、只读表达词集合和已经核对的配置。"""
+    """已核对版本和摘要的分词器与表达词集合。"""
 
     tokenizer: Tokenizer
     stopwords: frozenset[str]
-    profile: LexicalProfile
 
 
 @lru_cache(maxsize=1)
@@ -105,7 +104,7 @@ def load_text_resources() -> TextResources:
                 tokenizer.tmp_dir = cache_directory
                 tokenizer.initialize()
             tokenizer.tmp_dir = None
-        return TextResources(tokenizer, stopwords, LexicalProfile())
+        return TextResources(tokenizer, stopwords)
     except Exception as exc:
         raise KnowledgeRetrievalError("configuration_error", "检索分词资源不可用") from exc
 
@@ -129,18 +128,16 @@ def _prepare_han_terms(fragment: str, resources: TextResources) -> list[str]:
     return result
 
 
-def prepare_query_terms(prepared: PreparedQuery) -> list[str]:
-    """将已规范化查询的中英文片段组织成完整检索词列表。
+def query_terms(query: str) -> list[str]:
+    """把查询原文变成检索词：英文数字片段原样保留，中文片段分词并过滤表达词，再保序去重。
 
-    参数：prepared 为 prepare_query 返回的对象；fragments 保留原始片段顺序，
-    ascii_terms/han_fragments 是分类视图，不决定最终合并顺序。
-    返回：英文数字片段直接保留，中文片段委托 _prepare_han_terms；
-    合并后按首次出现全局去重的词列表，不排序、不截取关键词数量。
-    异常：过滤后没有有效词时抛 KnowledgeRetrievalError(input_error)；
-    中文资源失败沿已有 configuration_error 传播，不舍弃中文后继续成功。
-    副作用：只在首次遇到中文片段时加载固定资源，同一次准备复用资源；
-    不连接数据库、不判断知识是否匹配、不改写原始查询或公开模型。
+    参数：query 为已通过 RetrievalRequest 校验的查询原文。
+    返回：按首次出现顺序去重的词列表，不排序、不截断。
+    异常：没有有效词时抛 KnowledgeRetrievalError(input_error)；
+        分词资源不可用时抛 configuration_error。
+    副作用：只在遇到中文片段时加载分词资源（进程内缓存）；不访问数据库。
     """
+    prepared = prepare_query(query)
     resources: TextResources | None = None
     seen: set[str] = set()
     result: list[str] = []

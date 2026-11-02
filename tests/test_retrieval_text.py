@@ -10,7 +10,8 @@ from types import SimpleNamespace
 import pytest
 
 from querypilot.retrieval import _text
-from querypilot.retrieval.api import KnowledgeRetrievalError, LexicalProfile
+from querypilot.retrieval import models
+from querypilot.retrieval.api import KnowledgeRetrievalError
 
 
 @pytest.fixture(autouse=True)
@@ -73,23 +74,20 @@ def test_fixed_resources_load_real_independent_tokenizer_and_exact_wordlist():
     import jieba
 
     loaded = _text.load_text_resources()
-    profile = loaded.profile
-    assert profile == LexicalProfile()
-    assert metadata.version("jieba") == jieba.__version__ == profile.tokenizer_version == "0.42.1"
-    assert profile.tokenizer_mode == "search" and profile.tokenizer_hmm is False
-    assert profile.tokenizer_dictionary_sha256 == "7197c3211ddd98962b036cdf40324d1ea2bfaa12bd028e68faa70111a88e12a8"
-    assert profile.stopwords_version == "zh-courtesy-v1"
-    assert profile.stopwords_sha256 == "fede53918dc355e74fe89e5070a04ce6a84dd7a1077d96455026b0d9bc7c99bd"
-    assert sha256(resources.files(jieba).joinpath("dict.txt").read_bytes()).hexdigest() == profile.tokenizer_dictionary_sha256
+    assert metadata.version("jieba") == jieba.__version__ == models.TOKENIZER_VERSION == "0.42.1"
+    assert models.TOKENIZER_DICTIONARY_SHA256 == "7197c3211ddd98962b036cdf40324d1ea2bfaa12bd028e68faa70111a88e12a8"
+    assert models.STOPWORDS_VERSION == "zh-courtesy-v1"
+    assert models.STOPWORDS_SHA256 == "fede53918dc355e74fe89e5070a04ce6a84dd7a1077d96455026b0d9bc7c99bd"
+    assert sha256(resources.files(jieba).joinpath("dict.txt").read_bytes()).hexdigest() == models.TOKENIZER_DICTIONARY_SHA256
     wordlist = resources.files("querypilot.retrieval").joinpath("resources", "zh-courtesy-v1.txt")
-    assert sha256(wordlist.read_bytes()).hexdigest() == profile.stopwords_sha256
+    assert sha256(wordlist.read_bytes()).hexdigest() == models.STOPWORDS_SHA256
     assert loaded.stopwords == frozenset({
         "请", "请问", "帮", "帮忙", "我", "我们", "一下", "的", "了", "呢", "吗", "吧", "谢谢",
     })
     assert isinstance(loaded.stopwords, frozenset)
     assert loaded.tokenizer is not jieba.dt and loaded.tokenizer.initialized
     # 仅验证真实词典能服务独立实例；不执行 T010 的过滤、去重或匹配。
-    terms = list(loaded.tokenizer.cut_for_search("请问帮我查询物品的事件", HMM=profile.tokenizer_hmm))
+    terms = list(loaded.tokenizer.cut_for_search("请问帮我查询物品的事件", HMM=False))
     assert {"物品", "事件"}.issubset(terms)
     assert _text.load_text_resources() is loaded
 
@@ -102,7 +100,7 @@ def test_fixed_resources_load_real_independent_tokenizer_and_exact_wordlist():
 def test_fixed_python_tokenizer_preserves_verified_boundary_sample_terms(fragment, expected):
     """输入：实际索引探针使用的边界样本；返回：Python 固定资源词项；不替代实库证明。"""
     loaded = _text.load_text_resources()
-    assert list(loaded.tokenizer.cut_for_search(fragment, HMM=loaded.profile.tokenizer_hmm)) == expected
+    assert list(loaded.tokenizer.cut_for_search(fragment, HMM=False)) == expected
 
 
 def test_missing_optional_tokenizer_is_safe_configuration_error_with_cause(monkeypatch):
@@ -221,7 +219,7 @@ resources.files = forbid_resource_lookup
 import querypilot.retrieval.models
 import querypilot.retrieval.api
 import querypilot.retrieval._text
-assert querypilot.retrieval.api.LexicalProfile().retrieval_config_version == "r3-bm25-v1"
+assert querypilot.retrieval.models.RETRIEVAL_CONFIG_VERSION == "r3-bm25-v1"
 assert not blocked.intersection(sys.modules)
 assert querypilot.retrieval._text.load_text_resources.cache_info().currsize == 0
 prepared = querypilot.retrieval._text.prepare_query("ATOM_ID")

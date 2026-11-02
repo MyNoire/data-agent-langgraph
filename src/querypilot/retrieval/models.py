@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from querypilot.knowledge.api import Hash, KnowledgeScope, ObjectID
 
+# 查询词准备的固定配置。分词器加载时会逐项核对，不一致就报 configuration_error，
+# 保证同一句查询每次切出相同的词。
 RETRIEVAL_CONFIG_VERSION = "r3-bm25-v1"
 NORMALIZATION_VERSION = "ascii-han-boundaries-v1"
 TOKENIZER_VERSION = "0.42.1"
@@ -67,21 +69,6 @@ class RetrievalRequest(RetrievalModel):
         if len(value) != len(set(value)):
             raise ValueError("知识类型不能重复")
         return value
-
-
-class LexicalProfile(RetrievalModel):
-    """查询词准备使用的固定分词配置，记录在结果和评测里以便复现。"""
-
-    model_config = ConfigDict(frozen=True)
-
-    retrieval_config_version: str = RETRIEVAL_CONFIG_VERSION
-    normalization_version: str = NORMALIZATION_VERSION
-    tokenizer_version: str = TOKENIZER_VERSION
-    tokenizer_mode: str = "search"
-    tokenizer_hmm: bool = False
-    tokenizer_dictionary_sha256: Hash = TOKENIZER_DICTIONARY_SHA256
-    stopwords_version: str = STOPWORDS_VERSION
-    stopwords_sha256: Hash = STOPWORDS_SHA256
 
 
 class RetrievalHit(RetrievalModel):
