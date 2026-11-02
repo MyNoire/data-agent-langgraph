@@ -9,9 +9,9 @@ from pydantic import ValidationError
 
 from querypilot.databases.api import DatabaseRegistry
 from querypilot.knowledge.api import (
-    BuildConfig, CatalogSnapshot, KnowledgeStorageError, KnowledgeStorageSettings,
-    extract_catalog, enrich_catalog, curate_catalog, render_knowledge, build_snapshot,
-    verify_snapshot, manage_store, import_snapshot, verify_import, prepare_search, check_search,
+    BuildConfig, Catalog, KnowledgeStorageError, KnowledgeStorageSettings,
+    extract_catalog, enrich_catalog, curate_catalog, render_knowledge, build_corpus,
+    verify_corpus, manage_store, import_corpus, verify_import, prepare_search, check_search,
 )
 from querypilot.runtime.api import publish_json, task_run
 
@@ -45,8 +45,8 @@ def run(args, settings) -> int:
                         (storage.admin_dsn, storage.import_dsn, storage.read_dsn) if value is not None)
     if group == "catalog":
         operation, private = "knowledge_catalog", action in {"extract", "enrich"}
-    elif group == "snapshot":
-        operation, private = "knowledge_snapshot", action == "render"
+    elif group == "corpus":
+        operation, private = "knowledge_corpus", action == "render"
     else:
         operation = "knowledge_import" if action == "import" else "knowledge_verify" if action == "verify" else "knowledge_manage"
         private = False
@@ -55,10 +55,10 @@ def run(args, settings) -> int:
         path = getattr(args, name, None)
         if path is not None and path.is_file():
             hashes.append(sha256(path.read_bytes()).hexdigest())
-    bundle = getattr(args, "bundle_dir", None)
-    if bundle is not None:
+    curated = getattr(args, "curated_dir", None)
+    if curated is not None:
         for name in ("manifest.json", "enriched_catalog.json", "quality_report.json"):
-            path = bundle / name
+            path = curated / name
             if path.is_file():
                 hashes.append(sha256(path.read_bytes()).hexdigest())
     with task_run(operation, settings, command=f"{group}.{action}", private=private, secrets=secrets,
@@ -76,7 +76,7 @@ def run(args, settings) -> int:
                        "foreign_keys": sum(len(table.foreign_keys) for table in result.tables),
                        "output_file": str(args.output.resolve())}
         elif group == "catalog" and action == "enrich":
-            catalog = CatalogSnapshot.model_validate_json(args.catalog.read_text(encoding="utf-8"))
+            catalog = Catalog.model_validate_json(args.catalog.read_text(encoding="utf-8"))
             result = enrich_catalog(catalog, args.description_dir)
             target = args.output_dir.resolve()
             target.mkdir(parents=True, exist_ok=False)
@@ -96,23 +96,23 @@ def run(args, settings) -> int:
             result = curate_catalog(args.base, args.source_dir, args.plan, args.output_dir,
                                     run_context=context, settings=settings)
             summary = result.model_dump(mode="json")
-        elif group == "snapshot" and action == "render":
-            result = render_knowledge(args.bundle_dir, args.semantic_file)
+        elif group == "corpus" and action == "render":
+            result = render_knowledge(args.curated_dir, args.semantic_file)
             _write_draft(result, args.output_dir)
             summary = {"status": result.status, "documents": len(result.documents),
                        "chunks": len(result.chunks), "relations": len(result.relations),
                        "chunk_types": dict(Counter(chunk.knowledge_type for chunk in result.chunks)),
                        "max_chunk_chars": max((len(chunk.content) for chunk in result.chunks), default=0)}
-        elif group == "snapshot" and action == "build":
-            result = build_snapshot(args.bundle_dir, args.semantic_file, args.output_dir, args.database_id,
+        elif group == "corpus" and action == "build":
+            result = build_corpus(args.curated_dir, args.semantic_file, args.output_dir, args.database_id,
                                     BuildConfig(profile_version=args.profile_version), run_context=context,
                                     settings=settings)
             summary = result.model_dump(mode="json")
-        elif group == "snapshot":
-            result = verify_snapshot(args.corpus_dir)
+        elif group == "corpus":
+            result = verify_corpus(args.corpus_dir)
             summary = result.model_dump(mode="json")
         elif action == "import":
-            result = import_snapshot(args.corpus_dir, storage, run_context=context)
+            result = import_corpus(args.corpus_dir, storage, run_context=context)
             summary = result.model_dump(mode="json")
         elif action == "verify":
             result = verify_import(args.corpus_dir, storage, run_context=context)

@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from .models import CatalogModel, CatalogSnapshot
+from .models import CatalogModel, Catalog
 
 class DescriptionSource(CatalogModel):
     """输入为 CSV 文件信息；输出一份可定位的文件来源记录。"""
@@ -53,7 +53,7 @@ class EnrichedCatalog(CatalogModel):
 
     format_version: Literal["enriched-catalog-v1"] = "enriched-catalog-v1"
     status: Literal["draft"] = "draft"
-    catalog: CatalogSnapshot
+    catalog: Catalog
     sources: list[DescriptionSource]
     descriptions: list[ColumnDescription]
 

@@ -10,7 +10,7 @@ from ._descriptions import _match_name, read_description_bytes
 
 
 class SourceVerification(CatalogModel):
-    """输入：完整核验后的统计；返回：不进入快照格式的安全结果。"""
+    """输入：完整核验后的统计；返回：不进入语料格式的安全结果。"""
 
     database_id: str
     status: Literal["verified"] = "verified"
@@ -45,7 +45,7 @@ def _logical_path(relative: str) -> str:
 def _verify_sources(enriched: EnrichedCatalog, source_bytes: dict[str, bytes]) -> SourceVerification:
     """核对来源记录与提供的派生 CSV，而不只比较声明的 hash。
 
-    参数: source_bytes 为来源文件名到实际字节，enriched 为批准包中的说明目录。
+    参数: source_bytes 为来源文件名到实际字节，enriched 为整理后目录中的说明目录。
     返回: 完整核对统计；缺失说明允许，但已有说明必须可追溯到真实记录。
     异常: SourceVerificationError/ValueError/csv.Error 表示记录、位置或释义不一致。
     副作用: 无文件读写，不编造释义。

@@ -1,4 +1,4 @@
-"""从已批准的描述修正包，渲染离线知识草稿。"""
+"""从已批准的描述整理后目录，渲染离线知识草稿。"""
 
 from dataclasses import dataclass
 from hashlib import sha256
@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from querypilot.knowledge.knowledge_catalog.api import ColumnDescription, EnrichedCatalog, SourceRecord
-from querypilot.knowledge.knowledge_catalog.api import CatalogSnapshot, ForeignKeySchema, TableSchema
+from querypilot.knowledge.knowledge_catalog.api import Catalog, ForeignKeySchema, TableSchema
 from .draft import (
     ChunkDraft, DocumentDraft, KnowledgeDraft, RelationDraft, SemanticProfile,
 )
@@ -16,7 +16,7 @@ class KnowledgeError(ValueError):
     """知识输入不符合当前渲染约定时抛出的异常。"""
 
 @dataclass(frozen=True)
-class _Bundle:
+class _CuratedCatalog:
     """输入为已核对的包内容；输出供渲染函数使用的只读属性集合。"""
     enriched: EnrichedCatalog
     manifest: dict[str, Any]
@@ -82,7 +82,7 @@ def _semantic_sources(
 
     参数:
         identities: 表名与列名的有序身份列表；重复项只保留首次出现。
-        notes: 当前修正包中的字段说明索引。
+        notes: 当前整理后目录中的字段说明索引。
         source_hashes: 派生 CSV 文件名到已验证 SHA-256 的映射。
         database_id: 当前数据库标识。
         schema_name: 当前 schema 名称。
@@ -90,7 +90,7 @@ def _semantic_sources(
         指向所属 document 的字段 lineage 及 CSV 文件、hash、行号的列表。
         没有展示名和描述的字段不产生语义来源引用。
     异常:
-        KeyError: 已绑定说明缺少文件 hash；正常输入已由 _load_bundle 拒绝。
+        KeyError: 已绑定说明缺少文件 hash；正常输入已由 _load_curated 拒绝。
     """
     sources = []
     for table_name, column_name in dict.fromkeys(identities):
@@ -129,7 +129,7 @@ def _relationship_content(
     返回:
         含引用方向、端点语义、候选 ON 条件、角色区别及限制的文本。
     异常:
-        ValueError: 两端字段数量不同；正常输入已由 _load_bundle 拒绝。
+        ValueError: 两端字段数量不同；正常输入已由 _load_curated 拒绝。
     副作用:
         无；JOIN 条件仅作为知识文本，不选择连接类型或执行 SQL。
     """
@@ -170,13 +170,13 @@ def _relationship_content(
 
 def _load_semantics(
     semantic_file: Path | None,
-    catalog: CatalogSnapshot,
+    catalog: Catalog,
 ) -> tuple[SemanticProfile | None, dict[str, str], dict[str, Any]]:
     """读取可选语义摘要，并绑定到当前真实表和完整外键。
 
     参数:
         semantic_file: 离线推断配置路径；None 表示不补充推断摘要。
-        catalog: 已验证的结构快照，用于校验配置的库、表和关系范围。
+        catalog: 已验证的结构目录，用于校验配置的库、表和关系范围。
     返回:
         配置对象、relation_key 到摘要的映射、配置性质与版本/hash 的 metadata。
     异常:
@@ -191,7 +191,7 @@ def _load_semantics(
 
 
 def _parse_semantics(
-    raw: bytes, semantic_name: str, catalog: CatalogSnapshot,
+    raw: bytes, semantic_name: str, catalog: Catalog,
 ) -> tuple[SemanticProfile, dict[str, str], dict[str, Any]]:
     """解析同一份语义原字节，避免摘要与正文使用不同版本。
 
@@ -228,23 +228,23 @@ def _parse_semantics(
     }
 
 
-def _load_bundle(bundle_dir: Path) -> _Bundle:
-    """读取并检查正式修正包的一致性。
+def _load_curated(curated_dir: Path) -> _CuratedCatalog:
+    """读取并检查正式整理后目录的一致性。
 
     参数:
-        bundle_dir: 含 curation_manifest.json 的已批准修正包目录。
+        curated_dir: 含 curation_manifest.json 的整理后目录目录。
     返回:
-        已核对文件 hash、目录身份和字段来源引用的 _Bundle。
+        已核对文件 hash、目录身份和字段来源引用的 _CuratedCatalog。
     异常:
         KnowledgeError: 状态、路径、hash 或来源引用不符合约定。
         OSError / ValueError: 文件不可读、JSON 或数据契约损坏。
     """
-    root = bundle_dir.resolve()
+    root = curated_dir.resolve()
     manifest_bytes = (root / "curation_manifest.json").read_bytes()
     manifest = json.loads(manifest_bytes)
     status = "approved_corrections_applied"
     _require(manifest.get("format_version") == "description-curation-v1"
-             and manifest.get("status") == status, "需要已批准的 v1 修正包")
+             and manifest.get("status") == status, "需要已批准的 v1 整理后目录")
     artifacts = manifest["artifacts_sha256"]
     verified: dict[str, bytes] = {}
     for relative, expected in artifacts.items():
@@ -255,10 +255,10 @@ def _load_bundle(bundle_dir: Path) -> _Bundle:
         raw = path.read_bytes()
         _require(sha256(raw).hexdigest() == expected, f"产物 hash 不一致: {relative}")
         verified[relative] = raw
-    return _parse_bundle(manifest_bytes, verified)
+    return _parse_curated(manifest_bytes, verified)
 
 
-def _parse_bundle(manifest_bytes: bytes, verified: dict[str, bytes]) -> _Bundle:
+def _parse_curated(manifest_bytes: bytes, verified: dict[str, bytes]) -> _CuratedCatalog:
     """核对固定输入字节，供旧文件入口与 corpus 内存入口共用。
 
     参数:
@@ -274,22 +274,22 @@ def _parse_bundle(manifest_bytes: bytes, verified: dict[str, bytes]) -> _Bundle:
     manifest = json.loads(manifest_bytes)
     status = "approved_corrections_applied"
     _require(manifest.get("format_version") == "description-curation-v1"
-             and manifest.get("status") == status, "需要已批准的 v1 修正包")
+             and manifest.get("status") == status, "需要已批准的 v1 整理后目录")
     artifacts = manifest["artifacts_sha256"]
     _require(set(verified) == set(artifacts), "输入文件与清单不一致")
     for relative, expected in artifacts.items():
         _require(sha256(verified[relative]).hexdigest() == expected,
                  f"产物 hash 不一致: {relative}")
     required = {"enriched_catalog.json", "import_warnings.json", "correction_report.json"}
-    _require(required <= verified.keys(), "修正包缺少必要产物")
+    _require(required <= verified.keys(), "整理后目录缺少必要产物")
     enriched = EnrichedCatalog.model_validate_json(verified["enriched_catalog.json"])
     warnings = json.loads(verified["import_warnings.json"])
     report = json.loads(verified["correction_report.json"])
     _require(manifest["database_id"] == enriched.catalog.database_id
-             == warnings.get("database_id"), "修正包 database_id 不一致")
+             == warnings.get("database_id"), "整理后目录 database_id 不一致")
     _require(warnings.get("format_version") == "description-warnings-v1"
              and warnings.get("warnings") == [] and manifest["remaining_warnings"] == 0,
-             "本课仅接受无未解决导入警告的修正包")
+             "本课仅接受无未解决导入警告的整理后目录")
     _require(report.get("format_version") == "description-quality-report-v1"
              and report.get("status") == status and report["warning_counts_after"] == {},
              "修正报告状态不一致")
@@ -350,21 +350,21 @@ def _parse_bundle(manifest_bytes: bytes, verified: dict[str, bytes]) -> _Bundle:
                  "变化的原始来源与 lineage 不一致")
         _require((change["after"].strip() or None) == notes[identity].value_description,
                  "变化后的值与当前字段说明不一致")
-    return _Bundle(enriched, manifest, report, sha256(manifest_bytes).hexdigest())
+    return _CuratedCatalog(enriched, manifest, report, sha256(manifest_bytes).hexdigest())
 
-def render_knowledge(bundle_dir: Path, semantic_file: Path | None = None) -> KnowledgeDraft:
-    """把一份修正包渲染成相互关联的知识草稿。
+def render_knowledge(curated_dir: Path, semantic_file: Path | None = None) -> KnowledgeDraft:
+    """把一份整理后目录渲染成相互关联的知识草稿。
 
     参数:
-        bundle_dir: 已批准的 R1.2 修正包目录。
+        curated_dir: 已批准的 R1.2 整理后目录目录。
         semantic_file: 可选离线推断摘要配置；不提供时表块保持精简结构概览。
     返回:
         KnowledgeDraft，含文档、知识块和声明外键关系；保持 draft 状态。
     副作用:
         只读取本地输入，不写文件，不调用模型、SQLite 或向量数据库。
     """
-    bundle = _load_bundle(bundle_dir)
-    return _render_bundle(bundle, *_load_semantics(semantic_file, bundle.enriched.catalog))
+    curated = _load_curated(curated_dir)
+    return _render_curated(curated, *_load_semantics(semantic_file, curated.enriched.catalog))
 
 
 def render_knowledge_inputs(
@@ -385,20 +385,20 @@ def render_knowledge_inputs(
     副作用:
         无；路径及来源范围由调用方校验。
     """
-    bundle = _parse_bundle(manifest_bytes, input_files)
-    return _render_bundle(bundle, *_parse_semantics(
-        semantic_bytes, semantic_name, bundle.enriched.catalog,
+    curated = _parse_curated(manifest_bytes, input_files)
+    return _render_curated(curated, *_parse_semantics(
+        semantic_bytes, semantic_name, curated.enriched.catalog,
     ))
 
 
-def _render_bundle(
-    bundle: _Bundle, profile: SemanticProfile | None,
+def _render_curated(
+    curated: _CuratedCatalog, profile: SemanticProfile | None,
     relation_meanings: dict[str, str], semantic_metadata: dict[str, Any],
 ) -> KnowledgeDraft:
     """渲染已核对的内容，保持原知识表达及成员顺序。
 
     参数:
-        bundle: 批准包。
+        curated: 整理后目录。
         profile: 可选推断配置。
         relation_meanings: 关系语义映射。
         semantic_metadata: 配置来源和版本。
@@ -407,22 +407,22 @@ def _render_bundle(
     副作用:
         无文件读写，不排序原结构。
     """
-    enriched, manifest, report = bundle.enriched, bundle.manifest, bundle.report
+    enriched, manifest, report = curated.enriched, curated.manifest, curated.report
     catalog = enriched.catalog
     db, schema = catalog.database_id, catalog.schema_name
     notes = {(note.table_name, note.column_name): note for note in enriched.descriptions}
     lineage = {(item["table_name"], item["column_name"]): item for item in report["lineage"]}
     source_hashes = {source.source_file: source.source_sha256 for source in enriched.sources}
     result = KnowledgeDraft(documents=[], chunks=[], relations=[])
-    input_bundle = {
-        "curation_manifest_sha256": bundle.manifest_sha256,
+    curated_inputs = {
+        "curation_manifest_sha256": curated.manifest_sha256,
         "enriched_catalog_sha256": manifest["artifacts_sha256"]["enriched_catalog.json"],
         "correction_report_sha256": manifest["artifacts_sha256"]["correction_report.json"],
         "base_enriched_sha256": manifest["base_enriched_sha256"],
         "plan_sha256": manifest["plan_sha256"], "approval": manifest["approval"],
     }
     if profile:
-        input_bundle.update(semantic_metadata)
+        curated_inputs.update(semantic_metadata)
     for table_index, table in enumerate(catalog.tables):
         document_key = _key("table_document", db, schema, table.name)
         locator = ["catalog", "tables", table_index]
@@ -490,7 +490,7 @@ def _render_bundle(
             relation_key = _key("declared_fk", db, schema, table.name, fk.foreign_key_id)
             provenance = {
                 "artifact": "enriched_catalog.json",
-                "artifact_sha256": input_bundle["enriched_catalog_sha256"],
+                "artifact_sha256": curated_inputs["enriched_catalog_sha256"],
                 "locator": locator + ["foreign_keys", fk_index],
             }
             result.relations.append(RelationDraft(
@@ -525,7 +525,7 @@ def _render_bundle(
         result.documents.append(DocumentDraft(
             document_key=document_key, database_id=db, title=table_title,
             content="\n\n".join(f"## {chunk.title}\n{chunk.content}" for chunk in table_chunks),
-            metadata={"schema_name": schema, "table_name": table.name, "input_bundle": input_bundle,
+            metadata={"schema_name": schema, "table_name": table.name, "input_bundle": curated_inputs,
                       "structure_locator": locator, "column_sources": column_sources,
                       "corrections": corrections},
         ))

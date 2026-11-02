@@ -18,7 +18,7 @@ from _bm25_fixtures import (
 
 
 def probe_query(probe, terms, *, column="content", types=None, scope=None, top_k=50):
-    """用 reader 在同一只读快照执行参数化词项 OR；仅查询本次自有表。"""
+    """用 reader 在同一只读语料执行参数化词项 OR；仅查询本次自有表。"""
     from psycopg import sql
 
     if column == "display_name":

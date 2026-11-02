@@ -13,7 +13,7 @@ from pydantic import ValidationError
 
 from querypilot.knowledge.knowledge_catalog.api import EnrichedCatalog
 from querypilot.knowledge.knowledge_catalog.api import SourceVerificationError, verify_sources
-from querypilot.knowledge.knowledge_catalog.api import CatalogSnapshot
+from querypilot.knowledge.knowledge_catalog.api import Catalog
 from .identity import (
     canonical_json, content_hash, digest, json_file, jsonl_file, object_id,
     parse_json, schema_version,
@@ -29,7 +29,7 @@ from .draft import KnowledgeDraft
 from .models import VerifiedCorpus
 from ._render import KnowledgeError, render_knowledge_inputs
 
-REQUIRED_BUNDLE = {
+REQUIRED_CURATED = {
     "enriched_catalog.json": "enriched_catalog",
     "import_warnings.json": "import_warnings",
     "correction_report.json": "correction_report",
@@ -73,7 +73,7 @@ class _Inputs:
     """固定源字节及已核对草稿，避免读取过程中混用两个源版本。"""
 
     files: dict[str, bytes]
-    catalog: CatalogSnapshot
+    catalog: Catalog
     draft: KnowledgeDraft
     manifest: dict[str, Any]
     sources: list[SourceEntry]
@@ -149,17 +149,17 @@ def _input_roles(files: dict[str, bytes]) -> dict[str, str]:
     """校验固定源集合。输入：inputs 路径及原字节；输出：路径到固定角色；无写入。"""
     prefix = "inputs/bundle/"
     manifest_path = prefix + "curation_manifest.json"
-    _require(manifest_path in files, "input_invalid", "缺少批准包清单", path=manifest_path)
+    _require(manifest_path in files, "input_invalid", "缺少整理后目录清单", path=manifest_path)
     manifest = _parse(files[manifest_path], manifest_path, "input_invalid")
     _require(isinstance(manifest, dict) and set(manifest) == MANIFEST_FIELDS,
-             "source_scope_violation", "批准包包含未知或缺失契约字段", path=manifest_path)
+             "source_scope_violation", "整理后目录包含未知或缺失契约字段", path=manifest_path)
     artifacts = manifest["artifacts_sha256"]
-    _require(isinstance(artifacts, dict) and set(REQUIRED_BUNDLE) <= set(artifacts),
-             "input_invalid", "批准包缺少必要产物", path=manifest_path)
+    _require(isinstance(artifacts, dict) and set(REQUIRED_CURATED) <= set(artifacts),
+             "input_invalid", "整理后目录缺少必要产物", path=manifest_path)
     roles = {manifest_path: "curation_manifest"}
     for relative in artifacts:
         _logical_path(relative)
-        role = REQUIRED_BUNDLE.get(relative)
+        role = REQUIRED_CURATED.get(relative)
         if role is None:
             _require(relative.startswith("derived_source/") and relative.endswith(".csv"),
                      "source_scope_violation", "来源角色不允许", path=relative)
@@ -205,26 +205,26 @@ def _prepare(files: dict[str, bytes], database_id: str) -> _Inputs:
     except CorpusError:
         raise
     except (KnowledgeError, ValueError, KeyError, TypeError, csv.Error) as exc:
-        raise CorpusError("input_invalid", "批准包、结构、语义或来源 lineage 不一致") from exc
+        raise CorpusError("input_invalid", "整理后目录、结构、语义或来源 lineage 不一致") from exc
     sources = [SourceEntry(role=role, logical_path=path, sha256=digest(files[path]))
                for path, role in sorted(roles.items(), key=lambda item: (item[1], item[0]))]
     return _Inputs(files, enriched.catalog, draft, manifest, sources)
 
 
 
-def _load_inputs(bundle_dir: Path, semantic_file: Path, database_id: str) -> _Inputs:
+def _load_inputs(curated_dir: Path, semantic_file: Path, database_id: str) -> _Inputs:
     """读取指定源。输入：包/语义/库；输出：固定输入；I/O 或契约失败抛 CorpusError。"""
     try:
-        root = bundle_dir.resolve()
+        root = curated_dir.resolve()
         manifest_raw = _read(root, "curation_manifest.json")
         manifest = _parse(manifest_raw, "curation_manifest.json", "input_invalid")
         _require(isinstance(manifest, dict) and isinstance(manifest.get("artifacts_sha256"), dict),
-                 "input_invalid", "批准包清单无效")
+                 "input_invalid", "整理后目录清单无效")
         files = {"inputs/bundle/curation_manifest.json": manifest_raw}
         for relative in manifest["artifacts_sha256"]:
             _logical_path(relative)
             # 在打开额外文件前拒绝非角色来源。
-            _require(relative in REQUIRED_BUNDLE or
+            _require(relative in REQUIRED_CURATED or
                      (relative.startswith("derived_source/") and relative.endswith(".csv")),
                      "source_scope_violation", "来源角色不允许", path=relative)
             files["inputs/bundle/" + relative] = _read(root, relative)
@@ -238,7 +238,7 @@ def _load_inputs(bundle_dir: Path, semantic_file: Path, database_id: str) -> _In
 
 
 def _provenance(inputs: _Inputs) -> ProvenanceScope:
-    """重建来源范围。输入：批准包；输出：实际复查/历史引用；无副作用。"""
+    """重建来源范围。输入：整理后目录；输出：实际复查/历史引用；无副作用。"""
     refs = [HistoricalReference(kind="original_csv", key=_logical_path(key), sha256=value)
             for key, value in inputs.manifest["original_source_sha256"].items()]
     refs += [HistoricalReference(kind=kind, key=key, sha256=inputs.manifest[key])
@@ -350,7 +350,7 @@ def _check_rows(actual: dict[str, list[dict[str, Any]]], expected: dict[str, lis
 
 
 def _inventory(root: Path) -> set[str]:
-    """枚举快照文件。输入：指定目录；输出：文件集合；越界/循环链接拒绝，不扫描工作区。"""
+    """枚举语料文件。输入：指定目录；输出：文件集合；越界/循环链接拒绝，不扫描工作区。"""
     files = set()
     visited = set()
     pending = [root]
@@ -413,7 +413,7 @@ def _verify(root: Path, manifest: CorpusManifest, *, precommit: bool = False) ->
     allowed = set(candidate.core) | {"validation.json"}
     if not precommit:
         allowed.add("manifest.json")
-    _require(files - {"build-run.json"} == allowed, "artifact_integrity", "快照缺文件或含额外文件")
+    _require(files - {"build-run.json"} == allowed, "artifact_integrity", "语料缺文件或含额外文件")
     if not precommit:
         _require(_read(root, "manifest.json") == json_file(candidate.manifest.model_dump(mode="json")),
                  "artifact_integrity", "清单不是规范字节", path="manifest.json")
@@ -421,7 +421,7 @@ def _verify(root: Path, manifest: CorpusManifest, *, precommit: bool = False) ->
 
 
 def load_verified_corpus(corpus_dir: Path) -> VerifiedCorpus:
-    """加载并完整核验正式快照，返回当前调用持有的全部对象。
+    """加载并完整核验正式语料，返回当前调用持有的全部对象。
 
     参数：corpus_dir 为完整 R1.4 目录。
     返回：VerifiedCorpus，包含清单、报告、三类对象 tuple；不得修改嵌套内容。
@@ -440,31 +440,31 @@ def load_verified_corpus(corpus_dir: Path) -> VerifiedCorpus:
     except CorpusError:
         raise
     except OSError as exc:
-        message = "快照缺少必需文件" if isinstance(exc, FileNotFoundError) else "当前无法读取快照完成核验"
+        message = "语料缺少必需文件" if isinstance(exc, FileNotFoundError) else "当前无法读取语料完成核验"
         raise CorpusError("artifact_integrity", message) from exc
     except (ValueError, KeyError, TypeError, RuntimeError) as exc:
-        raise CorpusError("artifact_integrity", "快照结构或来源引用不合法") from exc
+        raise CorpusError("artifact_integrity", "语料结构或来源引用不合法") from exc
 
 
 def verify_knowledge_corpus(corpus_dir: Path) -> VerificationSummary:
-    """只读独立核验正式快照。
+    """只读独立核验正式语料。
 
-    参数: corpus_dir 为完整快照目录，不需要原机器源路径。
+    参数: corpus_dir 为完整语料目录，不需要原机器源路径。
     返回: 已重算全部来源、对象和文件后的 verified 摘要。
     异常: CorpusError，保留底层 I/O 或校验 cause；不可信报告不作为检查依据。
     副作用: 只读；不修复、不撤销状态，不调用模型或数据库。
     """
     try:
-        snapshot = load_verified_corpus(corpus_dir)
-        return VerificationSummary(corpus_id=snapshot.manifest.corpus_id, counts=snapshot.validation.counts,
-                                   checks=snapshot.validation.checks)
+        corpus = load_verified_corpus(corpus_dir)
+        return VerificationSummary(corpus_id=corpus.manifest.corpus_id, counts=corpus.validation.counts,
+                                   checks=corpus.validation.checks)
     except CorpusError:
         raise
     except OSError as exc:
-        message = "快照缺少必需文件" if isinstance(exc, FileNotFoundError) else "当前无法读取快照完成核验"
+        message = "语料缺少必需文件" if isinstance(exc, FileNotFoundError) else "当前无法读取语料完成核验"
         raise CorpusError("artifact_integrity", message) from exc
     except (ValueError, KeyError, TypeError, RuntimeError) as exc:
-        raise CorpusError("artifact_integrity", "快照结构或来源引用不合法") from exc
+        raise CorpusError("artifact_integrity", "语料结构或来源引用不合法") from exc
 
 
 def _write(root: Path, relative: str, raw: bytes) -> None:
@@ -486,18 +486,18 @@ def _run_record(corpus_id: str, started: float) -> BuildRunRecord:
                           git_revision=revision, git_dirty=dirty)
 
 
-def build_knowledge_corpus(bundle_dir: Path, semantic_file: Path, output_dir: Path,
+def build_knowledge_corpus(curated_dir: Path, semantic_file: Path, output_dir: Path,
                            database_id: str, profile_version: str = "r1-4-v1") -> BuildSummary:
-    """构建或只读复用正式离线快照。
+    """构建或只读复用正式离线语料。
 
-    参数: bundle_dir/semantic_file 为固定批准输入，output_dir 为目标，database_id
+    参数: curated_dir/semantic_file 为固定批准输入，output_dir 为目标，database_id
         为显式单库范围，profile_version 为非空声明规则标签。
     返回: 最终独立核验通过的 built 或一致复用的 reused 摘要。
     异常: CorpusError；写出失败不返回成功，保留底层 cause 和实际目录供独立核验。
     副作用: 只创建新目标；不覆盖/补写已有目标，不改输入，不调用模型/数据库。
     """
     started = time.perf_counter()
-    bundle_dir, semantic_file, output_dir = map(Path, (bundle_dir, semantic_file, output_dir))
+    curated_dir, semantic_file, output_dir = map(Path, (curated_dir, semantic_file, output_dir))
     try:
         root = output_dir.resolve()
     except (OSError, RuntimeError) as exc:
@@ -506,27 +506,27 @@ def build_knowledge_corpus(bundle_dir: Path, semantic_file: Path, output_dir: Pa
     _require(os.path.normcase(str(absolute)) == os.path.normcase(str(root)),
              "target_conflict", "输出路径含链接或别名目标")
     try:
-        source_roots = (bundle_dir.resolve(), semantic_file.parent.resolve())
+        source_roots = (curated_dir.resolve(), semantic_file.parent.resolve())
     except (OSError, RuntimeError) as exc:
         raise CorpusError("input_invalid", "输入路径无法解析") from exc
     for source in source_roots:
         _require(not root.is_relative_to(source) and not source.is_relative_to(root),
                  "target_conflict", "输入与输出目录重叠")
     config = _model(BuildConfig, {"profile_version": profile_version}, "build-config.json", "input_invalid")
-    inputs = _load_inputs(bundle_dir, semantic_file, database_id)
+    inputs = _load_inputs(curated_dir, semantic_file, database_id)
     try:
         candidate = _candidate(inputs, config)
     except (ValueError, KeyError, TypeError) as exc:
         if isinstance(exc, CorpusError):
             raise
-        raise CorpusError("input_invalid", "输入不能构成完整知识快照") from exc
+        raise CorpusError("input_invalid", "输入不能构成完整知识语料") from exc
     if root.exists():
         try:
             verify_knowledge_corpus(root)
             expected = {**candidate.core, "validation.json": json_file(candidate.report.model_dump(mode="json")),
                         "manifest.json": json_file(candidate.manifest.model_dump(mode="json"))}
             _require(all(_read(root, path) == raw for path, raw in expected.items()),
-                     "target_conflict", "已有快照与本次输入或规则不同")
+                     "target_conflict", "已有语料与本次输入或规则不同")
         except (CorpusError, OSError) as exc:
             raise CorpusError("target_conflict", "已有目标无效或与本次候选不一致") from exc
         return BuildSummary(outcome="reused", corpus_id=candidate.manifest.corpus_id,

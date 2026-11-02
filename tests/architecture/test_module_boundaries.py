@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 
-KNOWLEDGE_PARTS = ("knowledge_catalog", "knowledge_snapshots", "knowledge_store")
+KNOWLEDGE_PARTS = ("knowledge_catalog", "knowledge_corpus", "knowledge_store")
 EVALUATION_PARTS = ("sql", "retrieval", "datasets")
 # datasets 沿用既有实现；例外只属于根 API 的这六个导入，不开放整个子能力。
 DATASET_REEXPORTS = {
@@ -31,8 +31,8 @@ ALLOWED_DEPENDENCIES = {
     "evaluation.datasets": {"databases", "runtime"},
     "knowledge": {*(f"knowledge.{part}" for part in KNOWLEDGE_PARTS), "runtime"},
     "knowledge.knowledge_catalog": {"runtime"},
-    "knowledge.knowledge_snapshots": {"knowledge.knowledge_catalog", "runtime"},
-    "knowledge.knowledge_store": {"knowledge.knowledge_snapshots", "runtime"},
+    "knowledge.knowledge_corpus": {"knowledge.knowledge_catalog", "runtime"},
+    "knowledge.knowledge_store": {"knowledge.knowledge_corpus", "runtime"},
     "retrieval": {"knowledge", "runtime"},
     "runtime": set(),
 }
@@ -463,8 +463,8 @@ def test_legal_api_exports_and_internal_imports(tmp_path: Path) -> None:
         "src/querypilot/knowledge/__init__.py": "",
         "src/querypilot/knowledge/api.py": "from .knowledge_store.api import open_read_scope\n__all__ = ['open_read_scope']\n",
         "src/querypilot/knowledge/knowledge_store/api.py": "from . import _read\nfrom ._read import open_read_scope\n__all__ = ['open_read_scope']\n",
-        "src/querypilot/knowledge/knowledge_store/_read.py": "from ..knowledge_snapshots.api import load\ndef open_read_scope(): pass\n",
-        "src/querypilot/knowledge/knowledge_snapshots/api.py": "from ..knowledge_catalog.api import verify_sources\ndef load(): pass\n__all__ = ['load']\n",
+        "src/querypilot/knowledge/knowledge_store/_read.py": "from ..knowledge_corpus.api import load\ndef open_read_scope(): pass\n",
+        "src/querypilot/knowledge/knowledge_corpus/api.py": "from ..knowledge_catalog.api import verify_sources\ndef load(): pass\n__all__ = ['load']\n",
         "src/querypilot/knowledge/knowledge_catalog/api.py": "def verify_sources(): pass\n__all__ = ['verify_sources']\n",
         "scripts/task.py": "from querypilot.knowledge.api import open_read_scope\n",
     })
@@ -497,7 +497,7 @@ def test_querying_rejects_private_or_forbidden_imports(tmp_path: Path, source: s
 
 @pytest.mark.parametrize(("path", "source"), [
     ("runtime/_events.py", "from querypilot.databases.api import execute\n"),
-    ("knowledge/knowledge_catalog/_extract.py", "from ..knowledge_snapshots.api import load\n"),
+    ("knowledge/knowledge_catalog/_extract.py", "from ..knowledge_corpus.api import load\n"),
     ("knowledge/knowledge_store/_read.py", "from ..api import load\n"),
     ("retrieval/service.py", "from querypilot.knowledge.knowledge_store.api import open_read_scope\n"),
 ])

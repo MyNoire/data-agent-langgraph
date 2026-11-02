@@ -1,6 +1,6 @@
 # QueryPilot：从哪里调用一项完整能力
 
-假设你要“根据问题查出统计结果”，调用 querying.ask 即可：它负责读结构、生成 SQL、检查安全性和只读执行。调用者不用自己拼步骤。要“从批准资料生成知识快照”，则调用 knowledge.build_snapshot。两者互不依赖，业务查询不会因为没有 PostgreSQL 配置而无法启动。
+假设你要“根据问题查出统计结果”，调用 querying.ask 即可：它负责读结构、生成 SQL、检查安全性和只读执行。调用者不用自己拼步骤。要“从批准资料生成知识快照”，则调用 knowledge.build_corpus。两者互不依赖，业务查询不会因为没有 PostgreSQL 配置而无法启动。
 
 跨模块从 api.py 导入。一个模块可以有多个清楚的操作，不需要把功能塞进一个函数，也不要求所有结果长成同一个样子。内部按需要拆文件、用合适技术；调用者只依赖公开操作和领域类型。
 
@@ -18,7 +18,7 @@ src/querypilot/
     datasets/        既有 BIRD 数据准备工具
   knowledge/
     knowledge_catalog/    提取结构、导入说明、应用批准修正
-    knowledge_snapshots/  渲染、生成身份、构建和校验快照
+    knowledge_corpus/     渲染、生成身份、构建和校验 Corpus（知识语料）
     knowledge_store/      PostgreSQL 导入、复验、限定只读会话
   retrieval/         保留 R3；匹配和排名仍待结对完成
   runtime/           配置、运行目录、事件、审计、版本信息
@@ -77,27 +77,27 @@ with TemporaryDirectory() as temporary:
 
 | 能力 | 完整操作与结果 | 读取、写出与错误 |
 | --- | --- | --- |
-| knowledge_catalog | extract_catalog(database_id, path) → CatalogSnapshot；enrich_catalog(catalog, description_dir) → DescriptionImportResult | SQLite/CSV 只读；保留来源和警告；CatalogError/DescriptionError，以及文件读取或 SQLite 错误 |
+| knowledge_catalog | extract_catalog(database_id, path) → Catalog；enrich_catalog(catalog, description_dir) → DescriptionImportResult | SQLite/CSV 只读；保留来源和警告；CatalogError/DescriptionError，以及文件读取或 SQLite 错误 |
 | knowledge_catalog | curate_catalog(base_file, source_dir, plan_file, output_dir, *, settings=None, run_context=None) → CurationSummary | 应用批准规则到新目录；冲突与防覆盖保留；CorrectionError |
 | knowledge_catalog | verify_sources(enriched, source_bytes) → SourceVerification | 完整核对 hash、行位置、单元格和表列绑定；无 I/O；SourceVerificationError |
-| knowledge_snapshots | render_knowledge → KnowledgeDraft | 读取批准包和语义配置；不自动发布正式快照；KnowledgeError |
-| knowledge_snapshots | build_snapshot(bundle_dir, semantic_file, output_dir, database_id, config=None, *, settings=None, run_context=None) → BuildSummary | 来源核对、渲染、身份和发布；返回 built/reused；CorpusError |
-| knowledge_snapshots | verify_snapshot(corpus_dir) → VerificationSummary；load_snapshot(corpus_dir) → VerifiedCorpus | 每次从目录重新读取核对；普通库调用不建任务；CorpusError |
+| knowledge_corpus | render_knowledge → KnowledgeDraft | 读取批准包和语义配置；不自动发布正式快照；KnowledgeError |
+| knowledge_corpus | build_corpus(bundle_dir, semantic_file, output_dir, database_id, config=None, *, settings=None, run_context=None) → BuildSummary | 来源核对、渲染、身份和发布；返回 built/reused；CorpusError |
+| knowledge_corpus | verify_corpus(corpus_dir) → VerificationSummary；load_corpus(corpus_dir) → VerifiedCorpus | 每次从目录重新读取核对；普通库调用不建任务；CorpusError |
 | knowledge_store | manage_store(operation, storage_settings, *, run_context=None) → ManagementSummary | 只执行 bootstrap/migrate/check；所选操作才加载 PG 驱动 |
-| knowledge_store | import_snapshot(corpus_dir, storage_settings, *, run_context=None) → ImportSummary；verify_import(...) → ImportVerificationSummary | 先重读快照；原事务锁、全字段回读、imported/reused 和未知提交语义保留；KnowledgeStorageError |
+| knowledge_store | import_corpus(corpus_dir, storage_settings, *, run_context=None) → ImportSummary；verify_import(...) → ImportVerificationSummary | 先重读快照；原事务锁、全字段回读、imported/reused 和未知提交语义保留；KnowledgeStorageError |
 | knowledge_store | open_read_scope(scope, storage_settings, limits=None) → 上下文 ReadSession | 一个只读一致事务；关闭后不可复用；KnowledgeReadError |
 
 例如，准备好批准包 bundle 和语义文件 semantics.json 后：
 
 ~~~python
 from pathlib import Path
-from querypilot.knowledge.api import build_snapshot, verify_snapshot, CorpusError
+from querypilot.knowledge.api import build_corpus, verify_corpus, CorpusError
 
-summary = build_snapshot(Path("bundle"), Path("semantics.json"), Path("new-corpus"), "demo")
+summary = build_corpus(Path("bundle"), Path("semantics.json"), Path("new-corpus"), "demo")
 assert summary.outcome in {"built", "reused"}
-checked = verify_snapshot(Path("new-corpus"))
+checked = verify_corpus(Path("new-corpus"))
 try:
-    verify_snapshot(Path("missing-corpus"))
+    verify_corpus(Path("missing-corpus"))
 except CorpusError:
     pass  # 缺文件或内容不符会拒绝，不拿上次摘要代替本次核验。
 ~~~
@@ -116,7 +116,7 @@ PG 的真实事务和权限必须在专用测试库验证；替身只能证明�
 - 来源核对：verify_sources(增强目录, 文件名到原字节的映射) 返回 verified 和来源/记录数；真实修改其中 CSV 字节后，会在 hash、行或字段绑定处拒绝。
 - 渲染/构建：给相同批准包和语义文件，render 返回草稿，build 返回 built 或 reused；缺少来源、引用错误或已有目标冲突报领域错误，不改旧目标。
 - 管理：manage_store("check", 存储配置) 检查当前迁移版本；缺对应账号配置或版本冲突时 KnowledgeStorageError 明确分类。bootstrap/migrate 只在显式选择时执行。
-- 导入/复验：import_snapshot(合法快照, 存储配置) 首次返回 imported，再次相同输入返回 reused；verify_import 返回 verified。源被损坏时先报 source_invalid，不进入 PG；存储内容不符时拒绝，不覆盖修复。
+- 导入/复验：import_corpus(合法快照, 存储配置) 首次返回 imported，再次相同输入返回 reused；verify_import 返回 verified。源被损坏时先报 source_invalid，不进入 PG；存储内容不符时拒绝，不覆盖修复。
 - 限定读取：with open_read_scope(含 corpus_id/database_id/schema_version 的 KnowledgeScope, 存储配置) as session 在同一事务核对范围；错误三元组、状态或容量会拒绝，退出后 session 不能再取数据。SQL 必须由源码构造，不能把用户问题传到语句位置。
 
 这些是所声明前置下的完整操作例子。可重复的原创资料在 tests/conftest.py 及知识契约测试中构造；调用方无需依赖它们的内部辅助函数。
@@ -137,7 +137,7 @@ BIRD 的 fetch/import/select/freeze/prepare 逻辑归 evaluation/datasets；命�
 
 ## 一次任务的记录归谁管
 
-ask/execute_sql/curate_catalog/build_snapshot/manage_store/import_snapshot/verify_import 和评测都是任务型操作。没上下文时自行创建并结束；上层传入 RunContext 时只借用，由创建者发布最终结果并关闭。一次评测各题共享批次目录，图事件用“批次:case:序号”区分。
+ask/execute_sql/curate_catalog/build_corpus/manage_store/import_corpus/verify_import 和评测都是任务型操作。没上下文时自行创建并结束；上层传入 RunContext 时只借用，由创建者发布最终结果并关闭。一次评测各题共享批次目录，图事件用“批次:case:序号”区分。
 
 普通提取、渲染、校验和图编译不偷偷创建另一份任务；作为独立命令时由命令层持有上下文。runtime.api.task_run 管理配置、事件和终态；RunArtifactError 单独表达记录失败。比如数据库操作成功而结果文件发布失败，保留“操作成功、产物失败”，不宣称回滚。原业务错误与记录错误同时发生时，业务错误优先。
 

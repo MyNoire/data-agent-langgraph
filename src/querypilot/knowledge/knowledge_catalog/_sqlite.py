@@ -8,7 +8,7 @@ import sqlite3
 from typing_inspection.typing_objects import is_final
 
 from .models import (
-    CatalogSnapshot, ColumnSchema, ForeignKeySchema, TableSchema,
+    Catalog, ColumnSchema, ForeignKeySchema, TableSchema,
 )
 
 class CatalogError(ValueError):
@@ -61,7 +61,7 @@ def _read_foreign_keys(
     table: TableSchema,
     tables_by_name: dict[str, TableSchema],
 ) -> list[ForeignKeySchema]:
-    """合并外键记录，并把关系两端绑定到当前快照。
+    """合并外键记录，并把关系两端绑定到当前语料。
 
     参数:
         connection: 已开启读事务、返回 sqlite3.Row 的连接。
@@ -114,14 +114,14 @@ def _read_foreign_keys(
         ))
     return relations
 
-def extract_catalog(database_id: str, path: Path) -> CatalogSnapshot:
+def extract_catalog(database_id: str, path: Path) -> Catalog:
     """提取一个 SQLite 文件的结构目录。
 
     参数:
         database_id: 已登记的库标识；命令行入口通过 DatabaseRegistry 获取路径。
         path: 已确认来源的 SQLite 文件路径；本函数本身不负责授权。
     返回:
-        main 普通表的快照，不包含绝对路径、时间戳、业务行或业务释义。
+        main 普通表的语料，不包含绝对路径、时间戳、业务行或业务释义。
     异常:
         FileNotFoundError: 输入文件不存在。
         CatalogError: SQLite 版本不足、存在不支持对象或外键无法解析。
@@ -156,4 +156,4 @@ def extract_catalog(database_id: str, path: Path) -> CatalogSnapshot:
         for table in tables:
             table.foreign_keys = _read_foreign_keys(connection, table, table_by_name)
         connection.commit()
-    return CatalogSnapshot(database_id=database_id, tables=tables)
+    return Catalog(database_id=database_id, tables=tables)

@@ -1,4 +1,4 @@
-"""知识测试共用的原创批准包；不访问正式数据或模型。"""
+"""知识测试共用的原创整理后目录；不访问正式数据或模型。"""
 
 import csv
 from hashlib import sha256
@@ -9,7 +9,7 @@ import pytest
 
 from querypilot.knowledge.knowledge_catalog._corrections import build_curated_catalog
 from querypilot.knowledge.knowledge_catalog.api import enrich_catalog
-from querypilot.knowledge.knowledge_catalog.api import CatalogSnapshot, ColumnSchema, ForeignKeySchema, TableSchema
+from querypilot.knowledge.knowledge_catalog.api import Catalog, ColumnSchema, ForeignKeySchema, TableSchema
 
 
 @pytest.fixture(autouse=True)
@@ -26,7 +26,7 @@ def pytest_addoption(parser) -> None:
 
 @pytest.fixture
 def r2_corpus(tmp_path):
-    """输入：临时目录；输出：原创两列复合 FK 正式快照；仅写临时文件。"""
+    """输入：临时目录；输出：原创两列复合 FK 正式语料；仅写临时文件。"""
     return _build_test_corpus(tmp_path)
 
 
@@ -34,7 +34,7 @@ def r2_corpus(tmp_path):
 def r3_corpus_factory(tmp_path):
     """输入：临时目录；返回：合法多库/多版本构建函数；只写本次测试目录。"""
     def build(name: str, *, database_id: str = "demo", profile_version: str = "r1-4-v1"):
-        """输入：独立子目录名、库及构建版本；返回：新快照路径；异常：重名/I/O 错误。"""
+        """输入：独立子目录名、库及构建版本；返回：新语料路径；异常：重名/I/O 错误。"""
         root = tmp_path / name
         root.mkdir(exist_ok=False)
         return _build_test_corpus(root, database_id, profile_version)
@@ -43,9 +43,9 @@ def r3_corpus_factory(tmp_path):
 
 def _build_test_corpus(tmp_path: Path, database_id: str = "demo",
                        profile_version: str = "r1-4-v1") -> Path:
-    """输入：独立临时根、库与规则版本；返回：真实构建的快照；只写临时文件。"""
-    from querypilot.knowledge.knowledge_snapshots._corpus import build_knowledge_corpus
-    bundle = _bundle(tmp_path, database_id=database_id)
+    """输入：独立临时根、库与规则版本；返回：真实构建的语料；只写临时文件。"""
+    from querypilot.knowledge.knowledge_corpus._corpus import build_knowledge_corpus
+    curated = _curated(tmp_path, database_id=database_id)
     semantic = tmp_path / "config" / "semantics.json"
     semantic.parent.mkdir()
     _write_json(semantic, {
@@ -57,7 +57,7 @@ def _build_test_corpus(tmp_path: Path, database_id: str = "demo",
                            "meaning": "事件关联同租户物品。"}],
     })
     target = tmp_path / "corpus"
-    build_knowledge_corpus(bundle, semantic, target, database_id, profile_version=profile_version)
+    build_knowledge_corpus(curated, semantic, target, database_id, profile_version=profile_version)
     return target
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -72,7 +72,7 @@ def _write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
-def _bundle(tmp_path: Path, mutation: str | None = None, *, database_id: str = "demo") -> Path:
+def _curated(tmp_path: Path, mutation: str | None = None, *, database_id: str = "demo") -> Path:
     """使用真实修正流程构造一个原创的已批准输入包。
 
     参数:
@@ -80,7 +80,7 @@ def _bundle(tmp_path: Path, mutation: str | None = None, *, database_id: str = "
         mutation: 可选原创变化标签，在导入/批准修正前改变来源或结构。
         database_id: 原创业务库标识，默认 demo；在正式构建前进入完整来源链。
     返回:
-        包含清单、增强目录、来源和报告的修正包路径。
+        包含清单、增强目录、来源和报告的整理后目录路径。
     副作用:
         只在 tmp_path 创建文件；不访问 BIRD、模型或真实业务数据。
     """
@@ -157,7 +157,7 @@ def _bundle(tmp_path: Path, mutation: str | None = None, *, database_id: str = "
         fk.declared_target_columns.reverse()
     elif mutation == "action":
         tables[1].foreign_keys[0].on_delete = "CASCADE"
-    catalog = CatalogSnapshot(database_id=database_id, tables=tables)
+    catalog = Catalog(database_id=database_id, tables=tables)
     enriched = enrich_catalog(catalog, source).enriched_catalog
     base = tmp_path / "base.json"
     base.write_text(enriched.model_dump_json(), encoding="utf-8")
@@ -196,6 +196,6 @@ def _bundle(tmp_path: Path, mutation: str | None = None, *, database_id: str = "
     }
     plan_file = tmp_path / "plan.json"
     _write_json(plan_file, plan)
-    bundle = tmp_path / "curated"
-    build_curated_catalog(base, source, plan_file, bundle)
-    return bundle
+    curated = tmp_path / "curated"
+    build_curated_catalog(base, source, plan_file, curated)
+    return curated

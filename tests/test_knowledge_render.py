@@ -11,10 +11,10 @@ from querypilot.knowledge.knowledge_catalog.api import (
     ColumnSchema,
     ForeignKeySchema,
 )
-from querypilot.knowledge.knowledge_snapshots.api import KnowledgeError, render_knowledge
+from querypilot.knowledge.knowledge_corpus.api import KnowledgeError, render_knowledge
 
 
-from conftest import _bundle, _write_json
+from conftest import _curated, _write_json
 
 
 def test_render_preserves_content_relations_and_sources(
@@ -31,9 +31,9 @@ def test_render_preserves_content_relations_and_sources(
     返回:
         None；结果不符合知识草稿契约时断言失败。
     """
-    bundle = _bundle(tmp_path)
-    before = {path: path.read_bytes() for path in bundle.rglob("*") if path.is_file()}
-    draft = render_knowledge(bundle)
+    curated = _curated(tmp_path)
+    before = {path: path.read_bytes() for path in curated.rglob("*") if path.is_file()}
+    draft = render_knowledge(curated)
     assert draft.status == "draft"
     assert (len(draft.documents), len(draft.chunks), len(draft.relations)) == (2, 8, 1)
     assert Counter(chunk.knowledge_type for chunk in draft.chunks) == {
@@ -120,8 +120,8 @@ def test_render_preserves_content_relations_and_sources(
 
     from querypilot.entrypoints.cli import main
     output = tmp_path / "rendered"
-    args = ["--artifacts-dir", str(tmp_path / "artifacts"), "knowledge", "snapshot", "render",
-            "--bundle-dir", str(bundle), "--output-dir", str(output)]
+    args = ["--artifacts-dir", str(tmp_path / "artifacts"), "knowledge", "corpus", "render",
+            "--curated-dir", str(curated), "--output-dir", str(output)]
     assert main(args) == 0
     summary = json.loads(capsys.readouterr().out)
     assert summary == {
@@ -156,21 +156,21 @@ def test_rejects_corrupt_or_outside_artifact(tmp_path: Path, problem: str) -> No
     返回:
         None；渲染器接受损坏或越界输入时断言失败。
     """
-    bundle = _bundle(tmp_path)
+    curated = _curated(tmp_path)
     if problem == "hash":
-        target = bundle / "enriched_catalog.json"
+        target = curated / "enriched_catalog.json"
         target.write_bytes(target.read_bytes() + b"\n")
     else:
         outside = tmp_path / "outside.txt"
-        outside.write_text("outside the bundle", encoding="utf-8")
-        manifest_path = bundle / "curation_manifest.json"
+        outside.write_text("outside the curated", encoding="utf-8")
+        manifest_path = curated / "curation_manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest["artifacts_sha256"]["../outside.txt"] = sha256(
             outside.read_bytes()
         ).hexdigest()
         _write_json(manifest_path, manifest)
     with pytest.raises(KnowledgeError):
-        render_knowledge(bundle)
+        render_knowledge(curated)
 
 
 def test_rejects_inconsistent_lineage_after_rehash(tmp_path: Path) -> None:
@@ -181,8 +181,8 @@ def test_rejects_inconsistent_lineage_after_rehash(tmp_path: Path) -> None:
     返回:
         None；重算报告哈希后，错误 lineage 仍被接受时断言失败。
     """
-    bundle = _bundle(tmp_path)
-    report_path = bundle / "correction_report.json"
+    curated = _curated(tmp_path)
+    report_path = curated / "correction_report.json"
     report = json.loads(report_path.read_text(encoding="utf-8"))
     label = next(
         item for item in report["lineage"]
@@ -190,14 +190,14 @@ def test_rejects_inconsistent_lineage_after_rehash(tmp_path: Path) -> None:
     )
     label["derived_source"]["raw_values"][0] = "wrong_column"
     _write_json(report_path, report)
-    manifest_path = bundle / "curation_manifest.json"
+    manifest_path = curated / "curation_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["artifacts_sha256"]["correction_report.json"] = sha256(
         report_path.read_bytes()
     ).hexdigest()
     _write_json(manifest_path, manifest)
     with pytest.raises(KnowledgeError):
-        render_knowledge(bundle)
+        render_knowledge(curated)
 
 
 def test_role_context_missing_description_and_quoted_join(tmp_path: Path) -> None:
@@ -210,8 +210,8 @@ def test_role_context_missing_description_and_quoted_join(tmp_path: Path) -> Non
     副作用:
         仅修改临时包并重算测试清单的 hash，不修改正式输入。
     """
-    bundle = _bundle(tmp_path)
-    enriched_path = bundle / "enriched_catalog.json"
+    curated = _curated(tmp_path)
+    enriched_path = curated / "enriched_catalog.json"
     enriched = json.loads(enriched_path.read_text(encoding="utf-8"))
     events = next(table for table in enriched["catalog"]["tables"] if table["name"] == "events")
     events["columns"].append(ColumnSchema(
@@ -225,12 +225,12 @@ def test_role_context_missing_description_and_quoted_join(tmp_path: Path) -> Non
         on_update="NO ACTION", on_delete="NO ACTION", match="NONE",
     ).model_dump(mode="json"))
     _write_json(enriched_path, enriched)
-    manifest_path = bundle / "curation_manifest.json"
+    manifest_path = curated / "curation_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["artifacts_sha256"]["enriched_catalog.json"] = sha256(enriched_path.read_bytes()).hexdigest()
     _write_json(manifest_path, manifest)
 
-    draft = render_knowledge(bundle)
+    draft = render_knowledge(curated)
     relationships = [chunk for chunk in draft.chunks if chunk.knowledge_type == "relationship"]
     assert len(relationships) == 2
     first, second = relationships
@@ -267,8 +267,8 @@ def test_inferred_summaries_are_compact_and_versioned(tmp_path: Path) -> None:
     副作用:
         仅在临时目录写入 JSON 文件，不调用模型。
     """
-    bundle = _bundle(tmp_path)
-    baseline = render_knowledge(bundle)
+    curated = _curated(tmp_path)
+    baseline = render_knowledge(curated)
     semantic_file = tmp_path / "semantics.json"
     profile = {
         "database_id": "demo", "version": "demo-inferred-v1", "author": "原创测试推断",
@@ -281,7 +281,7 @@ def test_inferred_summaries_are_compact_and_versioned(tmp_path: Path) -> None:
     }
     _write_json(semantic_file, profile)
     before = semantic_file.read_bytes()
-    draft = render_knowledge(bundle, semantic_file)
+    draft = render_knowledge(curated, semantic_file)
     table = next(c for c in draft.chunks if c.knowledge_type == "table" and c.table_name == "items")
     relation = next(c for c in draft.chunks if c.knowledge_type == "relationship")
     assert "表用途: 记录租户下的物品和激活状态。" in table.content
@@ -304,9 +304,9 @@ def test_inferred_summaries_are_compact_and_versioned(tmp_path: Path) -> None:
     profile["database_id"] = "another_database"
     _write_json(semantic_file, profile)
     with pytest.raises(KnowledgeError, match="database_id"):
-        render_knowledge(bundle, semantic_file)
+        render_knowledge(curated, semantic_file)
     profile["database_id"] = "demo"
     profile["relationships"][0]["source_columns"] = ["tenant_ref"]
     _write_json(semantic_file, profile)
     with pytest.raises(KnowledgeError, match="不存在的完整外键"):
-        render_knowledge(bundle, semantic_file)
+        render_knowledge(curated, semantic_file)

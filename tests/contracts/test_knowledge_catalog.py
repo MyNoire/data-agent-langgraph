@@ -9,10 +9,10 @@ from querypilot.knowledge.knowledge_catalog.api import EnrichedCatalog, SourceVe
 
 @pytest.mark.parametrize("mutation", [None, "bytes", "record", "cells", "binding"])
 def test_sources_verify_actual_bytes_records_and_bindings(r2_corpus, mutation):
-    """输入：原创已批准包及污染；返回：完整通过或拒绝；仅修改内存副本。"""
-    bundle = r2_corpus / "inputs" / "bundle"
-    enriched = EnrichedCatalog.model_validate_json((bundle / "enriched_catalog.json").read_bytes())
-    sources = {source.source_file: (bundle / "derived_source" / source.source_file).read_bytes()
+    """输入：原创整理后目录及污染；返回：完整通过或拒绝；仅修改内存副本。"""
+    curated = r2_corpus / "inputs" / "bundle"
+    enriched = EnrichedCatalog.model_validate_json((curated / "enriched_catalog.json").read_bytes())
+    sources = {source.source_file: (curated / "derived_source" / source.source_file).read_bytes()
                for source in enriched.sources}
     if mutation == "bytes":
         sources[next(iter(sources))] += b"\n"

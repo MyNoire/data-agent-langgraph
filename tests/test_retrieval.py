@@ -195,7 +195,7 @@ assert not blocked.intersection(sys.modules)
 
 def test_original_fixture_builds_legal_databases_and_versions(r3_corpus_factory):
     """输入：原创工厂；返回：三份合法范围/别名/有序 FK 断言；只读临时构建产物。"""
-    from querypilot.knowledge.knowledge_snapshots.api import load_snapshot as load_verified_corpus
+    from querypilot.knowledge.knowledge_corpus.api import load_corpus as load_verified_corpus
 
     original = load_verified_corpus(r3_corpus_factory("first"))
     version = load_verified_corpus(r3_corpus_factory("version", profile_version="r3-fixture-v2"))

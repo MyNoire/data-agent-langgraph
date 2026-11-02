@@ -72,13 +72,13 @@ $env:QUERYPILOT_MAX_RESPONSE_BYTES = '10485760'
 
 ## 知识准备与存储
 
-目录按业务分成一个 knowledge 大模块，内部再分 knowledge_catalog、knowledge_snapshots、knowledge_store。普通调用只导入 knowledge.api；底层内部函数和裸 PG 连接不跨模块使用。
+目录按业务分成一个 knowledge 大模块，内部再分 knowledge_catalog、knowledge_corpus、knowledge_store。普通调用只导入 knowledge.api；底层内部函数和裸 PG 连接不跨模块使用。
 
 具备已批准 Toxicology 输入包后，构建/核验可使用：
 
 ~~~powershell
-uv run querypilot knowledge snapshot build --database-id toxicology --bundle-dir data/rag/toxicology/r1-2-curated-v1 --semantic-file config/knowledge_semantics/toxicology-v1.json --output-dir data/rag/toxicology/r1-4-corpus
-uv run querypilot knowledge snapshot verify --corpus-dir data/rag/toxicology/r1-4-corpus
+uv run querypilot knowledge corpus build --database-id toxicology --curated-dir data/rag/toxicology/r1-2-curated-v1 --semantic-file config/knowledge_semantics/toxicology-v1.json --output-dir data/rag/toxicology/r1-4-corpus
+uv run querypilot knowledge corpus verify --corpus-dir data/rag/toxicology/r1-4-corpus
 ~~~
 
 同一批准输入与语义配置保留同一 corpus 身份；已有目标合法且内容相同时只读复用，损坏或不同则拒绝。来源变化时构建新快照；没有后台巡检。运行记录不写进快照目录。

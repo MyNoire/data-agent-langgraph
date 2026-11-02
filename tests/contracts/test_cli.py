@@ -18,9 +18,9 @@ MAPPINGS = [
     ("export_catalog.py", "knowledge catalog extract --database-id demo --output catalog.json", "knowledge.catalog.extract"),
     ("enrich_catalog.py", "knowledge catalog enrich --catalog c --description-dir d --output-dir o", "knowledge.catalog.enrich"),
     ("curate_catalog.py", "knowledge catalog curate --base b --source-dir s --plan p --output-dir o", "knowledge.catalog.curate"),
-    ("render_knowledge.py", "knowledge snapshot render --bundle-dir b --output-dir o", "knowledge.snapshot.render"),
-    ("build_corpus.py", "knowledge snapshot build --bundle-dir b --semantic-file s --output-dir o --database-id demo", "knowledge.snapshot.build"),
-    ("verify_corpus.py", "knowledge snapshot verify --corpus-dir c", "knowledge.snapshot.verify"),
+    ("render_knowledge.py", "knowledge corpus render --curated-dir b --output-dir o", "knowledge.corpus.render"),
+    ("build_corpus.py", "knowledge corpus build --curated-dir b --semantic-file s --output-dir o --database-id demo", "knowledge.corpus.build"),
+    ("verify_corpus.py", "knowledge corpus verify --corpus-dir c", "knowledge.corpus.verify"),
     ("import_corpus.py", "knowledge store import --corpus-dir c", "knowledge.store.import"),
     ("verify_corpus_import.py", "knowledge store verify --corpus-dir c", "knowledge.store.verify"),
     ("manage_knowledge_db.py", "knowledge store check", "knowledge.store.check"),
@@ -41,7 +41,7 @@ def test_each_old_tool_has_an_explicit_parser(old, arguments, command):
 
 
 def test_mappings_exactly_match_contract_and_defaults():
-    """对照契约的18项集合及关键默认值，快照目标与运行根分别保留。"""
+    """对照契约的18项集合及关键默认值，语料目标与运行根分别保留。"""
     contract = Path(__file__).resolve().parents[2] / "specs/004-modular-refactor/contracts/cli.md"
     import re
     assert set(re.findall(r"\| (\w+\.py) \|", contract.read_text(encoding="utf-8"))) == {row[0] for row in MAPPINGS}

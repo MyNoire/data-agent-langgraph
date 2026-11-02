@@ -5,7 +5,7 @@ from .models import (
     ColumnSchema,
     ForeignKeySchema,
     TableSchema,
-    CatalogSnapshot,
+    Catalog,
 )
 from .description_models import (
     DescriptionSource,
@@ -75,7 +75,7 @@ __all__ = [
     "ColumnSchema",
     "ForeignKeySchema",
     "TableSchema",
-    "CatalogSnapshot",
+    "Catalog",
     "DescriptionSource",
     "SourceRecord",
     "ColumnDescription",

@@ -12,10 +12,10 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from sqlglot import exp, parse, parse_one
 
-from querypilot.knowledge.knowledge_snapshots.api import canonical_json, digest
-from querypilot.knowledge.knowledge_snapshots.api import CorpusDocument, CorpusChunk, CorpusRelation
+from querypilot.knowledge.knowledge_corpus.api import canonical_json, digest
+from querypilot.knowledge.knowledge_corpus.api import CorpusDocument, CorpusChunk, CorpusRelation
 from .settings import KnowledgeStorageError, KnowledgeStorageSettings, ROLE_NAMES, Role
-from querypilot.knowledge.knowledge_snapshots.api import VerifiedCorpus
+from querypilot.knowledge.knowledge_corpus.api import VerifiedCorpus
 from .models import (
     DIGEST_VERSION, STORAGE_VERSION, ManagementSummary, VerificationDigests,
 )
@@ -276,13 +276,13 @@ def check(settings: KnowledgeStorageSettings) -> ManagementSummary:
         return ManagementSummary(command="check", outcome="checked", server_version=server, vector_version=vector, migration_version="001")
 
 
-def corpus_record(snapshot: VerifiedCorpus) -> dict[str, Any]:
-    """输入：已验证快照；输出：不含操作时间的登记投影；无副作用。"""
-    manifest = snapshot.manifest
+def corpus_record(corpus: VerifiedCorpus) -> dict[str, Any]:
+    """输入：已验证语料；输出：不含操作时间的登记投影；无副作用。"""
+    manifest = corpus.manifest
     database = manifest.identity_descriptor.database_scope[0]
     return {"corpus_id": manifest.corpus_id, "database_id": database,
             "schema_version": manifest.identity_descriptor.schema_versions[database], "core_digest": manifest.core_digest,
-            "manifest": manifest.model_dump(mode="json"), "validation": snapshot.validation.model_dump(mode="json"),
+            "manifest": manifest.model_dump(mode="json"), "validation": corpus.validation.model_dump(mode="json"),
             "counts": manifest.counts.model_dump(mode="json"), "status": "stored", "storage_contract_version": STORAGE_VERSION}
 
 
@@ -295,15 +295,15 @@ def _insert(conn: psycopg.Connection, table: str, payload: dict[str, Any]) -> No
     conn.execute(query, [Jsonb(payload[n]) if isinstance(payload[n], dict) else payload[n] for n in names])
 
 
-def insert_snapshot(conn: psycopg.Connection, snapshot: VerifiedCorpus) -> None:
+def insert_corpus(conn: psycopg.Connection, corpus: VerifiedCorpus) -> None:
     """输入：写事务/已验证对象；输出：None；先登记再文档/关系/块，默认向量全 NULL。"""
-    _insert(conn, "knowledge_corpora", corpus_record(snapshot))
+    _insert(conn, "knowledge_corpora", corpus_record(corpus))
     for group, table in TABLES.items():
-        for row in getattr(snapshot, group):
+        for row in getattr(corpus, group):
             _insert(conn, table, row.model_dump(mode="json"))
 
 
-def read_snapshot(conn: psycopg.Connection, corpus_id: str) -> tuple[dict | None, dict[str, list[dict]]]:
+def read_corpus(conn: psycopg.Connection, corpus_id: str) -> tuple[dict | None, dict[str, list[dict]]]:
     """输入：同一事务连接/corpus；输出：实际登记及全量行；只读不截断，保留创建时间。"""
     record = conn.execute(f"SELECT * FROM {SCHEMA}.knowledge_corpora WHERE corpus_id=%s", (corpus_id,)).fetchone()
     groups = {group: conn.execute(sql.SQL("SELECT * FROM {}.{} WHERE corpus_id=%s").format(sql.Identifier(SCHEMA), sql.Identifier(table)), (corpus_id,)).fetchall() for group, table in TABLES.items()}
@@ -337,18 +337,18 @@ def verification_digests(record: dict, rows: dict[str, list[dict]]) -> Verificat
     return VerificationDigests(projection_digest=digest(canonical_json(content)), timestamps_digest=digest(canonical_json(times)))
 
 
-def verify_rows(snapshot: VerifiedCorpus, record: dict | None, rows: dict[str, list[dict]]) -> VerificationDigests:
-    """输入：源快照/实际回读；输出：核验后指纹；缺登记、污染、缺/多行均明确失败。"""
+def verify_rows(corpus: VerifiedCorpus, record: dict | None, rows: dict[str, list[dict]]) -> VerificationDigests:
+    """输入：源语料/实际回读；输出：核验后指纹；缺登记、污染、缺/多行均明确失败。"""
     if record is None:
-        raise KnowledgeStorageError("target_conflict" if any(rows.values()) else "not_imported", "知识快照缺失或登记不完整")
-    if canonical_json({k: record[k] for k in CORPUS_FIELDS}) != canonical_json(corpus_record(snapshot)):
-        raise KnowledgeStorageError("target_conflict", "数据库快照登记与源不一致")
+        raise KnowledgeStorageError("target_conflict" if any(rows.values()) else "not_imported", "知识语料缺失或登记不完整")
+    if canonical_json({k: record[k] for k in CORPUS_FIELDS}) != canonical_json(corpus_record(corpus)):
+        raise KnowledgeStorageError("target_conflict", "数据库语料登记与源不一致")
     for group in TABLES:
         key = {"documents": "document_key", "relations": "relation_key", "chunks": "chunk_key"}[group]
         actual = sorted((original_row(group, row) for row in rows[group]), key=lambda row: row[key])
-        expected = sorted((row.model_dump(mode="json") for row in getattr(snapshot, group)), key=lambda row: row[key])
+        expected = sorted((row.model_dump(mode="json") for row in getattr(corpus, group)), key=lambda row: row[key])
         if canonical_json(actual) != canonical_json(expected):
             raise KnowledgeStorageError("target_conflict", "数据库原字段或对象集合与源不一致")
     if any(row[k] is not None for row in rows["chunks"] for k in ("embedding", "embedding_profile_id", "embedding_dimensions")):
-        raise KnowledgeStorageError("target_conflict", "R2 快照含未验收向量")
+        raise KnowledgeStorageError("target_conflict", "R2 语料含未验收向量")
     return verification_digests(record, rows)

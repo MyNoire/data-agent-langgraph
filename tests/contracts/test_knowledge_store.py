@@ -2,11 +2,11 @@
 
 import pytest
 
-from querypilot.knowledge.api import KnowledgeStorageError, KnowledgeStorageSettings, import_snapshot, verify_import
+from querypilot.knowledge.api import KnowledgeStorageError, KnowledgeStorageSettings, import_corpus, verify_import
 from querypilot.knowledge.knowledge_store._read_session import ReadSession
 
 
-@pytest.mark.parametrize("operation", [import_snapshot, verify_import])
+@pytest.mark.parametrize("operation", [import_corpus, verify_import])
 def test_path_operations_reject_bad_source_before_database(tmp_path, operation):
     """输入：不存在的路径、无DSN配置；返回：来源错误优先；不连接数据库。"""
     with pytest.raises(KnowledgeStorageError) as caught:
@@ -16,7 +16,7 @@ def test_path_operations_reject_bad_source_before_database(tmp_path, operation):
 
 def test_read_session_fetches_incrementally_and_refuses_reuse(r2_corpus):
     """输入：受控游标替身；返回：逐行限额、参数绑定、关闭后拒绝；不宣称PG事务已验收。"""
-    from querypilot.knowledge.api import KnowledgeReadError, KnowledgeScope, ReadLimits, ReadView, load_snapshot
+    from querypilot.knowledge.api import KnowledgeReadError, KnowledgeScope, ReadLimits, ReadView, load_corpus
 
     class Cursor:
         """只支持逐行读取；不提供fetchall，防止把无界加载隐藏在测试里。"""
@@ -48,7 +48,7 @@ def test_read_session_fetches_incrementally_and_refuses_reuse(r2_corpus):
             self.last = Cursor()
             return self.last
 
-    held = load_snapshot(r2_corpus)
+    held = load_corpus(r2_corpus)
     scope = KnowledgeScope(corpus_id=held.manifest.corpus_id, database_id="demo",
                            schema_version=held.manifest.identity_descriptor.schema_versions["demo"])
     connection = Connection()

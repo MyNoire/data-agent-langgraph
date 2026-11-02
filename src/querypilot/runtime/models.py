@@ -3,7 +3,7 @@
 from typing import Any, TypedDict
 
 OPERATIONS = frozenset({
-    "query", "evaluation", "knowledge_catalog", "knowledge_snapshot",
+    "query", "evaluation", "knowledge_catalog", "knowledge_corpus",
     "knowledge_import", "knowledge_verify", "knowledge_manage", "data_prepare",
 })
 OPERATION_OUTCOMES = frozenset({

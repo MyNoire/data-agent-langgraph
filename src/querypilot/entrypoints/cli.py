@@ -56,20 +56,20 @@ def create_parser() -> argparse.ArgumentParser:
     for flag in ("base", "source-dir", "plan", "output-dir"):
         curate.add_argument(f"--{flag}", type=Path, required=True)
     curate.set_defaults(command="knowledge.catalog.curate")
-    snapshot = _artifacts(knowledge_groups.add_parser("snapshot"))
-    snapshot_actions = snapshot.add_subparsers(dest="action", required=True)
+    corpus = _artifacts(knowledge_groups.add_parser("corpus"))
+    corpus_actions = corpus.add_subparsers(dest="action", required=True)
     for name in ("render", "build"):
-        command = _artifacts(snapshot_actions.add_parser(name))
-        command.add_argument("--bundle-dir", "--bundle", dest="bundle_dir", type=Path, required=True)
+        command = _artifacts(corpus_actions.add_parser(name))
+        command.add_argument("--curated-dir", dest="curated_dir", type=Path, required=True)
         command.add_argument("--semantic-file", "--semantics", dest="semantic_file", type=Path, required=name == "build")
         command.add_argument("--output-dir", type=Path, required=True)
         if name == "build":
             command.add_argument("--database-id", required=True)
             command.add_argument("--profile-version", default="r1-4-v1")
-        command.set_defaults(command=f"knowledge.snapshot.{name}")
-    verify = _artifacts(snapshot_actions.add_parser("verify"))
+        command.set_defaults(command=f"knowledge.corpus.{name}")
+    verify = _artifacts(corpus_actions.add_parser("verify"))
     verify.add_argument("--corpus-dir", type=Path, required=True)
-    verify.set_defaults(command="knowledge.snapshot.verify")
+    verify.set_defaults(command="knowledge.corpus.verify")
     store = _artifacts(knowledge_groups.add_parser("store"))
     store_actions = store.add_subparsers(dest="action", required=True)
     for name in ("import", "verify", "bootstrap", "migrate", "check", "prepare-search", "check-search"):

@@ -10,8 +10,8 @@ from pydantic import SecretStr
 pytest.importorskip("psycopg", reason="R2 本地测试需 knowledge optional extra")
 
 from test_knowledge_corpus import _inputs
-from querypilot.knowledge.knowledge_snapshots.api import load_snapshot as load_verified_corpus, CorpusError
-from querypilot.knowledge.knowledge_snapshots._corpus import build_knowledge_corpus
+from querypilot.knowledge.knowledge_corpus.api import load_corpus as load_verified_corpus, CorpusError
+from querypilot.knowledge.knowledge_corpus._corpus import build_knowledge_corpus
 from querypilot.knowledge.knowledge_store._postgres import (
     TABLES, corpus_record, verify_rows, verification_digests, expected_structure,
     _constraint_expression,
@@ -301,17 +301,17 @@ def test_search_cli_dispatches_public_operation_and_keeps_safe_failure(tmp_path,
 
 @pytest.fixture
 def stored_sample(tmp_path):
-    """输入：pytest 临时目录；输出：有效源/模拟实际回读；只写原创临时快照。"""
-    bundle, semantic = _inputs(tmp_path)
-    root = tmp_path / "snapshot"
-    build_knowledge_corpus(bundle, semantic, root, "demo")
-    snapshot = load_verified_corpus(root)
+    """输入：pytest 临时目录；输出：有效源/模拟实际回读；只写原创临时语料。"""
+    curated, semantic = _inputs(tmp_path)
+    root = tmp_path / "corpus"
+    build_knowledge_corpus(curated, semantic, root, "demo")
+    corpus = load_verified_corpus(root)
     moment = datetime(2026, 10, 14, 1, 2, 3, 456789, tzinfo=timezone.utc)
-    record = {**corpus_record(snapshot), "imported_at": moment}
+    record = {**corpus_record(corpus), "imported_at": moment}
     rows = {}
     for group in TABLES:
         rows[group] = []
-        for source in getattr(snapshot, group):
+        for source in getattr(corpus, group):
             row = source.model_dump(mode="json")
             for field in list(row):
                 if field.endswith("_id") and field != "database_id" and field != "corpus_id" and row[field]:
@@ -320,23 +320,23 @@ def stored_sample(tmp_path):
             if group == "chunks":
                 row.update(embedding=None, embedding_profile_id=None, embedding_dimensions=None)
             rows[group].append(row)
-    return snapshot, record, rows, root
+    return corpus, record, rows, root
 
 
 def test_verified_reader_holds_objects_and_rejects_changed_files(stored_sample):
     """输入：已核验源；输出：原持有对象不变，新读取拒绝磁盘污染；只改临时目录。"""
-    snapshot, record, rows, root = stored_sample
-    before = verify_rows(snapshot, record, rows)
+    corpus, record, rows, root = stored_sample
+    before = verify_rows(corpus, record, rows)
     (root / "chunks.jsonl").write_text("{}\n", encoding="utf-8")
-    assert verify_rows(snapshot, record, rows) == before
+    assert verify_rows(corpus, record, rows) == before
     with pytest.raises(CorpusError):
         load_verified_corpus(root)
 
 
 def test_digests_preserve_ordered_keys_and_ignore_session_representation(stored_sample):
     """输入：实际字段投影；输出：返回行顺序、时区和操作元数据不影响指纹；无 I/O。"""
-    snapshot, record, rows, _ = stored_sample
-    first = verify_rows(snapshot, record, rows)
+    corpus, record, rows, _ = stored_sample
+    first = verify_rows(corpus, record, rows)
     other = deepcopy(rows)
     zone = timezone(timedelta(hours=8))
     for group in other:
@@ -344,13 +344,13 @@ def test_digests_preserve_ordered_keys_and_ignore_session_representation(stored_
         for row in other[group]:
             row["created_at"] = row["created_at"].astimezone(zone)
     record = {**record, "imported_at": record["imported_at"].astimezone(zone), "elapsed_ms": 999, "import_run_id": "different"}
-    assert verify_rows(snapshot, record, other) == first
+    assert verify_rows(corpus, record, other) == first
 
 
 @pytest.mark.parametrize("mutation", ["content", "metadata", "pair", "time", "missing", "extra", "embedding", "registry"])
 def test_projection_changes_or_target_conflicts_are_not_hidden(stored_sample, mutation):
     """输入：不同污染类别；输出：指纹分离正确且复验拒绝污染；无数据库副作用。"""
-    snapshot, record, rows, _ = stored_sample
+    corpus, record, rows, _ = stored_sample
     before = verification_digests(record, rows)
     if mutation == "time":
         rows["documents"][0]["created_at"] += timedelta(seconds=1)
@@ -370,7 +370,7 @@ def test_projection_changes_or_target_conflicts_are_not_hidden(stored_sample, mu
         assert after.projection_digest != before.projection_digest
         assert after.timestamps_digest == before.timestamps_digest
     with pytest.raises(KnowledgeStorageError, match="不一致|未验收"):
-        verify_rows(snapshot, record, rows)
+        verify_rows(corpus, record, rows)
 
 
 def test_config_is_optional_and_private_and_roles_are_explicit():
@@ -426,9 +426,9 @@ def test_receipt_failure_keeps_known_database_outcome(stored_sample, monkeypatch
     from querypilot.entrypoints.commands import knowledge
     from querypilot.runtime import _artifacts
     from querypilot.knowledge.knowledge_store._importer import _summary
-    snapshot, record, rows, root = stored_sample
-    result = _summary(snapshot, verify_rows(snapshot, record, rows), "unit", __import__("time").perf_counter(), "imported")
-    monkeypatch.setattr(knowledge, "import_snapshot", lambda *a, **k: result)
+    corpus, record, rows, root = stored_sample
+    result = _summary(corpus, verify_rows(corpus, record, rows), "unit", __import__("time").perf_counter(), "imported")
+    monkeypatch.setattr(knowledge, "import_corpus", lambda *a, **k: result)
     original_write = _artifacts._write_json
 
     def fail_result(path, payload, **kwargs):
@@ -490,7 +490,7 @@ def test_commit_confirmation_loss_is_unknown_and_private(stored_sample, monkeypa
     from contextlib import contextmanager
     import psycopg
     from querypilot.knowledge.knowledge_store import _postgres as postgres, _importer as importer
-    snapshot, record, rows, _ = stored_sample
+    corpus, record, rows, _ = stored_sample
 
     class Transaction:
         """提交退出时注入连接异常。"""
@@ -516,9 +516,9 @@ def test_commit_confirmation_loss_is_unknown_and_private(stored_sample, monkeypa
         yield Connection()
     monkeypatch.setattr(postgres, "connection", connect)
     monkeypatch.setattr(postgres, "check_database", lambda c: None)
-    monkeypatch.setattr(postgres, "read_snapshot", lambda *a: (record, rows))
+    monkeypatch.setattr(postgres, "read_corpus", lambda *a: (record, rows))
     with pytest.raises(KnowledgeStorageError) as caught:
-        importer.import_verified_corpus(snapshot, KnowledgeStorageSettings(_env_file=None))
+        importer.import_verified_corpus(corpus, KnowledgeStorageSettings(_env_file=None))
     assert caught.value.error_type == "commit_outcome_unknown"
     assert isinstance(caught.value.__cause__, psycopg.OperationalError)
     assert "private-password" not in str(caught.value)

@@ -31,8 +31,8 @@ ErrorType = Literal[
 ]
 SAFE_MESSAGES: dict[str, str] = {
     "input_error": "检索输入不符合协议",
-    "scope_not_found": "指定知识快照不存在",
-    "scope_mismatch": "知识快照与数据库或结构版本不对应",
+    "scope_not_found": "指定知识语料不存在",
+    "scope_mismatch": "知识语料与数据库或结构版本不对应",
     "knowledge_state_error": "知识登记、引用或内容不满足读取前置",
     "capacity_exceeded": "知识范围或结果超过本版本资源预算",
     "configuration_error": "知识读取配置或可选驱动不可用",

@@ -15,15 +15,15 @@ from querypilot.knowledge.knowledge_store.api import KnowledgeStorageError
 def _api():
     """输入：无；输出：延迟加载的 PG/导入 API；缺驱动由门禁 fixture 控制。"""
     from querypilot.knowledge.knowledge_store import _postgres as postgres, _importer as importer
-    from querypilot.knowledge.knowledge_snapshots.api import load_snapshot as load_verified_corpus
+    from querypilot.knowledge.knowledge_corpus.api import load_corpus as load_verified_corpus
     return postgres, importer, load_verified_corpus
 
 
 def test_public_path_import_reuse_and_verification(pg_database, r2_corpus):
     """输入：原创实际路径；返回：公开导入/复用/复验摘要一致；事务仅写专用测试库。"""
-    from querypilot.knowledge.api import import_snapshot, verify_import
-    first = import_snapshot(r2_corpus, pg_database)
-    again = import_snapshot(r2_corpus, pg_database)
+    from querypilot.knowledge.api import import_corpus, verify_import
+    first = import_corpus(r2_corpus, pg_database)
+    again = import_corpus(r2_corpus, pg_database)
     checked = verify_import(r2_corpus, pg_database)
     assert (first.outcome, again.outcome, checked.outcome) == ("imported", "reused", "verified")
     assert first.projection_digest == again.projection_digest == checked.projection_digest
@@ -32,7 +32,7 @@ def test_public_path_import_reuse_and_verification(pg_database, r2_corpus):
 
 def test_committed_import_survives_receipt_publish_failure(pg_database, r2_corpus, monkeypatch):
     """输入：原创源和单点结果写故障；返回：imported事实保留、实库复验仍成功；不删提交数据。"""
-    from querypilot.knowledge.api import import_snapshot, verify_import
+    from querypilot.knowledge.api import import_corpus, verify_import
     from querypilot.runtime.api import RunArtifactError
     from querypilot.runtime import _artifacts
     original = _artifacts._write_json
@@ -46,7 +46,7 @@ def test_committed_import_survives_receipt_publish_failure(pg_database, r2_corpu
     with monkeypatch.context() as isolated:
         isolated.setattr(_artifacts, "_write_json", fail_result)
         with pytest.raises(RunArtifactError) as failed:
-            import_snapshot(r2_corpus, pg_database)
+            import_corpus(r2_corpus, pg_database)
     assert failed.value.operation_outcome == "imported"
     assert failed.value.artifact_outcome == "failed"
     verified = verify_import(r2_corpus, pg_database)
@@ -83,7 +83,7 @@ def test_import_reuse_verification_and_composite_order(pg_database, r2_corpus):
     assert first.projection_digest == repeat.projection_digest == checked.projection_digest
     assert first.timestamps_digest == repeat.timestamps_digest == checked.timestamps_digest
     with pg.connection(pg_database, "read") as conn:
-        _, groups = pg.read_snapshot(conn, source.manifest.corpus_id)
+        _, groups = pg.read_corpus(conn, source.manifest.corpus_id)
     assert groups["relations"][0]["source_columns"] == ["tenant_ref", "item_ref"]
     assert groups["relations"][0]["target_columns"] == ["tenant_id", "item_id"]
     assert all(row["embedding"] is None for row in groups["chunks"])
@@ -102,15 +102,15 @@ def test_polluted_corpus_is_not_repaired(pg_database, r2_corpus, kind):
             row.update(chunk_id=str(uuid5(NAMESPACE_URL, str(uuid4()))), chunk_key="extra")
             pg._insert(conn, "knowledge_chunks", row)
         else: conn.execute("UPDATE querypilot_kb.knowledge_corpora SET counts='{}'::jsonb WHERE corpus_id=%s", (source.manifest.corpus_id,))
-        before = pg.read_snapshot(conn, source.manifest.corpus_id)
+        before = pg.read_corpus(conn, source.manifest.corpus_id)
     with pytest.raises(KnowledgeStorageError) as caught: api.import_verified_corpus(source, pg_database)
     assert caught.value.error_type == "target_conflict"
-    with pg.connection(pg_database, "admin") as conn: assert pg.read_snapshot(conn, source.manifest.corpus_id) == before
+    with pg.connection(pg_database, "admin") as conn: assert pg.read_corpus(conn, source.manifest.corpus_id) == before
 
 
 def test_two_legitimate_corpus_versions_coexist(pg_database, r2_corpus):
     """输入：同库两个 R1.4 正式构建版本；输出：独立落库、旧版内容/首次时间不变。"""
-    from querypilot.knowledge.knowledge_snapshots._corpus import build_knowledge_corpus
+    from querypilot.knowledge.knowledge_corpus._corpus import build_knowledge_corpus
     pg, api, load = _api()
     original = load(r2_corpus)
     first = api.import_verified_corpus(original, pg_database)
@@ -154,7 +154,7 @@ def test_insert_failure_rolls_back_new_corpus_and_preserves_old(pg_database, r2_
     """输入：旧已存 corpus/受控中途 INSERT 失败；输出：旧版本保留，新版本零残留。"""
     pg, api, load = _api(); old = load(r2_corpus)
     first = api.import_verified_corpus(old, pg_database)
-    from querypilot.knowledge.knowledge_snapshots._corpus import build_knowledge_corpus
+    from querypilot.knowledge.knowledge_corpus._corpus import build_knowledge_corpus
     other_dir = r2_corpus.parent / "other"
     build_knowledge_corpus(r2_corpus.parent / "curated", r2_corpus.parent / "config/semantics.json", other_dir, "demo", profile_version="different")
     other = load(other_dir); real = pg._insert
@@ -167,7 +167,7 @@ def test_insert_failure_rolls_back_new_corpus_and_preserves_old(pg_database, r2_
     monkeypatch.setattr(pg, "_insert", fail)
     with pytest.raises(KnowledgeStorageError): api.import_verified_corpus(other, pg_database)
     with pg.connection(pg_database, "admin") as conn:
-        record, rows = pg.read_snapshot(conn, other.manifest.corpus_id)
+        record, rows = pg.read_corpus(conn, other.manifest.corpus_id)
         assert record is None and not any(rows.values())
     assert api.verify_corpus_import(old, pg_database).projection_digest == first.projection_digest
 
@@ -244,7 +244,7 @@ def test_same_corpus_two_processes_create_one_batch(pg_database, r2_corpus):
                 processes.append(subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env))
             deadline = time.monotonic() + 20
             while True:
-                # observer 为 autocommit，避免持锁长事务复用旧统计快照。
+                # observer 为 autocommit，避免持锁长事务复用旧统计语料。
                 waiting = observer.execute("SELECT count(*) AS n FROM pg_stat_activity WHERE datname=current_database() AND application_name=%s AND wait_event_type='Lock' AND wait_event='advisory'", (application,)).fetchone()["n"]
                 if waiting == 2:
                     break
@@ -273,5 +273,5 @@ def test_lock_wait_is_bounded(pg_database, r2_corpus):
         with pytest.raises(KnowledgeStorageError) as caught: api.import_verified_corpus(source, limited)
         assert caught.value.error_type == "lock_timeout"
     with pg.connection(pg_database, "admin") as conn:
-        record, rows = pg.read_snapshot(conn, source.manifest.corpus_id)
+        record, rows = pg.read_corpus(conn, source.manifest.corpus_id)
         assert record is None and not any(rows.values())

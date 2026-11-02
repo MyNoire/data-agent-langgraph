@@ -49,8 +49,8 @@ class TableSchema(CatalogModel):
         members = [column for column in self.columns if column.pk_position > 0]
         return [column.name for column in sorted(members, key=lambda item: item.pk_position)]
 
-class CatalogSnapshot(CatalogModel):
-    """输入为库标识和表目录；输出本节使用的结构快照。"""
+class Catalog(CatalogModel):
+    """输入为库标识和表目录；输出本节使用的结构目录。"""
 
     format_version: Literal["sqlite-catalog-v1"] = "sqlite-catalog-v1"
     database_id: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")

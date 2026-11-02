@@ -1,6 +1,6 @@
 """手动执行的 T010/T011 只读练习，不进入默认测试发现。
 
-仅使用现有库的 reader 和固定快照，不导入、更新或删除知识。
+仅使用现有库的 reader 和固定语料，不导入、更新或删除知识。
 """
 
 from math import isfinite
@@ -30,7 +30,7 @@ def test_identifier_returns_real_chunks_and_ordered_scores(search_session):
         if chunk.knowledge_type == "column"
     }
     targets = {key for key, chunk in expected.items() if chunk.column_name == "atom_id"}
-    assert targets, "固定快照必须提供 atom_id 列块"
+    assert targets, "固定语料必须提供 atom_id 列块"
     rows = search(search_session, "atom_id", knowledge_types=["column"])
     ids = [str(row["chunk_id"]) for row in rows]
     assert targets <= set(ids)
@@ -50,7 +50,7 @@ def test_unmatched_word_does_not_cancel_other_word(search_session):
     """已知命中词加一个不存在的词，仍返回原候选；验证词项 OR。"""
     baseline = search(search_session, "cl")
     partial = search(search_session, "cl qpnomatch9f8e7d6c")
-    assert baseline, "固定快照的 cl 应命中"
+    assert baseline, "固定语料的 cl 应命中"
     assert {row["chunk_id"] for row in partial} == {row["chunk_id"] for row in baseline}
 
 
@@ -62,7 +62,7 @@ def test_no_match_is_empty_list(search_session):
 def test_top_k_is_prefix_after_ranking(search_session):
     """同一查询先完整排名再取 K，第一条与大 K 的第一条一致。"""
     complete = search(search_session, "atom_id")
-    assert len(complete) > 1, "固定快照应有多个候选，避免空洞断言"
+    assert len(complete) > 1, "固定语料应有多个候选，避免空洞断言"
     assert search(search_session, "atom_id", top_k=1) == complete[:1]
 
 

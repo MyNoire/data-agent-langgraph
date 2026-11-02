@@ -18,18 +18,18 @@ from _bm25_fixtures import live_bm25_settings, role_connection, unchanged_live_k
 def retrieval_source(live_bm25_settings, r3_corpus_factory, unchanged_live_knowledge):
     """导入本次唯一原创 corpus；结束按身份精确删除，不改已有知识或权限。"""
     from psycopg import sql
-    from querypilot.knowledge.api import import_snapshot, load_snapshot
+    from querypilot.knowledge.api import import_corpus, load_corpus
 
     database_id = "r3probe" + uuid4().hex
     path = r3_corpus_factory("r3-source", database_id=database_id)
-    source = load_snapshot(path)
+    source = load_corpus(path)
     scope = KnowledgeScope(corpus_id=source.manifest.corpus_id, database_id=database_id,
                            schema_version=source.manifest.identity_descriptor.schema_versions[database_id])
     with role_connection(live_bm25_settings, "admin") as conn:
         assert not conn.execute("SELECT 1 FROM querypilot_kb.knowledge_corpora WHERE corpus_id=%s",
                                 (scope.corpus_id,)).fetchone()
     try:
-        import_snapshot(path, live_bm25_settings)
+        import_corpus(path, live_bm25_settings)
         yield live_bm25_settings, source, scope
     finally:
         # 先证明是本次生成且此前不存在的身份，再逐表按完整 scope 和记录 ID 清理。

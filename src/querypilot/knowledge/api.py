@@ -1,7 +1,7 @@
 """知识准备的明确公开入口；导入不读取.env、不加载PostgreSQL驱动。"""
 
 from .knowledge_catalog.api import (
-    CatalogSnapshot,
+    Catalog,
     ColumnSchema,
     ForeignKeySchema,
     TableSchema,
@@ -19,7 +19,7 @@ from .knowledge_catalog.api import (
     verify_sources,
 )
 
-from .knowledge_snapshots.api import (
+from .knowledge_corpus.api import (
     KnowledgeDraft,
     BuildConfig,
     BuildSummary,
@@ -32,9 +32,9 @@ from .knowledge_snapshots.api import (
     CorpusError,
     KnowledgeError,
     render_knowledge,
-    build_snapshot,
-    verify_snapshot,
-    load_snapshot,
+    build_corpus,
+    verify_corpus,
+    load_corpus,
     content_hash,
     parse_json,
 )
@@ -59,12 +59,12 @@ from .knowledge_store.api import (
     check_search,
     check_search_session,
     manage_store,
-    import_snapshot,
+    import_corpus,
     verify_import,
 )
 
 __all__ = [
-    "CatalogSnapshot",
+    "Catalog",
     "ColumnSchema",
     "ForeignKeySchema",
     "TableSchema",
@@ -92,9 +92,9 @@ __all__ = [
     "CorpusError",
     "KnowledgeError",
     "render_knowledge",
-    "build_snapshot",
-    "verify_snapshot",
-    "load_snapshot",
+    "build_corpus",
+    "verify_corpus",
+    "load_corpus",
     "content_hash",
     "parse_json",
     "KnowledgeStorageError",
@@ -116,6 +116,6 @@ __all__ = [
     "check_search",
     "check_search_session",
     "manage_store",
-    "import_snapshot",
+    "import_corpus",
     "verify_import",
 ]

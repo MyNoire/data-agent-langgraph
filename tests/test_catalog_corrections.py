@@ -11,7 +11,7 @@ from pydantic import ValidationError
 from querypilot.knowledge.knowledge_catalog.api import CorrectionError
 from querypilot.knowledge.knowledge_catalog._corrections import build_curated_catalog
 from querypilot.knowledge.knowledge_catalog.api import enrich_catalog
-from querypilot.knowledge.knowledge_catalog.api import CatalogSnapshot, ColumnSchema, TableSchema
+from querypilot.knowledge.knowledge_catalog.api import Catalog, ColumnSchema, TableSchema
 
 
 def _inputs(tmp_path: Path, *, occupied_target: bool = False) -> tuple[Path, Path, Path]:
@@ -36,7 +36,7 @@ def _inputs(tmp_path: Path, *, occupied_target: bool = False) -> tuple[Path, Pat
         writer = csv.writer(handle, lineterminator="\n")
         writer.writerow(["original_column_name", "column_name", "column_description", "data_format", "value_description"])
         writer.writerows(rows)
-    catalog = CatalogSnapshot(database_id="demo", tables=[TableSchema(
+    catalog = Catalog(database_id="demo", tables=[TableSchema(
         name="items", without_rowid=False, strict=False,
         columns=[ColumnSchema(name=row[0], ordinal=i, declared_type="TEXT", not_null_flag=False,
                               default_sql=None, pk_position=1 if i == 0 else 0, hidden=0)

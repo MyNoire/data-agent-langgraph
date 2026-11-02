@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import ConfigDict, Field
 
-from querypilot.knowledge.knowledge_snapshots.api import (
+from querypilot.knowledge.knowledge_corpus.api import (
     CorpusModel, CorpusManifest, ValidationReport, CorpusDocument, CorpusChunk,
     CorpusRelation, Counts, Hash,
 )
@@ -162,8 +162,8 @@ class KnowledgeReadError(ValueError):
     def __init__(self, error_type: str):
         """输入：受控类别；返回：安全异常；无 I/O。"""
         messages = {
-            "scope_not_found": "指定知识快照不存在",
-            "scope_mismatch": "知识快照与数据库或结构版本不对应",
+            "scope_not_found": "指定知识语料不存在",
+            "scope_mismatch": "知识语料与数据库或结构版本不对应",
             "knowledge_state_error": "知识登记、引用或内容不满足读取前置",
             "capacity_exceeded": "知识范围或结果超过本版本资源预算",
             "configuration_error": "知识读取配置或可选驱动不可用",

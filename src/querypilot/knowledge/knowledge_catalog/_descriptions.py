@@ -1,4 +1,4 @@
-"""读取一个 BIRD 数据库的说明 CSV，绑定到已有结构快照。"""
+"""读取一个 BIRD 数据库的说明 CSV，绑定到已有结构目录。"""
 
 import csv
 import hashlib
@@ -9,7 +9,7 @@ from .description_models import (
     ColumnDescription, DescriptionImportResult, DescriptionSource,
     EnrichedCatalog, ImportWarning, SourceRecord,
 )
-from .models import CatalogSnapshot
+from .models import Catalog
 
 class DescriptionError(ValueError):
     """来源格式或绑定关系无法安全确定，终止本次说明构建。"""
@@ -67,7 +67,7 @@ def _read_csv(path: Path, source_file: str) -> tuple[DescriptionSource, list[Sou
 
 
 def read_description_bytes(raw: bytes, source_file: str) -> tuple[DescriptionSource, list[SourceRecord]]:
-    """解析固定 CSV 原字节，供文件导入和快照核验共用。
+    """解析固定 CSV 原字节，供文件导入和语料核验共用。
 
     参数:
         raw: 已固定的 UTF-8 或 UTF-8-sig 字节。
@@ -110,11 +110,11 @@ def read_description_bytes(raw: bytes, source_file: str) -> tuple[DescriptionSou
         ))
     return source, records
 
-def enrich_catalog(catalog: CatalogSnapshot, description_dir: Path) -> DescriptionImportResult:
-    """为现有快照绑定一个库的字段说明，不改动快照。
+def enrich_catalog(catalog: Catalog, description_dir: Path) -> DescriptionImportResult:
+    """为现有语料绑定一个库的字段说明，不改动语料。
 
     参数:
-        catalog: R1.1 导出的结构快照，作为真实对象范围。
+        catalog: R1.1 导出的结构目录，作为真实对象范围。
         description_dir: BIRD 的 <database_id>/database_description 目录。
     返回:
         draft 增强目录和警告；无效记录只进入警告，不增加真实字段。

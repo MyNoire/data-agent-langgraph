@@ -1,4 +1,4 @@
-"""T012详细来源练习；当前仅收集，验证固定快照合法来源，不写知识库。"""
+"""T012详细来源练习；当前仅收集，验证固定语料合法来源，不写知识库。"""
 
 import pytest
 
@@ -23,7 +23,7 @@ def read_source(session, original):
 
 
 def expected_fields(original, names):
-    """从已核验快照对象挑选预先约定字段；返回独立预期，不读取SQL或检索输出。"""
+    """从已核验语料对象挑选预先约定字段；返回独立预期，不读取SQL或检索输出。"""
     return {name: original[name] for name in names if name in original and original[name] is not None}
 
 

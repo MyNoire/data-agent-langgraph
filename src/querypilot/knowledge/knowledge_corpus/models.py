@@ -1,4 +1,4 @@
-"""R1.4 正式离线快照契约；R1.3 draft 模型保持原样。"""
+"""R1.4 正式离线语料契约；R1.3 draft 模型保持原样。"""
 
 from typing import Annotated, Literal, Self
 
@@ -31,7 +31,7 @@ class CorpusModel(CatalogModel):
 
 
 class ScopedIdentity(CorpusModel):
-    """输入为快照及结构摘要；输出对象所属范围。"""
+    """输入为语料及结构摘要；输出对象所属范围。"""
 
     corpus_id: Hash
     schema_version: Hash
@@ -264,7 +264,7 @@ class VerificationSummary(CorpusModel):
 
 
 class VerifiedCorpus(CorpusModel):
-    """输入：完整核验的清单/报告/对象；输出：本次调用持有的快照。
+    """输入：完整核验的清单/报告/对象；输出：本次调用持有的语料。
 
     frozen 只禁止字段重绑，不冻结嵌套字典；调用方不得修改或共享嵌套内容。
     """

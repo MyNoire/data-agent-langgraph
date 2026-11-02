@@ -7,7 +7,7 @@ import sqlite3
 
 import pytest
 
-from querypilot.knowledge.knowledge_catalog.api import CatalogSnapshot
+from querypilot.knowledge.knowledge_catalog.api import Catalog
 from querypilot.knowledge.knowledge_catalog.api import CatalogError, extract_catalog
 from querypilot.runtime.api import Settings
 from querypilot.databases.api import DatabaseRegistry
@@ -50,8 +50,8 @@ def test_catalog_preserves_structure_and_source(catalog_database: Path) -> None:
         None；结构错配或源文件改变时断言失败。
     """
     before = hashlib.sha256(catalog_database.read_bytes()).hexdigest()
-    snapshot = extract_catalog("fixture", catalog_database)
-    tables = {table.name: table for table in snapshot.tables}
+    catalog = extract_catalog("fixture", catalog_database)
+    tables = {table.name: table for table in catalog.tables}
     parent = tables["parent table"]
     child = tables["child table"]
     assert parent.without_rowid is True
@@ -64,8 +64,8 @@ def test_catalog_preserves_structure_and_source(catalog_database: Path) -> None:
     assert implicit.source_columns == ["x", "y"]
     assert implicit.target_columns == ['key"two', "key one"]
     assert all(relation.target_columns == ['key"two', "key one"] for relation in child.foreign_keys)
-    assert extract_catalog("fixture", catalog_database).model_dump() == snapshot.model_dump()
-    assert CatalogSnapshot.model_validate_json(snapshot.model_dump_json()) == snapshot
+    assert extract_catalog("fixture", catalog_database).model_dump() == catalog.model_dump()
+    assert Catalog.model_validate_json(catalog.model_dump_json()) == catalog
     assert hashlib.sha256(catalog_database.read_bytes()).hexdigest() == before
 
 
@@ -113,7 +113,7 @@ def test_cli_exports_and_refuses_overwrite(
         assert main(["--artifacts-dir", str(tmp_path / "artifacts"), "knowledge", "catalog", "extract",
                      "--database-id", "fixture", "--output", str(output)]) == 0
     assert outputs[0].read_bytes() == outputs[1].read_bytes()
-    assert CatalogSnapshot.model_validate_json(outputs[0].read_text(encoding="utf-8")).database_id == "fixture"
+    assert Catalog.model_validate_json(outputs[0].read_text(encoding="utf-8")).database_id == "fixture"
     original = outputs[1].read_bytes()
     assert main(["--artifacts-dir", str(tmp_path / "artifacts"), "knowledge", "catalog", "extract",
                  "--database-id", "fixture", "--output", str(outputs[1])]) == 1

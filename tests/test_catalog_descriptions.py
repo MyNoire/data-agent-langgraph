@@ -10,7 +10,7 @@ import sqlite3
 import pytest
 
 from querypilot.knowledge.knowledge_catalog.api import DescriptionError, enrich_catalog
-from querypilot.knowledge.knowledge_catalog.api import CatalogSnapshot
+from querypilot.knowledge.knowledge_catalog.api import Catalog
 from querypilot.knowledge.knowledge_catalog.api import extract_catalog
 
 
@@ -46,13 +46,13 @@ def _write_csv(
 
 
 @pytest.fixture
-def description_inputs(tmp_path: Path) -> tuple[CatalogSnapshot, Path]:
-    """创建一个真实结构快照与空的说明目录。
+def description_inputs(tmp_path: Path) -> tuple[Catalog, Path]:
+    """创建一个真实结构目录与空的说明目录。
 
     参数:
         tmp_path: pytest 提供的独立临时目录。
     返回:
-        demo 库的 CatalogSnapshot，以及其 database_description 目录。
+        demo 库的 Catalog，以及其 database_description 目录。
     副作用:
         只在临时目录创建三个字段的空表，不读取 BIRD。
     """
@@ -170,7 +170,7 @@ def test_cli_and_strict_decoding(description_inputs, tmp_path: Path, monkeypatch
 
     参数:
         description_inputs: 原创目录和来源路径 fixture。
-        tmp_path: 本测试的目录快照与输出位置。
+        tmp_path: 本测试的目录语料与输出位置。
         monkeypatch: 临时替换命令行参数的 pytest 工具。
     返回:
         None；输出契约、覆盖保护或解码规则不符合要求时失败。

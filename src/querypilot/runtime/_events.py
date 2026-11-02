@@ -16,10 +16,10 @@ EVENT_NAMES = frozenset({
     "knowledge_started", "knowledge_finished", "knowledge_failed", "knowledge_import_started",
     "knowledge_import_finished", "knowledge_verify_started", "knowledge_verify_finished",
     "corpus_import_started", "corpus_import_finished", "corpus_verify_started", "corpus_verify_finished",
-    "store_started", "store_finished", "snapshot_started", "snapshot_finished", "catalog_started", "catalog_finished",
+    "store_started", "store_finished", "corpus_started", "corpus_finished", "catalog_started", "catalog_finished",
     "source_verified", "transaction_started", "objects_written", "readback_verified", "import_finished",
     "verification_finished", "knowledge_operation_failed",
-    "curation_started", "curation_finished", "snapshot_build_started", "snapshot_build_finished",
+    "curation_started", "curation_finished", "corpus_build_started", "corpus_build_finished",
 })
 PROGRESS_FIELDS = (
     "event_version", "span_id", "parent_span_id", "span_name", "run_id", "parent_run_id", "graph_run_id",

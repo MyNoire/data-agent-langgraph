@@ -4,7 +4,7 @@ from pathlib import Path
 from hashlib import sha256
 from querypilot.runtime.api import RunContext
 
-from querypilot.knowledge.knowledge_snapshots.api import CorpusError, load_snapshot
+from querypilot.knowledge.knowledge_corpus.api import CorpusError, load_corpus
 from .settings import (
     KnowledgeStorageError,
     KnowledgeStorageSettings,
@@ -115,9 +115,9 @@ def _secrets(settings: KnowledgeStorageSettings) -> tuple[str, ...]:
 def _load_source(corpus_dir: Path):
     """输入：源路径；返回：本次重读核验对象；来源错误安全转译，不连接PG。"""
     try:
-        return load_snapshot(corpus_dir)
+        return load_corpus(corpus_dir)
     except CorpusError as exc:
-        raise KnowledgeStorageError("source_invalid", "源快照未通过完整核验") from exc
+        raise KnowledgeStorageError("source_invalid", "源语料未通过完整核验") from exc
 
 
 def _source_hash(corpus_dir: Path) -> str | None:
@@ -128,9 +128,9 @@ def _source_hash(corpus_dir: Path) -> str | None:
         return None
 
 
-def import_snapshot(corpus_dir: Path, settings: KnowledgeStorageSettings,
+def import_corpus(corpus_dir: Path, settings: KnowledgeStorageSettings,
                     *, run_context: RunContext | None = None) -> ImportSummary:
-    """导入实际路径指向的完整知识快照。
+    """导入实际路径指向的完整知识语料。
 
     参数：corpus_dir 每次重读，不依赖旧成功摘要；settings 为导入账号配置；run_context 可复用。
     返回：提交已确认的 imported/reused 摘要；源身份不变。
@@ -141,10 +141,10 @@ def import_snapshot(corpus_dir: Path, settings: KnowledgeStorageSettings,
     owned = run_context is None
     with task_run("knowledge_import", run_context=run_context, command="knowledge store import",
                   secrets=_secrets(settings), config={"input_sha256": _source_hash(corpus_dir)}) as context:
-        snapshot = _load_source(corpus_dir)
+        corpus = _load_source(corpus_dir)
         _driver()
         from ._importer import import_verified_corpus
-        result = import_verified_corpus(snapshot, settings, run_id=context.run_id, logger=context.logger)
+        result = import_verified_corpus(corpus, settings, run_id=context.run_id, logger=context.logger)
         if owned:
             context.complete(result, outcome=result.outcome)
         return result
@@ -152,7 +152,7 @@ def import_snapshot(corpus_dir: Path, settings: KnowledgeStorageSettings,
 
 def verify_import(corpus_dir: Path, settings: KnowledgeStorageSettings,
                   *, run_context: RunContext | None = None) -> ImportVerificationSummary:
-    """用本次核验的源快照只读复验已导入内容。
+    """用本次核验的源语料只读复验已导入内容。
 
     参数：corpus_dir 为实际源路径；settings 指定只读账号；run_context 可复用上层运行。
     返回：同一一致事务完整比对后的 verified 摘要。
@@ -163,10 +163,10 @@ def verify_import(corpus_dir: Path, settings: KnowledgeStorageSettings,
     owned = run_context is None
     with task_run("knowledge_verify", run_context=run_context, command="knowledge store verify",
                   secrets=_secrets(settings), config={"input_sha256": _source_hash(corpus_dir)}) as context:
-        snapshot = _load_source(corpus_dir)
+        corpus = _load_source(corpus_dir)
         _driver()
         from ._importer import verify_corpus_import
-        result = verify_corpus_import(snapshot, settings, run_id=context.run_id, logger=context.logger)
+        result = verify_corpus_import(corpus, settings, run_id=context.run_id, logger=context.logger)
         if owned:
             context.complete(result, outcome=result.outcome)
         return result
@@ -192,6 +192,6 @@ __all__ = [
     "check_search",
     "check_search_session",
     "manage_store",
-    "import_snapshot",
+    "import_corpus",
     "verify_import",
 ]

@@ -43,7 +43,7 @@ def test_overlapping_direct_storage_and_http_keep_own_run_files(tmp_path, r2_cor
     from querypilot.evaluation.api import run_direct
     from querypilot.knowledge.api import (
         ImportSummary, ImportVerificationSummary, KnowledgeStorageSettings,
-        import_snapshot, load_snapshot, verify_import,
+        import_corpus, load_corpus, verify_import,
     )
     from querypilot.knowledge.knowledge_store import api as store_api
     from types import ModuleType
@@ -56,30 +56,30 @@ def test_overlapping_direct_storage_and_http_keep_own_run_files(tmp_path, r2_cor
     barrier = threading.Barrier(4)
     shared = logging.getLogger("querypilot.progress")
     handlers = shared.handlers[:]
-    held = load_snapshot(r2_corpus)
+    held = load_corpus(r2_corpus)
 
-    def receipt(snapshot, *, run_id, outcome):
+    def receipt(corpus, *, run_id, outcome):
         """按真实源身份构造安全回执，不伪装成真实PG操作证据。"""
-        values = dict(corpus_id=snapshot.manifest.corpus_id, database_id="demo",
-                      schema_version=snapshot.manifest.identity_descriptor.schema_versions["demo"],
-                      core_digest=snapshot.manifest.core_digest, counts=snapshot.manifest.counts,
+        values = dict(corpus_id=corpus.manifest.corpus_id, database_id="demo",
+                      schema_version=corpus.manifest.identity_descriptor.schema_versions["demo"],
+                      core_digest=corpus.manifest.core_digest, counts=corpus.manifest.counts,
                       projection_digest="1" * 64, timestamps_digest="2" * 64,
                       import_run_id=run_id, elapsed_ms=0)
         if outcome == "verified":
             return ImportVerificationSummary(**values)
         return ImportSummary(result_version="knowledge-import-result-v1", outcome=outcome, **values)
 
-    def imported(snapshot, storage_settings, *, run_id, logger):
+    def imported(corpus, storage_settings, *, run_id, logger):
         """同步模拟已提交边界；正文不进入事件，不建立新运行。"""
         barrier.wait(timeout=15)
         logger.info("corpus_import_finished", extra={"run_id": run_id, "status": "imported"})
-        return receipt(snapshot, run_id=run_id, outcome="imported")
+        return receipt(corpus, run_id=run_id, outcome="imported")
 
-    def verified(snapshot, storage_settings, *, run_id, logger):
+    def verified(corpus, storage_settings, *, run_id, logger):
         """同步模拟复验边界；实际PG全字段校验由integration测试承担。"""
         barrier.wait(timeout=15)
         logger.info("corpus_verify_finished", extra={"run_id": run_id, "status": "verified"})
-        return receipt(snapshot, run_id=run_id, outcome="verified")
+        return receipt(corpus, run_id=run_id, outcome="verified")
 
     def generate(*_):
         """替代模型，与三个不同操作同时进入主要执行阶段。"""
@@ -104,7 +104,7 @@ def test_overlapping_direct_storage_and_http_keep_own_run_files(tmp_path, r2_cor
     client = TestClient(http.create_app(settings))
     with ThreadPoolExecutor(max_workers=4) as pool:
         evaluation = pool.submit(run_direct, source, settings, generator=generate)
-        imported_run = pool.submit(import_snapshot, r2_corpus, storage)
+        imported_run = pool.submit(import_corpus, r2_corpus, storage)
         verified_run = pool.submit(verify_import, r2_corpus, storage)
         response = pool.submit(client.post, "/queries",
                                json={"database_id": "demo", "sql": "SELECT 41 AS value"})
@@ -122,5 +122,5 @@ def test_overlapping_direct_storage_and_http_keep_own_run_files(tmp_path, r2_cor
         assert {event["run_id"] for event in events} == {run.name}
         assert json.loads((run / "run.json").read_text(encoding="utf-8"))["status"] == "completed"
         assert "PRIVATE_DIRECT_QUESTION" not in events_text and "SELECT 31" not in events_text
-    assert held.manifest.corpus_id == load_snapshot(r2_corpus).manifest.corpus_id
+    assert held.manifest.corpus_id == load_corpus(r2_corpus).manifest.corpus_id
     assert shared.handlers == handlers

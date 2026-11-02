@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
-from querypilot.knowledge.knowledge_snapshots.api import CorpusManifest, Counts, ValidationReport
+from querypilot.knowledge.knowledge_corpus.api import CorpusManifest, Counts, ValidationReport
 from .settings import KnowledgeStorageError, KnowledgeStorageSettings
 from .models import (
     KnowledgeScope, KnowledgeReadError, ReadLimits, ReadView, STORAGE_VERSION,

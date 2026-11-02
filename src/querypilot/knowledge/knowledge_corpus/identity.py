@@ -5,7 +5,7 @@ import json
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
-from querypilot.knowledge.knowledge_catalog.api import CatalogSnapshot
+from querypilot.knowledge.knowledge_catalog.api import Catalog
 
 NAMESPACE = uuid5(NAMESPACE_URL, "urn:querypilot:knowledge-corpus:v1")
 
@@ -27,7 +27,7 @@ def digest(raw: bytes) -> str:
     return sha256(raw).hexdigest()
 
 
-def schema_version(catalog: CatalogSnapshot) -> str:
+def schema_version(catalog: Catalog) -> str:
     """计算已收集结构身份。
 
     参数: catalog 为原始结构，包含所有列属性及有序键成员。
@@ -50,7 +50,7 @@ def content_hash(title: str, content: str) -> str:
 def object_id(kind: str, corpus_id: str, database_id: str, key: str) -> str:
     """生成持久对象身份。
 
-    参数: kind 为 document/chunk/relation，其他参数为快照、库及完整原 key。
+    参数: kind 为 document/chunk/relation，其他参数为语料、库及完整原 key。
     返回: 固定 namespace 下的 UUIDv5 字符串。
     异常: ValueError 表示不支持的对象类型。
     副作用: 无；不拼接或拆分真实标识符。

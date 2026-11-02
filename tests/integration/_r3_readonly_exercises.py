@@ -5,14 +5,14 @@ from pathlib import Path
 import pytest
 
 from querypilot.knowledge.api import (
-    KnowledgeScope, KnowledgeStorageSettings, check_search_session, load_snapshot,
+    KnowledgeScope, KnowledgeStorageSettings, check_search_session, load_corpus,
 )
 from querypilot.retrieval.service import open_scoped_read
 
 
 @pytest.fixture(scope="module")
 def source_and_settings(request):
-    """读取固定快照与reader配置；返回配置/快照/范围，不连接或写入数据库。
+    """读取固定语料与reader配置；返回配置/语料/范围，不连接或写入数据库。
 
     显式执行须带--require-postgres；缺环境失败，不能以跳过冒充练习通过。
     """
@@ -20,8 +20,8 @@ def source_and_settings(request):
         pytest.fail("执行此练习须加 --require-postgres；当前只允许收集", pytrace=False)
     source_path = Path(__file__).resolve().parents[2] / "data/rag/toxicology/r1-4-corpus"
     if not source_path.is_dir():
-        pytest.fail("缺少固定 toxicology/r1-4-corpus 快照；不会自动换快照", pytrace=False)
-    source = load_snapshot(source_path)
+        pytest.fail("缺少固定 toxicology/r1-4-corpus 语料；不会自动换语料", pytrace=False)
+    source = load_corpus(source_path)
     try:
         settings = KnowledgeStorageSettings()
         target = settings.connection_info("read")["dbname"]
@@ -39,7 +39,7 @@ def source_and_settings(request):
 
 @pytest.fixture
 def search_session(source_and_settings):
-    """打开同一范围的只读会话并检查搜索设施；返回会话/快照/范围，结束关闭。"""
+    """打开同一范围的只读会话并检查搜索设施；返回会话/语料/范围，结束关闭。"""
     settings, source, scope = source_and_settings
     with open_scoped_read(scope, settings) as session:
         check_search_session(session)
