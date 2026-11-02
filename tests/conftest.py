@@ -7,9 +7,15 @@ from pathlib import Path
 
 import pytest
 
-from querypilot.catalog.corrections import build_curated_catalog
-from querypilot.catalog.descriptions import enrich_catalog
-from querypilot.catalog.models import CatalogSnapshot, ColumnSchema, ForeignKeySchema, TableSchema
+from querypilot.knowledge.knowledge_catalog._corrections import build_curated_catalog
+from querypilot.knowledge.knowledge_catalog.api import enrich_catalog
+from querypilot.knowledge.knowledge_catalog.api import CatalogSnapshot, ColumnSchema, ForeignKeySchema, TableSchema
+
+
+@pytest.fixture(autouse=True)
+def isolate_runtime_artifacts(tmp_path, monkeypatch):
+    """输入：临时目录/环境替换器；返回：无；每个测试只向自己的运行根写新记录。"""
+    monkeypatch.setenv("QUERYPILOT_ARTIFACTS_DIR", str(tmp_path / "artifacts"))
 
 
 def pytest_addoption(parser) -> None:
@@ -21,12 +27,29 @@ def pytest_addoption(parser) -> None:
 @pytest.fixture
 def r2_corpus(tmp_path):
     """输入：临时目录；输出：原创两列复合 FK 正式快照；仅写临时文件。"""
-    from querypilot.knowledge.corpus import build_knowledge_corpus
-    bundle = _bundle(tmp_path)
+    return _build_test_corpus(tmp_path)
+
+
+@pytest.fixture
+def r3_corpus_factory(tmp_path):
+    """输入：临时目录；返回：合法多库/多版本构建函数；只写本次测试目录。"""
+    def build(name: str, *, database_id: str = "demo", profile_version: str = "r1-4-v1"):
+        """输入：独立子目录名、库及构建版本；返回：新快照路径；异常：重名/I/O 错误。"""
+        root = tmp_path / name
+        root.mkdir(exist_ok=False)
+        return _build_test_corpus(root, database_id, profile_version)
+    return build
+
+
+def _build_test_corpus(tmp_path: Path, database_id: str = "demo",
+                       profile_version: str = "r1-4-v1") -> Path:
+    """输入：独立临时根、库与规则版本；返回：真实构建的快照；只写临时文件。"""
+    from querypilot.knowledge.knowledge_snapshots._corpus import build_knowledge_corpus
+    bundle = _bundle(tmp_path, database_id=database_id)
     semantic = tmp_path / "config" / "semantics.json"
     semantic.parent.mkdir()
     _write_json(semantic, {
-        "database_id": "demo", "version": "r2-fixture-v1", "author": "原创测试",
+        "database_id": database_id, "version": "r2-fixture-v1", "author": "原创测试",
         "tables": {"items": {"purpose": "租户内物品。", "row_grain": "一件物品。"},
                    "events": {"purpose": "物品事件。", "row_grain": "一次事件。"}},
         "relationships": [{"source_table": "events", "source_columns": ["tenant_ref", "item_ref"],
@@ -34,7 +57,7 @@ def r2_corpus(tmp_path):
                            "meaning": "事件关联同租户物品。"}],
     })
     target = tmp_path / "corpus"
-    build_knowledge_corpus(bundle, semantic, target, "demo")
+    build_knowledge_corpus(bundle, semantic, target, database_id, profile_version=profile_version)
     return target
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -49,18 +72,19 @@ def _write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
-def _bundle(tmp_path: Path, mutation: str | None = None) -> Path:
+def _bundle(tmp_path: Path, mutation: str | None = None, *, database_id: str = "demo") -> Path:
     """使用真实修正流程构造一个原创的已批准输入包。
 
     参数:
         tmp_path: pytest 为当前测试创建的独立目录。
         mutation: 可选原创变化标签，在导入/批准修正前改变来源或结构。
+        database_id: 原创业务库标识，默认 demo；在正式构建前进入完整来源链。
     返回:
         包含清单、增强目录、来源和报告的修正包路径。
     副作用:
         只在 tmp_path 创建文件；不访问 BIRD、模型或真实业务数据。
     """
-    source = tmp_path / "demo" / "database_description"
+    source = tmp_path / database_id / "database_description"
     source.mkdir(parents=True)
     values = "+: active\n-: inactive"
     rows_by_table = {
@@ -133,14 +157,14 @@ def _bundle(tmp_path: Path, mutation: str | None = None) -> Path:
         fk.declared_target_columns.reverse()
     elif mutation == "action":
         tables[1].foreign_keys[0].on_delete = "CASCADE"
-    catalog = CatalogSnapshot(database_id="demo", tables=tables)
+    catalog = CatalogSnapshot(database_id=database_id, tables=tables)
     enriched = enrich_catalog(catalog, source).enriched_catalog
     base = tmp_path / "base.json"
     base.write_text(enriched.model_dump_json(), encoding="utf-8")
     plan = {
         "format_version": "description-quality-plan-v1",
         "status": "approved",
-        "database_id": "demo",
+        "database_id": database_id,
         "base_enriched_sha256": sha256(base.read_bytes()).hexdigest(),
         "source_sha256": {
             f"{name}.csv": sha256((source / f"{name}.csv").read_bytes()).hexdigest()

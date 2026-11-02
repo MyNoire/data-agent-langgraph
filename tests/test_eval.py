@@ -8,11 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from querypilot.config import Settings
-from querypilot.database.registry import DatabaseRegistry
-from querypilot.evals.baseline import direct_prompt, run_eval
-from querypilot.evals.naming import result_path
-from querypilot.logging import progress_logging
+from querypilot.runtime.api import Settings
+from querypilot.databases.api import DatabaseRegistry
+from querypilot.evaluation.api import run_direct
+from querypilot.sql_generation.api import direct_prompt
+from querypilot.runtime.api import task_run
 
 
 def test_fixture_eval_plumbing(tmp_path):
@@ -32,8 +32,9 @@ def test_fixture_eval_plumbing(tmp_path):
     DatabaseRegistry(data).register("demo", path)
     cases = tmp_path / "cases.json"
     cases.write_text(json.dumps([{"db_id": "demo", "question": "How many?", "SQL": "SELECT COUNT(*) FROM items"}]), encoding="utf-8")
-    output = tmp_path / "result.json"
-    result = run_eval(cases, Settings(data_dir=data), provider="fixture", output=output)
+    settings = Settings(data_dir=data, artifacts_dir=tmp_path / "artifacts")
+    result = run_direct(cases, settings, provider="fixture")
+    output = next(settings.artifacts_dir.glob("runs/evaluation/*/*/private/result.json"))
     assert result["provider"] == "fixture"
     assert "graph_version" not in result
     assert result["execution_accuracy"] == 1
@@ -104,8 +105,8 @@ def test_model_provider_uses_openai_compatible_client(tmp_path, monkeypatch):
             captured.update(kwargs)
             self.chat = type("Chat", (), {"completions": FakeCompletions()})()
 
-    monkeypatch.setattr("querypilot.evals.baseline.OpenAI", FakeClient)
-    result = run_eval(cases, Settings(data_dir=data, model_base_url="http://localhost:1234/v1", model_name="qwen"), provider="model")
+    monkeypatch.setattr("querypilot.sql_generation._model.OpenAI", FakeClient)
+    result = run_direct(cases, Settings(data_dir=data, model_base_url="http://localhost:1234/v1", model_name="qwen"), provider="model")
     assert result["execution_accuracy"] == 1
     assert captured["model"] == "qwen"
     assert "items(id)" in captured["messages"][0]["content"]
@@ -115,7 +116,7 @@ def test_model_provider_uses_openai_compatible_client(tmp_path, monkeypatch):
     assert result["evidence_mode"] == "none"
     assert result["records"][0]["evidence_used"] is False
 
-    result = run_eval(cases, Settings(data_dir=data, model_temperature=0), provider="model", evidence_mode="oracle")
+    result = run_direct(cases, Settings(data_dir=data, model_temperature=0), provider="model", evidence_mode="oracle")
     assert captured["temperature"] == 0
     assert "count only active items" in captured["messages"][0]["content"]
     assert result["evidence_mode"] == "oracle"
@@ -150,20 +151,19 @@ def test_unavailable_model_does_not_report_zero_accuracy(tmp_path, monkeypatch):
         """
         raise ConnectionError("model offline")
 
-    monkeypatch.setattr("querypilot.evals.baseline.OpenAI", unavailable)
-    result = run_eval(cases, Settings(data_dir=data), provider="model")
+    monkeypatch.setattr("querypilot.sql_generation._model.OpenAI", unavailable)
+    result = run_direct(cases, Settings(data_dir=data), provider="model")
     assert result["status"] == "model_unavailable"
     assert result["execution_accuracy"] is None
     assert result["summary"]["failure"] == 1
     assert result["summary"]["no_prediction"] == 1
 
 
-def test_eval_summary_separates_matches_mismatches_and_errors(tmp_path, monkeypatch):
+def test_eval_summary_separates_matches_mismatches_and_errors(tmp_path):
     """用四种确定性结果验证汇总计数与逐题标签。
 
     参数:
         tmp_path: pytest 提供的隔离临时目录。
-        monkeypatch: 用假生成器替换真实模型调用。
     返回:
         None；成功、结果不匹配、SQL 错误和生成错误必须分别计数。
     """
@@ -198,10 +198,13 @@ def test_eval_summary_separates_matches_mismatches_and_errors(tmp_path, monkeypa
                 "mismatch": "SELECT 999",
                 "bad SQL": "DELETE FROM items"}[question]
 
-    monkeypatch.setattr("querypilot.evals.baseline.generate_sql", fake_generate)
     events_path = tmp_path / "eval.events.jsonl"
-    with progress_logging(events_path, stream=StringIO()):
-        result = run_eval(cases, Settings(data_dir=data), provider="model")
+    settings = Settings(data_dir=data, artifacts_dir=tmp_path / "artifacts")
+    with task_run("evaluation", settings, command="direct", private=True) as context:
+        result = run_direct(cases, settings, provider="model", generator=fake_generate,
+                            run_context=context)
+        context.complete(result)
+    events_path = context.run_dir / "events.jsonl"
     assert result["summary"] == {
         "total": 4, "success": 1, "failure": 3, "mismatch": 1,
         "error": 2, "no_prediction": 1, "valid_sql": 2,
@@ -212,7 +215,7 @@ def test_eval_summary_separates_matches_mismatches_and_errors(tmp_path, monkeypa
     assert [record["question_id"] for record in result["records"]] == [1, 2, 3, 4]
     assert result["execution_accuracy"] == .25
     raw_events = events_path.read_text(encoding="utf-8")
-    events = [json.loads(line) for line in raw_events.splitlines()]
+    events = [json.loads(line) for line in raw_events.splitlines() if json.loads(line)["event"].startswith("eval_")]
     assert [event["event"] for event in events] == [
         "eval_started", "eval_case_started", "eval_case_finished",
         "eval_case_started", "eval_case_finished",
@@ -227,28 +230,19 @@ def test_eval_summary_separates_matches_mismatches_and_errors(tmp_path, monkeypa
     assert "bad SQL" not in raw_events
 
 
-def test_result_filename_and_existing_output_guard(tmp_path):
-    """验证自动命名可辨认且旧评测文件不会被覆盖。
-
-    参数:
-        tmp_path: pytest 提供的隔离临时目录。
-    返回:
-        None；文件名包含题集、模型、证据模式、时间，重名时保留原文件。
-    """
-    timestamp = datetime(2026, 9, 28, 12, 30, 0, tzinfo=timezone.utc)
-    named = result_path(Path("evals/bird_final100.json"), "model",
-                        "Qwen/Qwen2.5-Coder", "none", timestamp=timestamp)
-    assert named == Path(
-        "results/bird-final100__model-qwen-qwen2-5-coder__direct-v2__"
-        "evidence-none__20260928T123000000000Z.json"
-    )
-    assert result_path(Path("evals/bird_smoke.json"), "fixture", "unused", "none",
-                       timestamp=timestamp) == Path(
-        "results/bird-smoke__fixture__20260928T123000000000Z.json"
-    )
+def test_result_runs_are_unique_and_existing_report_is_preserved(tmp_path):
+    """相同题集运行两次各有目录，排他导出不能覆盖历史报告。"""
+    from querypilot.evaluation.api import export_public
+    source = tmp_path / "empty.json"
+    source.write_text("[]", encoding="utf-8")
+    settings = Settings(data_dir=tmp_path, artifacts_dir=tmp_path / "artifacts")
+    first = run_direct(source, settings, provider="fixture")
+    second = run_direct(source, settings, provider="fixture")
+    assert first["run_id"] != second["run_id"]
+    runs = list(settings.artifacts_dir.glob("runs/evaluation/*/*"))
+    assert len(runs) == 2
     output = tmp_path / "existing.json"
     output.write_text("original", encoding="utf-8")
     with pytest.raises(FileExistsError):
-        run_eval(tmp_path / "missing.json", Settings(data_dir=tmp_path),
-                 provider="fixture", output=output)
+        export_public(runs[0], output)
     assert output.read_text(encoding="utf-8") == "original"

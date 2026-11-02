@@ -8,7 +8,7 @@ from typing import TypedDict
 
 from langgraph.graph import START, END, StateGraph
 
-from querypilot.observability import graph_logging
+from querypilot.runtime.api import graph_logging
 
 
 def test_concurrent_log_sessions_keep_files_separate(tmp_path):

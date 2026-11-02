@@ -4,8 +4,8 @@ import sqlite3
 
 from fastapi.testclient import TestClient
 
-from querypilot.api import create_app
-from querypilot.config import Settings
+from querypilot.entrypoints.http import create_app
+from querypilot.runtime.api import Settings
 
 
 def test_health_register_schema_and_query(tmp_path):
@@ -22,7 +22,7 @@ def test_health_register_schema_and_query(tmp_path):
     with sqlite3.connect(path) as connection:
         connection.execute("CREATE TABLE items (id INTEGER, name TEXT)")
         connection.execute("INSERT INTO items VALUES (1, 'a'), (2, 'b')")
-    client = TestClient(create_app(Settings(data_dir=data_dir, max_rows=1)))
+    client = TestClient(create_app(Settings(data_dir=data_dir, max_rows=1, artifacts_dir=tmp_path / "artifacts")))
     assert client.get("/health").json()["status"] == "ok"
     assert client.post("/databases", json={"database_id": "sample", "path": str(path)}).status_code == 201
     assert client.get("/databases/sample/schema").json()["tables"] == {"items": ["id", "name"]}

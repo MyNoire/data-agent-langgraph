@@ -4,17 +4,16 @@ from copy import deepcopy
 from contextlib import contextmanager
 import json
 from pathlib import Path
-import runpy
 import shutil
-import sys
 
 import pytest
 
 from conftest import _bundle, _write_json
-from querypilot.knowledge.corpus import CorpusError, build_knowledge_corpus, verify_knowledge_corpus
-from querypilot.knowledge.corpus_identity import canonical_json, digest, json_file, jsonl_file
-from querypilot.knowledge.corpus_models import CHECK_CODES, UNVERIFIED
-from querypilot.knowledge.render import render_knowledge
+from querypilot.knowledge.knowledge_snapshots.api import CorpusError, verify_snapshot as verify_knowledge_corpus
+from querypilot.knowledge.knowledge_snapshots._corpus import build_knowledge_corpus
+from querypilot.knowledge.knowledge_snapshots.identity import canonical_json, digest, json_file, jsonl_file
+from querypilot.knowledge.knowledge_snapshots.models import CHECK_CODES, UNVERIFIED
+from querypilot.knowledge.knowledge_snapshots.api import render_knowledge
 
 
 def _rehash_bundle(bundle: Path) -> None:
@@ -131,28 +130,26 @@ def test_cli_summaries_and_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
                                  capsys: pytest.CaptureFixture) -> None:
     """检查真实 CLI。输入：临时目录/参数替换/捕获；输出：退出码和脱敏断言。"""
     bundle, semantic = _inputs(tmp_path)
-    root = Path(__file__).resolve().parents[1]
+    from querypilot.entrypoints.cli import main
     out = tmp_path / "corpus"
-    cases = [("build_corpus.py", ["--database-id", "demo", "--bundle", str(bundle),
-               "--semantics", str(semantic), "--output-dir", str(out)], "built"),
-             ("verify_corpus.py", ["--corpus-dir", str(out)], "verified")]
-    for script, args, outcome in cases:
-        monkeypatch.setattr(sys, "argv", [script, *args])
-        with pytest.raises(SystemExit) as exc:
-            runpy.run_path(str(root / "scripts" / script), run_name="__main__")
-        assert exc.value.code == 0
+    prefix = ["--artifacts-dir", str(tmp_path / "artifacts"), "knowledge", "snapshot"]
+    cases = [(["build", "--database-id", "demo", "--bundle-dir", str(bundle),
+               "--semantic-file", str(semantic), "--output-dir", str(out)], "built"),
+             (["verify", "--corpus-dir", str(out)], "verified")]
+    for args, outcome in cases:
+        assert main([*prefix, *args]) == 0
         captured = capsys.readouterr()
-        assert not captured.err and json.loads(captured.out)["outcome"] == outcome
-        assert "租户内物品" not in captured.out and "SELECT" not in captured.out
-    for args, code in [([], 2), (["--corpus-dir", str(tmp_path / "missing")], 1)]:
-        monkeypatch.setattr(sys, "argv", ["verify_corpus.py", *args])
-        with pytest.raises(SystemExit) as exc:
-            runpy.run_path(str(root / "scripts/verify_corpus.py"), run_name="__main__")
-        assert exc.value.code == code
-        captured = capsys.readouterr()
-        assert not captured.out and "Traceback" not in captured.err
-        if code == 1:
-            assert json.loads(captured.err)["error_code"] == "artifact_integrity"
+        assert json.loads(captured.out)["outcome"] == outcome
+        assert all(json.loads(line).get("event") for line in captured.err.splitlines())
+        assert "租户内物品" not in captured.out + captured.err and "SELECT" not in captured.out + captured.err
+    with pytest.raises(SystemExit) as invalid:
+        main([*prefix, "verify"])
+    assert invalid.value.code == 2
+    capsys.readouterr()
+    assert main([*prefix, "verify", "--corpus-dir", str(tmp_path / "missing")]) == 1
+    captured = capsys.readouterr()
+    assert not captured.out and "Traceback" not in captured.err
+    assert json.loads(captured.err.splitlines()[-1])["error_code"] == "artifact_integrity"
 
 
 def test_repeated_build_moved_inputs_and_readonly_reuse(tmp_path: Path) -> None:

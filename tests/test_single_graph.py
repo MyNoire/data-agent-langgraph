@@ -7,11 +7,11 @@ from io import StringIO
 
 import pytest
 
-from querypilot.config import Settings
-from querypilot.database.registry import DatabaseRegistry, RegistryError
-from querypilot.graph.single import build_single_query_graph, query_result_row_count
-from querypilot.observability import graph_logging
-from querypilot.sql.guard import SqlRejected
+from querypilot.runtime.api import Settings
+from querypilot.databases.api import DatabaseRegistry, RegistryError
+from querypilot.querying.api import build_query_graph, query_result_row_count
+from querypilot.runtime.api import graph_logging
+from querypilot.databases.api import SqlRejected
 
 
 def _registered_database(tmp_path):
@@ -57,7 +57,7 @@ def test_linear_graph_generates_validates_and_executes(tmp_path):
         calls.append((question, schema, evidence, settings.max_rows))
         return "SELECT name FROM items ORDER BY id"
 
-    graph = build_single_query_graph(Settings(data_dir=data_dir, max_rows=1), generator=fake_generator)
+    graph = build_query_graph(Settings(data_dir=data_dir, max_rows=1), generator=fake_generator)
     output = graph.invoke({"database_id": "sample", "question": "List item names"})
 
     assert calls == [("List item names", "items(id, name)", "", 1)]
@@ -76,7 +76,7 @@ def test_guard_rejects_model_write_before_execution(tmp_path):
         None；通过断言报告测试结果。
     """
     data_dir, path = _registered_database(tmp_path)
-    graph = build_single_query_graph(
+    graph = build_query_graph(
         Settings(data_dir=data_dir),
         generator=lambda *_: "DELETE FROM items",
     )
@@ -107,7 +107,7 @@ def test_unknown_database_stops_before_model_call(tmp_path):
         """
         raise AssertionError("model should not be called")
 
-    graph = build_single_query_graph(Settings(data_dir=data_dir), generator=unexpected_generator)
+    graph = build_query_graph(Settings(data_dir=data_dir), generator=unexpected_generator)
     with pytest.raises(RegistryError):
         graph.invoke({"database_id": "missing", "question": "How many items?"})
 
@@ -119,7 +119,7 @@ def test_graph_progress_events_cover_nodes_without_query_content(tmp_path):
     返回：None；断言失败时由 pytest 报告。
     """
     data_dir, _ = _registered_database(tmp_path)
-    graph = build_single_query_graph(
+    graph = build_query_graph(
         Settings(data_dir=data_dir), generator=lambda *_: "SELECT name FROM items",
     )
     path = tmp_path / "graph.events.jsonl"
@@ -151,7 +151,7 @@ def test_graph_failure_logs_node_and_error_type(tmp_path):
     返回：None；检查节点与根调用各自的错误事件。
     """
     data_dir, _ = _registered_database(tmp_path)
-    graph = build_single_query_graph(Settings(data_dir=data_dir), generator=lambda *_: "DELETE FROM items")
+    graph = build_query_graph(Settings(data_dir=data_dir), generator=lambda *_: "DELETE FROM items")
     path = tmp_path / "rejected.events.jsonl"
     with graph_logging(path, stream=StringIO()) as logs:
         with pytest.raises(SqlRejected):
@@ -172,24 +172,26 @@ def test_cli_invoke_preserves_answer_and_progress_log(tmp_path, monkeypatch, cap
     参数：tmp_path 为隔离目录；monkeypatch 替换模型与参数；capsys 捕获终端输出。
     返回：None；检查 stdout 答案和 JSONL 事件。
     """
-    from scripts import ask_graph
+    from querypilot.entrypoints import cli
+    from querypilot.querying import api as querying_api
 
     data_dir, _ = _registered_database(tmp_path)
-    graph = build_single_query_graph(
+    graph = build_query_graph(
         Settings(data_dir=data_dir), generator=lambda *_: "SELECT name FROM items ORDER BY id",
     )
-    monkeypatch.setattr(ask_graph, "get_settings", lambda: Settings(data_dir=data_dir))
-    monkeypatch.setattr(ask_graph, "build_single_query_graph", lambda _settings: graph)
+    monkeypatch.setattr(cli, "get_settings", lambda: Settings(data_dir=data_dir, artifacts_dir=tmp_path / "artifacts"))
+    monkeypatch.setattr(querying_api, "build_query_graph", lambda _settings, **kwargs: build_query_graph(
+        _settings, generator=lambda *_: "SELECT name FROM items ORDER BY id", run_context=kwargs.get("run_context")))
     monkeypatch.setattr(sys, "argv", ["ask_graph.py", "--database-id", "sample",
                                     "--question", "PRIVATE QUESTION"])
     monkeypatch.chdir(tmp_path)
-    ask_graph.main()
+    assert cli.main(["query", "ask", "--database-id", "sample", "--question", "PRIVATE QUESTION"]) == 0
     captured = capsys.readouterr()
     answer = json.loads(captured.out)
     assert set(answer) == {"sql", "result"}
     assert answer["result"]["rows"] == [["one"], ["two"]]
     assert "graph_span_finished" in captured.err
-    files = list((tmp_path / "results").glob("graph__*.events.jsonl"))
+    files = list((tmp_path / "artifacts").glob("runs/query/*/*/events.jsonl"))
     assert len(files) == 1
     raw = files[0].read_text(encoding="utf-8")
     events = [json.loads(line) for line in raw.splitlines()]
@@ -206,19 +208,20 @@ def test_cli_invoke_failure_records_node_and_graph_error(tmp_path, monkeypatch, 
     参数：tmp_path 为隔离目录；monkeypatch 替换依赖；capsys 捕获输出。
     返回：None；检查异常、stdout 和节点/图失败事件。
     """
-    from scripts import ask_graph
+    from querypilot.entrypoints import cli
+    from querypilot.querying import api as querying_api
 
     data_dir, _ = _registered_database(tmp_path)
-    graph = build_single_query_graph(Settings(data_dir=data_dir), generator=lambda *_: "DELETE FROM items")
-    monkeypatch.setattr(ask_graph, "get_settings", lambda: Settings(data_dir=data_dir))
-    monkeypatch.setattr(ask_graph, "build_single_query_graph", lambda _settings: graph)
+    graph = build_query_graph(Settings(data_dir=data_dir), generator=lambda *_: "DELETE FROM items")
+    monkeypatch.setattr(cli, "get_settings", lambda: Settings(data_dir=data_dir, artifacts_dir=tmp_path / "artifacts"))
+    monkeypatch.setattr(querying_api, "build_query_graph", lambda _settings, **kwargs: build_query_graph(
+        _settings, generator=lambda *_: "DELETE FROM items", run_context=kwargs.get("run_context")))
     monkeypatch.setattr(sys, "argv", ["ask_graph.py", "--database-id", "sample",
                                     "--question", "PRIVATE QUESTION"])
     monkeypatch.chdir(tmp_path)
-    with pytest.raises(SqlRejected):
-        ask_graph.main()
+    assert cli.main(["query", "ask", "--database-id", "sample", "--question", "PRIVATE QUESTION"]) == 1
     assert capsys.readouterr().out == ""
-    files = list((tmp_path / "results").glob("graph__*.events.jsonl"))
+    files = list((tmp_path / "artifacts").glob("runs/query/*/*/events.jsonl"))
     assert len(files) == 1
     raw = files[0].read_text(encoding="utf-8")
     events = [json.loads(line) for line in raw.splitlines()]

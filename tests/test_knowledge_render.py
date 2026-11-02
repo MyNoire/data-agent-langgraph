@@ -4,16 +4,14 @@ from collections import Counter
 from hashlib import sha256
 import json
 from pathlib import Path
-import runpy
-import sys
 
 import pytest
 
-from querypilot.catalog.models import (
+from querypilot.knowledge.knowledge_catalog.api import (
     ColumnSchema,
     ForeignKeySchema,
 )
-from querypilot.knowledge.render import KnowledgeError, render_knowledge
+from querypilot.knowledge.knowledge_snapshots.api import KnowledgeError, render_knowledge
 
 
 from conftest import _bundle, _write_json
@@ -120,12 +118,11 @@ def test_render_preserves_content_relations_and_sources(
         assert source["line_end"] == lineage["derived_source"]["line_end"]
         assert source["fields"]
 
-    script = Path(__file__).resolve().parents[1] / "scripts" / "render_knowledge.py"
+    from querypilot.entrypoints.cli import main
     output = tmp_path / "rendered"
-    monkeypatch.setattr(sys, "argv", [
-        str(script), "--bundle", str(bundle), "--output-dir", str(output),
-    ])
-    runpy.run_path(str(script), run_name="__main__")
+    args = ["--artifacts-dir", str(tmp_path / "artifacts"), "knowledge", "snapshot", "render",
+            "--bundle-dir", str(bundle), "--output-dir", str(output)]
+    assert main(args) == 0
     summary = json.loads(capsys.readouterr().out)
     assert summary == {
         "status": "draft",
@@ -144,8 +141,7 @@ def test_render_preserves_content_relations_and_sources(
         ]
         assert len(records) == count
     saved = {path: path.read_bytes() for path in output.iterdir()}
-    with pytest.raises(FileExistsError):
-        runpy.run_path(str(script), run_name="__main__")
+    assert main(args) == 1
     assert all(path.read_bytes() == raw for path, raw in saved.items())
     assert all(path.read_bytes() == raw for path, raw in before.items())
 

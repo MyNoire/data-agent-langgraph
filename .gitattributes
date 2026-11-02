@@ -1,2 +1,4 @@
 # 迁移按原字节计算 checksum，跨平台检出必须保留 LF。
 src/querypilot/knowledge/migrations/*.sql text eol=lf
+# 停用词资源按 UTF-8 原字节计算摘要，禁止检出时转换为 CRLF。
+src/querypilot/retrieval/resources/zh-courtesy-v1.txt text eol=lf

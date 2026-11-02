@@ -24,10 +24,10 @@ def test_archive_path_traversal_rejected(tmp_path):
         digest = hashlib.file_digest(stream, "sha256").hexdigest()
     project = Path(__file__).resolve().parents[1]
     result = subprocess.run(
-        [sys.executable, str(project / "scripts" / "fetch_bird.py"), "--archive", str(archive),
+        [sys.executable, "-m", "querypilot", "--artifacts-dir", str(tmp_path / "artifacts"), "data", "bird", "fetch", "--archive", str(archive),
          "--sha256", digest, "--dest", str(destination)],
         cwd=project, capture_output=True, text=True,
     )
     assert result.returncode != 0
-    assert "unsafe archive path" in result.stderr
+    assert "archive_unsafe" in result.stderr
     assert not (tmp_path / "escape.txt").exists()

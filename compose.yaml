@@ -3,6 +3,8 @@ name: querypilot-knowledge
 services:
   knowledge-db:
     # 必须显式配置固定版本/真实 digest，避免无意升级已有持久化卷。
+    # 当前容器内另装了 pg_search0.26.4；删除重建前需选择包含相同插件的镜像。
+    # prepare-search 管理数据库扩展/索引，不安装镜像中的系统包，也不重启 PG。
     image: ${QUERYPILOT_PG_IMAGE:?请配置 PostgreSQL18/pgvector0.8.7 镜像}
     environment:
       POSTGRES_DB: querypilot_knowledge

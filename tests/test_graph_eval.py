@@ -3,15 +3,15 @@
 import json
 import sqlite3
 import sys
+from pathlib import Path
 from io import StringIO
 
-from querypilot.config import Settings
-from querypilot.database.registry import DatabaseRegistry
-from querypilot.evals.graph import run_graph_eval
-from querypilot.evals.naming import result_path
-from querypilot.logging import progress_logging
-from querypilot.graph.single import query_result_row_count
-from querypilot.observability import graph_logging
+from querypilot.runtime.api import Settings
+from querypilot.databases.api import DatabaseRegistry
+from querypilot.evaluation.api import run_graph
+from querypilot.runtime.api import task_run
+from querypilot.querying.api import query_result_row_count
+from querypilot.runtime.api import graph_logging
 
 
 def test_graph_eval_records_match_mismatch_and_guard_failure(tmp_path, monkeypatch, capsys):
@@ -58,13 +58,12 @@ def test_graph_eval_records_match_mismatch_and_guard_failure(tmp_path, monkeypat
             "REJECT SECRET": "DELETE FROM items",
         }[question]
 
-    output = tmp_path / "graph-result.json"
-    events_path = tmp_path / "graph-events.jsonl"
-    with graph_logging(events_path, stream=StringIO(), row_count=query_result_row_count) as logs:
-        result = run_graph_eval(
-            cases, Settings(data_dir=data_dir), output=output,
-            run_id="batch-001", generator=fake_generator, middleware=logs,
-        )
+    settings = Settings(data_dir=data_dir, artifacts_dir=tmp_path / "artifacts")
+    result = run_graph(cases, settings, generator=fake_generator)
+    batch_id = result["run_id"]
+    run_dir = next(settings.artifacts_dir.glob("runs/evaluation/*/*"))
+    output = run_dir / "private/result.json"
+    events_path = run_dir / "events.jsonl"
     assert result["provider"] == "graph"
     assert result["graph_version"] == "single-v1"
     assert result["summary"] == {
@@ -76,44 +75,43 @@ def test_graph_eval_records_match_mismatch_and_guard_failure(tmp_path, monkeypat
     ]
     assert result["records"][2]["error_type"] == "SqlRejected"
     assert result["records"][2]["predicted_sql"] == "DELETE FROM items"
-    assert json.loads(output.read_text(encoding="utf-8"))["run_id"] == "batch-001"
+    assert json.loads(output.read_text(encoding="utf-8"))["run_id"] == batch_id
 
     raw = events_path.read_text(encoding="utf-8")
-    events = [json.loads(line) for line in raw.splitlines()]
+    events = [json.loads(line) for line in raw.splitlines() if json.loads(line)["event"] not in {"run_started", "run_finished"}]
     assert events[0]["event"] == "eval_started"
     assert events[-1]["event"] == "eval_finished"
     assert events[-1]["success_count"] == 1
     assert events[-1]["failure_count"] == 2
     for index in range(1, 4):
-        child_id = f"batch-001:case:{index}"
+        child_id = f"{batch_id}:case:{index}"
         case_events = [event for event in events if event.get("graph_run_id") == child_id]
         node_events = [event for event in events if event.get("run_id") == child_id]
         assert [event["event"] for event in case_events] == [
             "eval_case_started", "eval_case_finished",
         ]
         assert node_events
-        assert all(event["parent_run_id"] == "batch-001" for event in node_events)
+        assert all(event["parent_run_id"] == batch_id for event in node_events)
         assert all(event["question_id"] == index for event in node_events)
         assert all(event["case_index"] == index for event in node_events)
     assert not any(event.get("node") == "execute_sql" and event.get("case_index") == 3 for event in events)
     mismatch_root = next(event for event in events
                          if event["event"] == "graph_span_finished"
-                         and event["run_id"] == "batch-001:case:2"
+                         and event["run_id"] == f"{batch_id}:case:2"
                          and event["parent_span_id"] is None)
     assert mismatch_root["status"] == "success"
     assert result["records"][1]["outcome"] == "mismatched"
     assert "SECRET" not in raw
     assert "DELETE FROM items" not in raw
 
-    from scripts import export_eval_public
+    from querypilot.entrypoints.cli import main
 
     public_path = tmp_path / "graph-public.json"
-    monkeypatch.setattr(sys, "argv", ["export_eval_public.py", str(output), str(public_path)])
-    export_eval_public.main()
+    assert main(["--artifacts-dir", str(tmp_path / "exports"), "eval", "export-public", "--input", str(output), "--output", str(public_path)]) == 0
     assert str(public_path) in capsys.readouterr().out
     public = json.loads(public_path.read_text(encoding="utf-8"))
     assert public["graph_version"] == "single-v1"
-    assert public["records"][0]["graph_run_id"] == "batch-001:case:1"
+    assert public["records"][0]["graph_run_id"] == f"{batch_id}:case:1"
     assert "model_base_url" not in public
     assert "question" not in public["records"][0]
 
@@ -128,8 +126,8 @@ def test_graph_eval_cli_uses_graph_and_keeps_model_runs_separate(tmp_path, monke
     返回:
         None；通过生成文件、汇总和节点事件断言入口行为。
     """
-    from scripts import run_graph_eval as cli
-    from querypilot.evals import graph as graph_module
+    from querypilot.entrypoints import cli
+    from querypilot.evaluation.sql import api as evaluation_api
 
     data_dir = tmp_path / "data"
     data_dir.mkdir()
@@ -143,36 +141,21 @@ def test_graph_eval_cli_uses_graph_and_keeps_model_runs_separate(tmp_path, monke
         {"question_id": 7, "db_id": "sample", "question": "Count items",
          "SQL": "SELECT COUNT(*) FROM items"},
     ]), encoding="utf-8")
-    real_builder = graph_module.build_single_query_graph
-
-    def fake_builder(settings: Settings, *, generator):
-        """构造仍执行真实节点、但不用模型服务的单图。
-
-        参数:
-            settings: CLI 传入的数据和执行配置。
-            generator: 默认模型生成器，本测试替换。
-        返回:
-            注入固定 SQL 的真实编译图。
-        """
-        return real_builder(settings, generator=lambda *_: "SELECT COUNT(*) FROM items")
-
-    monkeypatch.setattr(graph_module, "build_single_query_graph", fake_builder)
-    monkeypatch.setattr(cli, "get_settings", lambda: Settings(data_dir=data_dir, model_name="test-model"))
-    monkeypatch.setattr(sys, "argv", ["run_graph_eval.py", "--cases", str(cases)])
+    monkeypatch.setattr(evaluation_api, "generate_sql", lambda *_: "SELECT COUNT(*) FROM items")
+    monkeypatch.setattr(cli, "get_settings", lambda: Settings(data_dir=data_dir, model_name="test-model",
+                                                            artifacts_dir=tmp_path / "artifacts"))
     monkeypatch.chdir(tmp_path)
 
-    cli.main()
+    assert cli.main(["eval", "graph", "--cases", str(cases)]) == 0
     summary = json.loads(capsys.readouterr().out)
     assert summary["provider"] == "graph"
     assert summary["summary"]["success"] == 1
-    assert "graph-single-v1" in summary["output_file"]
+    assert "runs" in Path(summary["output_file"]).parts
+    assert "evaluation" in Path(summary["output_file"]).parts
     events_path = tmp_path / summary["event_file"]
     events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
     assert sum(event["event"] == "graph_span_finished" and event.get("parent_span_id") is not None
                for event in events) == 4
-    assert "graph-single-v1" in result_path(cases, "graph", "test-model", "none").name
-    assert "graph-single-v1" not in result_path(cases, "model", "test-model", "none").name
-    monkeypatch.setattr(graph_module, "build_single_query_graph", real_builder)
 
     def unavailable_generator(question: str, schema: str, evidence: str, settings: Settings) -> str:
         """模拟模型不可用，使评测没有可计分的 SQL 预测。
@@ -187,10 +170,9 @@ def test_graph_eval_cli_uses_graph_and_keeps_model_runs_separate(tmp_path, monke
         """
         raise ConnectionError("model unavailable")
 
-    with progress_logging(tmp_path / "unavailable.events.jsonl", stream=StringIO()):
-        unavailable = run_graph_eval(
-            cases, Settings(data_dir=data_dir), generator=unavailable_generator,
-        )
+    unavailable = run_graph(
+        cases, Settings(data_dir=data_dir, artifacts_dir=tmp_path / "artifacts"), generator=unavailable_generator,
+    )
     assert unavailable["status"] == "no_predictions"
     assert unavailable["execution_accuracy"] is None
     assert unavailable["valid_sql_rate"] is None

@@ -1,156 +1,122 @@
 # QueryPilot
 
-QueryPilot's target is a multi-turn natural-language business data assistant: select an authorized data source, retrieve business and schema knowledge, plan and safely execute analysis, recover from errors, and produce a traceable report. The current Phase 0 implementation is a measurable Text2SQL prototype, not the finished Agent. See the [product and evaluation roadmap](docs/product-evaluation-roadmap.md) for the staged architecture and experiment protocol.
+QueryPilot 的目标是让业务人员用自然语言查询统计数据，并能追溯答案依据。当前已实现一条四节点查询链：读 SQLite 结构 → 生成 SQL → 安全校验 → 只读执行。它还没有选库、SQL 修复、多轮记忆或完整在线检索。
 
-The [architecture diagram](docs/querypilot-architecture.drawio.png) shows the current Phase 0 path alongside the planned LangGraph system. Its [editable draw.io source](docs/querypilot-architecture.drawio) is also included.
+知识准备面向开发者：从结构和批准说明生成知识快照，再导入 PostgreSQL。目录和调用方式见[模块入口](docs/modules.md)；本次重构保留业务行为和评测规则，R3 的匹配、排名等核心仍待结对完成。
 
-The first real-model BIRD smoke run is recorded in the [Phase 0.5 baseline report](docs/phase-0.5-baseline.md). It is a 12-question development result, not official BIRD EX. The frozen 100-question real-model baseline is recorded in the [RAG work plan](docs/learning/rag-work-plan.md); later comparisons must preserve its dataset and evaluation protocol.
+## 本地启动
 
-The foundation uses Python 3.11/3.12, uv, FastAPI, Pydantic v2, sqlglot, and SQLite. The model client accepts an OpenAI-compatible URL and model name, including a locally served Qwen model. Phase 1 has a single linear LangGraph path. R2 PostgreSQL knowledge storage passed real database acceptance on 2026-10-17; runtime retrieval remains a later stage.
+需要 Python 3.11/3.12 和 uv。从项目根运行：
 
-## 离线知识快照（R1.4）
+~~~powershell
+uv sync --frozen --extra dev
+uv run querypilot --help
+uv run python -m querypilot --help
+uv run uvicorn querypilot.entrypoints.http:app --host 127.0.0.1 --port 8001
+~~~
 
-已实现固定批准包与语义配置的 corpus 构建、确定性身份、来源/引用/文件完整性核验，以及已有一致目标的只读复用。Toxicology 正式离线快照为 `validated`；R1.3 草稿仍为 `draft`。快照状态不代表推断业务语义已获证明，也不代表检索或 Text2SQL 效果改善。PostgreSQL 导入代码见下节；Embedding 和在线 RAG 尚未实现。
+两种 CLI 调用同一个 main。HTTP 保留原接口：GET /health、GET/POST /databases、GET /databases/{id}/schema、POST /queries。最后一个接口接收 SQL，例如：
 
-```powershell
-uv run --frozen python scripts/build_corpus.py --database-id toxicology --bundle data/rag/toxicology/r1-2-curated-v1 --semantics config/knowledge_semantics/toxicology-v1.json --output-dir data/rag/toxicology/r1-4-corpus
-uv run --frozen python scripts/verify_corpus.py --corpus-dir data/rag/toxicology/r1-4-corpus
-```
+~~~json
+{"database_id":"formula_1","sql":"SELECT forename FROM drivers LIMIT 5"}
+~~~
 
-首次成功返回 `built`，已有目标完整且与候选一致时返回 `reused`，不重写文件；独立核验通过返回 `verified`。无效或不同目标拒绝，不支持 force/resume。快照在本地 `data/` 下，来源和正文不进入进度日志或公开提交。
+数据库必须先登记，文件位于 QUERYPILOT_DATA_DIR 内。执行器保留单语句、表范围、只读连接、SQLite authorizer、行数、超时和响应字节限制。
 
-格式、服务接口和实际验收见 [R1.4 规格目录](specs/001-r1-4-corpus/quickstart.md)。输入包/语义文件是必需前置，克隆源码并不自动获得被忽略的本地资料。
+复制 .env.example 为自己的 .env，填配置但不要提交凭据。普通 SQLite、HTTP、固定生成器和 fixture 评测不需要 PostgreSQL。知识存储另需 knowledge extra 和对应角色 DSN。
 
-## PostgreSQL 知识存储（R2，已完成实库验收）
+## 现在怎样运行和找结果
 
-已新增 Compose、`knowledge` 可选依赖、编号迁移和三个入口：`manage_knowledge_db.py`、`import_corpus.py`、`verify_corpus_import.py`。四张业务表分别保存 corpus 登记、文档、块和关系；另有迁移记录表。导入完整核验 R1.4 源后才进入事务，同一 corpus 使用事务锁，重复导入全字段比较而不覆盖。成功摘要分别提供内容与首次时间指纹。
+~~~powershell
+uv run querypilot eval direct --provider fixture --cases evals/bird_smoke.json
+uv run querypilot --artifacts-dir artifacts eval direct --provider fixture --cases evals/bird_smoke.json
+~~~
 
-2026-10-17 实测 PostgreSQL **18.6** / pgvector **0.8.7**：**26 项实库测试通过**；本地相关回归 **87 passed / 1 skipped**（系统不允许目录符号链接）。真实 Toxicology 4 documents / 20 chunks / 5 relations 首导、复用及独立复验通过；重启后内容和首次时间指纹保持一致。安装、命令和证据见 [R2 最终验收](specs/002-r2-postgres-import/quickstart.md#9-r2-最终实库验收2026-10-17)。按 `.env.example` 增加专用配置，保留已有模型设置；旧 SQLite/评测入口无需 PG。R2 不生成向量，也不向图接入检索。
+这些命令需要已准备的题集及登记的数据库；克隆代码不会取得本地忽略的数据。fixture 使用金标准 SQL，只检查执行与计分管线，不能作为模型成绩。
 
-## Local setup
+任务统一归档到 artifacts/runs/<操作>/<UTC日期>/<run_id>/，其中有 run.json、config.json、events.jsonl 和领域结果。普通请求摘要到 artifacts/logs/<UTC日期>/app.jsonl。CLI 的 stderr 报告运行位置。设置 QUERYPILOT_ARTIFACTS_DIR 或 --artifacts-dir 可以换根目录。
 
-```powershell
-cd D:\AgentStudy\data-agent-langgraph
-uv sync --extra dev
-uv run uvicorn querypilot.api:app --host 127.0.0.1 --port 8001
-```
+旧 results 和 data 留在原位置。评测和导入不再接受旧式平铺 --output；知识快照等持久输出仍显式用 --output-dir。公开报告导出保留 --output，拒绝覆盖：
 
-Health: `GET http://127.0.0.1:8001/health`. After importing the BIRD databases below, `GET /databases/formula_1/schema` returns tables and columns. `POST /queries` accepts `{"database_id":"formula_1","sql":"SELECT forename FROM drivers LIMIT 5"}`. `POST /databases` also accepts a `database_id` and a SQLite `path` inside `QUERYPILOT_DATA_DIR`.
+~~~powershell
+uv run querypilot eval export-public --input <旧JSON或完整评测运行目录> --output <新的-public.json>
+~~~
 
-## Tests and evaluation
+导出仍可能含 predicted_sql，分享前检查；命令不会上传。安全进度不输出问题、SQL、Schema、结果行和凭据；详细结果与 SQL 审计位于私有位置。记录故障和真实操作结果分开，数据库成功后写文件失败不会被说成回滚。见[运行记录](docs/observability.md)和[事件接口](docs/observability-interface.md)。
 
-```powershell
-uv run pytest -q
-uv run python scripts/run_eval.py --provider fixture --cases evals/bird_smoke.json
-```
+## 自然语言查询与评测
 
-The fixture command needs the generated BIRD case file and imported databases described below.
+以下命令会调用配置的模型，需明确准备模型地址、名称、密钥和成本预算后自行执行：
 
-The fixture provider feeds gold SQL back into the runner and only validates data loading, guard, execution, metrics serialization, and latency collection. **Its score is not a Text2SQL baseline.** To run the actual direct-prompt baseline, set `QUERYPILOT_MODEL_BASE_URL`, `QUERYPILOT_MODEL_NAME`, and `QUERYPILOT_MODEL_API_KEY` for an available OpenAI-compatible server, then run:
+~~~powershell
+uv run querypilot query ask --database-id formula_1 --question "列出一位车手"
+uv run querypilot eval direct --provider model --evidence-mode none --cases evals/bird_smoke.json
+uv run querypilot eval graph --cases evals/bird_smoke.json
+~~~
 
-Create a local `.env` from `.env.example` and fill in your own credentials. For a third-party Chat Completions endpoint serving GPT-5.5, set the model name to `gpt-5.5` (without LangChain's `openai:` prefix). `QUERYPILOT_MODEL_TEMPERATURE` is optional and omitted by default because some reasoning endpoints reject it. Do not commit `.env` or place credentials in `.env.example`.
+模型适配器保留 direct-v2、单 user 消息、60 秒客户端超时；温度未配置时不发送。direct 的 --evidence-mode oracle 是使用人工标注提示的隔离实验，不能混同真实检索能力。graph 保留 single-v1 的四节点和无 oracle 流程。
 
-```powershell
-uv run python scripts/run_eval.py --provider model --cases evals/bird_smoke.json
-```
+计分保留 matched/mismatched/error；failure=mismatch+error，未预测计入 error。执行匹配忽略行序但保留重复行，受项目行数上限影响，不等于官方 BIRD EX。详见[结果规则](docs/evaluation-results.md)。
 
-The runner records prediction-level SQL, errors, execution match, valid execution rate, and P50/P95 latency. Its JSON and terminal output contain a `summary` with `total`, `success`, `failure`, `mismatch`, `error`, `no_prediction`, and `valid_sql` counts. Success means a capped-row execution match; failure combines mismatches and errors, with no-prediction cases included under errors. Each record has an `outcome` and, for BIRD, a `question_id` for follow-up analysis. Current execution matching is a smoke metric, not official BIRD EX. The 12 questions are for quick iteration; keep the 100-question set separate for less frequent comparisons.
+SQL 评测实现集中在 `evaluation/sql`，调用方继续使用 `evaluation.api.run_direct/run_graph`；根入口直接导出同一个操作。`evaluation/retrieval` 单独保留检索评测职责，目前只有待实现说明，没有评分或可运行命令。SQL 的运行配置记录 `mode=sql`，两类评测不会混用样例、指标或报告。
 
-Without `--output`, files are named `results/<dataset>__model-<model>__<prompt>__evidence-<mode>__<UTC timestamp>.json` or `results/<dataset>__fixture__<UTC timestamp>.json`. The command prints the actual `output_file`. An explicit `--output` is allowed but refuses to replace an existing file. Raw results stay Git-ignored; the public exporter can copy selected fields into a separately named `*-public.json`.
+冻结的 100 题与 12 题开发集分开。正式比较需固定题号、数据库、模型、提示词、evidence、执行上限及评测器。100 题原设定：
 
-Single-graph and evaluation commands emit live progress events to standard error and an ignored JSONL file. Progress events have a `run_id` and omit questions, SQL, Schema, rows, and credentials; separate SQL audit logs can contain SQL. See the [logging design](docs/observability.md) and [event interface](docs/observability-interface.md).
-
-## Phase 1: first LangGraph path
-
-The first graph requires a registered `database_id` and question. Its four nodes load the current SQLite schema, generate SQL with the existing model adapter, validate the SQL AST, and execute it through the existing read-only executor. It returns the guarded SQL and query result. The graph has no router, retrieval, repair, checkpointer, or memory yet.
-
-```powershell
-uv run python scripts/ask_graph.py --database-id formula_1 --question "What's Bruno Senna's Q1 result in the qualifying race No. 354?"
-uv run pytest -q tests/test_single_graph.py
-```
-
-The implementation is in [single.py](src/querypilot/graph/single.py), with a deterministic SQLite-backed test that replaces only the model call. See the [architecture notes](docs/architecture.md) for the state and node boundaries.
-
-If you want to type this workflow yourself from the Phase 0.5 Git snapshot, follow the [Phase 1 hands-on guide](docs/phase-1-handson.md).
-
-`evidence` is an optional hint about business meaning or values that may not be clear from the question and table names. BIRD Mini-Dev includes expert-annotated evidence in its question records. The model baseline defaults to `--evidence-mode none`: the prompt contains only the question and schema. To measure a separate, oracle-assisted setting, pass `--evidence-mode oracle`; this includes the case's annotated evidence. Each result records `evidence_mode` and whether evidence was used for each question. Keep the two settings separate when reporting scores. Phase 0 does not retrieve evidence on its own.
-
-## BIRD Mini-Dev preparation
-
-See [BIRD Mini-Dev](https://github.com/bird-bench/mini_dev) and its [canonical dataset page](https://huggingface.co/datasets/birdsql/bird_mini_dev). The small SQLite question JSON and the three databases needed by this smoke set are available locally under ignored `data/bird/`; their SHA-256 values, the question source revision, and 12 fixed question IDs are recorded in [the smoke manifest](evals/bird_smoke_manifest.json). The selected cases cover three databases (four each) and simple/moderate/challenging difficulty (4/6/2). `--questions-only` prepares `evals/bird_smoke.json` without requiring SQLite databases on a fresh checkout:
-
-```powershell
-uv run python scripts/import_bird.py --root data/bird --manifest evals/bird_smoke_manifest.json --questions-only --output evals/bird_smoke.json
-```
-
-On a fresh checkout, obtain the [complete database package linked by BIRD](https://github.com/bird-bench/mini_dev), save the archive under `data/`, and independently record its SHA-256. Extracting an archive is explicit and checksum-verified:
-
-```powershell
-uv run python scripts/fetch_bird.py --archive data/mini_dev_download.zip --sha256 "<64-hex-sha256>"
-uv run python scripts/import_bird.py --root data/bird --manifest evals/bird_smoke_manifest.json --output evals/bird_smoke.json
-uv run python scripts/run_eval.py --provider model --cases evals/bird_smoke.json
-# Optional assisted comparison using expert annotations:
-uv run python scripts/run_eval.py --provider model --evidence-mode oracle --cases evals/bird_smoke.json
-```
-
-The importer accepts `mini_dev_sqlite.json` or the Hugging Face shard filename, plus `<db_id>.sqlite` for each selected database. The manifest prevents accidentally evaluating a different question revision. The database files are never modified or bundled in Git. This is a fixed development smoke set, not the official BIRD EX evaluation; the current runner caps result rows and uses simplified execution matching. [LiveSQLBench Base Lite SQLite](https://huggingface.co/datasets/birdsql/livesqlbench-base-lite-sqlite) is a separate benchmark whose public release omits gold SQL and includes management tasks, so it is not used in this read-only baseline. Dataset terms and project provenance are in [attribution](docs/attribution.md).
-
-## Frozen 100-question set
-
-The [100-question manifest](evals/bird_final100_manifest.json) fixes the source checksum, question IDs, 11 database checksums, and preflight limits. It excludes all 12 smoke IDs. The selection rules are in `scripts/select_bird_final100.py`; `scripts/freeze_bird_final100.py` validates reference SQL before writing a new manifest and refuses to overwrite the committed one. On a fresh checkout, obtain the same BIRD Mini-Dev question JSON and complete `dev_databases` directory, then run:
-
-```powershell
-uv run python scripts/prepare_bird_final100_data.py --database-source "D:\path\to\dev_databases"
-uv run python scripts/import_bird.py --root data/bird --manifest evals/bird_final100_manifest.json --output evals/bird_final100.json
+~~~powershell
 $env:QUERYPILOT_MAX_ROWS = '10000'
 $env:QUERYPILOT_QUERY_TIMEOUT_MS = '20000'
 $env:QUERYPILOT_MAX_RESPONSE_BYTES = '10485760'
-uv run python scripts/run_eval.py --provider fixture --cases evals/bird_final100.json
-```
+~~~
 
-The preparation script verifies checksums before copying databases into ignored `data/bird/`. Fixture results verify the evaluation path; they are not model accuracy. Before a model comparison, keep the frozen IDs and `--evidence-mode` fixed, and record the model, prompt, execution caps, and raw result file. The three environment values above match the manifest preflight for this set.
+历史真实模型 graph 基线（2026-10-02）：gpt-5.5、direct-v2、single-v1、none，30 matched / 66 mismatched / 4 errors，执行匹配 30%，valid_sql_rate 96%，逐题 P50 14.063 秒、P95 54.421 秒。该耗时包含参考 SQL 和比较；不是本次重构重新测量。原始报告 SHA256 为 d4293131528a4723112bca18e2a9feeb0e8bdc39554186d8cb85c62ef96cb70c，保留在本地 results。见[工作计划](docs/learning/rag-work-plan.md)。
 
-When ready for the first real-model 100-question baseline, use the same three execution limits and run `uv run python scripts/run_eval.py --provider model --evidence-mode none --cases evals/bird_final100.json`. This command invokes the configured model 100 times; it has not been run for this set yet.
+## 知识准备与存储
 
-## Single-graph evaluation with node progress
+目录按业务分成一个 knowledge 大模块，内部再分 knowledge_catalog、knowledge_snapshots、knowledge_store。普通调用只导入 knowledge.api；底层内部函数和裸 PG 连接不跨模块使用。
 
-`scripts/run_graph_eval.py` evaluates the same frozen cases through the four-node LangGraph workflow. It is a separate run from `scripts/run_eval.py`'s direct-prompt baseline. Every case has its own graph `run_id`; node events carry the batch `parent_run_id`, `question_id`, and `case_index`. The result JSON includes per-case outcomes and a summary. Progress is printed to standard error and saved in a matching `.events.jsonl` file. No model calls are made until you run one of the following commands yourself.
+具备已批准 Toxicology 输入包后，构建/核验可使用：
 
-From the project root, first check the graph path on the 12-question smoke set, then run the frozen 100-question set. The three limits match the 100-question manifest and should be kept fixed for comparisons:
+~~~powershell
+uv run querypilot knowledge snapshot build --database-id toxicology --bundle-dir data/rag/toxicology/r1-2-curated-v1 --semantic-file config/knowledge_semantics/toxicology-v1.json --output-dir data/rag/toxicology/r1-4-corpus
+uv run querypilot knowledge snapshot verify --corpus-dir data/rag/toxicology/r1-4-corpus
+~~~
 
-```powershell
-$env:QUERYPILOT_MAX_ROWS = '10000'
-$env:QUERYPILOT_QUERY_TIMEOUT_MS = '20000'
-$env:QUERYPILOT_MAX_RESPONSE_BYTES = '10485760'
-uv run python scripts/run_graph_eval.py --cases evals/bird_smoke.json
-uv run python scripts/run_graph_eval.py --cases evals/bird_final100.json
-```
+同一批准输入与语义配置保留同一 corpus 身份；已有目标合法且内容相同时只读复用，损坏或不同则拒绝。来源变化时构建新快照；没有后台巡检。运行记录不写进快照目录。
 
-The graph uses the same direct prompt without oracle evidence, then validates and executes SQL in separate nodes. The reported execution match is this project's capped-row smoke metric, not official BIRD EX.
+~~~powershell
+uv sync --frozen --extra dev --extra knowledge
+uv run querypilot knowledge store check
+uv run querypilot knowledge store import --corpus-dir data/rag/toxicology/r1-4-corpus
+uv run querypilot knowledge store verify --corpus-dir data/rag/toxicology/r1-4-corpus
+~~~
 
-The first 100-question graph model run completed on 2026-10-02 using the configured `gpt-5.5` model, `direct-v2`, `single-v1`, and no evidence or RAG. It recorded 30 matched cases, 66 mismatches, and 4 errors (70 failures in total). Execution match was 30%; `valid_sql_rate` was 96% (successful graph execution, not syntax validation alone). Per-case evaluation latency was P50 14.063 s and P95 54.421 s, including reference SQL execution and result comparison. Execution limits were 10,000 rows, 20,000 ms per SQL execution, and 10 MiB per response; model temperature was not explicitly set.
+存储操作选中后才加载驱动。迁移、导入与读取分角色；导入前核验源、事务锁防同 corpus 竞争、重复导入全字段核对而不覆盖。COMMIT 确认丢失保留未知结果，不猜成功。向量生成、在线 RAG 和检索效果仍未实现。
 
-The local raw report is `results/bird-final100__graph-single-v1__model-gpt-5-5__direct-v2__evidence-none__20261002T073342236010Z.json` (SHA-256: `d4293131528a4723112bca18e2a9feeb0e8bdc39554186d8cb85c62ef96cb70c`). Its paired `.events.jsonl` contains progress events. Raw reports and event logs remain ignored by Git; retain both local files for later RAG comparisons. The evaluated case file has SHA-256 `e29ab5ed86a793884bcff26e5e602ed56efda019bf95b4bd7f9f4a16762c4b8f`.
+R1.4 的正式 Toxicology 快照为 4 文档/20 块/5 关系。R2 历史实库验收（2026-10-17）使用 PG18.6/pgvector0.8.7，26 项实库通过，重启后内容与首次时间指纹保持；这是历史事实，不替代本次新入口验收。原资料和安装步骤见 [R1.4](specs/001-r1-4-corpus/quickstart.md)、[R2](specs/002-r2-postgres-import/quickstart.md)。
 
-Both evaluation paths share the [result contract and summary rules](docs/evaluation-results.md), while keeping their generation and execution flows separate.
-For a step-by-step explanation of the single-graph evaluator, see the [learning guide](docs/learning/single-graph-evaluation.md).
+## BIRD 数据工具
 
-The [RAG knowledge-store design](docs/rag-knowledge-design.md) records the earlier three-table draft and retrieval/evaluation ideas. R2 storage uses the newer [feature data model](specs/002-r2-postgres-import/data-model.md), adding a corpus ledger. Real database storage acceptance is complete; runtime RAG remains unimplemented.
+18 个旧脚本均有[对应新命令](specs/004-modular-refactor/contracts/cli.md)。数据工具保留原参数和保护：
 
-For the guided implementation sequence and stage acceptance criteria, see the [RAG work plan](docs/learning/rag-work-plan.md). The first exercise prepares a read-only catalog for one small database before adding PostgreSQL or embeddings.
+~~~powershell
+uv run querypilot data bird fetch --help
+uv run querypilot data bird import --root data/bird --manifest evals/bird_smoke_manifest.json --questions-only --output <新题集.json>
+uv run querypilot data bird prepare-final100 --database-source <本地dev_databases目录>
+~~~
 
-For the implemented R1.1–R1.2 architecture, design decisions, verified limitations, and Agent engineering interview questions, see the [knowledge preparation interview guide](docs/interview/r1-1-r1-2-agent-knowledge-preparation.md) (Chinese).
+fetch 需显式 URL/归档与 SHA256。import 使用 manifest 固定问题版本；prepare 按已冻结 manifest 核对数据库。select-final100/freeze-final100 是维护工具，不应在每次评测时重选题目。本次只迁移和测试原创临时资料，没有下载或改正式数据。
 
-The approved Toxicology description corrections can be rebuilt with `scripts/curate_catalog.py` and the pinned plan in `config/catalog_corrections/toxicology-v1.json`. The [correction guide](docs/catalog-quality-corrections.md) records the command, provenance, and formal input bundle for R1.3. This remains an offline preparation step; runtime retrieval is pending.
+来源为 [BIRD Mini-Dev](https://github.com/bird-bench/mini_dev) 和 [数据页](https://huggingface.co/datasets/birdsql/bird_mini_dev)，出处见[attribution](docs/attribution.md)。12 题及 100 题的 manifest 保留在 evals，原始题目和数据库在忽略的 data。
 
-The [R1.3 rendering tutorial](docs/learning/rag-r1-3-rendering-tutorial.md) (Chinese) explains how the implemented offline renderer turns the approved Toxicology catalog into document, chunk, and relation drafts. The source is in `src/querypilot/knowledge/`, the CLI is `scripts/render_knowledge.py`, and focused tests are in `tests/test_knowledge_render.py`. Its output remains an unpublished draft: corpus IDs, deterministic UUIDs, embeddings, PostgreSQL ingestion, and runtime retrieval are later steps.
+## 开发、测试与本次验证
 
-The [semantic context update](docs/knowledge-semantic-context.md) adds compact, inferred table purposes and relationship meanings from the versioned profile in `config/knowledge_semantics/toxicology-v1.json`, together with role distinctions and complete candidate JOIN conditions. Pass `--semantics` to build its separate draft output in `data/rag/toxicology/r1-3-semantic-v2/`; retrieval and model accuracy gains have not been measured.
+~~~powershell
+uv run --extra dev --extra knowledge pytest tests --ignore=tests/integration -q
+uv run --extra dev python -X utf8 tests/architecture/test_module_boundaries.py
+~~~
 
-## Development workflow
+专用 PG 测试需三条 TEST DSN，必须指向 querypilot_knowledge_test；夹具会清理这个库里的测试行，不能指向正式知识库。真实模型评测不是默认测试的一部分。004 的历史模块化工作见其[验证指南](specs/004-modular-refactor/quickstart.md)和[改动与审查](specs/004-modular-refactor/review.md)；本轮 R3 先行重构的命令、结果与限制见 [R3 验证指南](specs/003-r3-lexical-retrieval/quickstart.md)及[审查记录](specs/003-r3-lexical-retrieval/review.md)。
 
-Spec Kit 1.1.3 is installed as an independent uv tool, with Codex skills and PowerShell scripts configured in this repository. See the [Chinese setup and usage guide](docs/learning/spec-kit-setup.md), [SDD workflow](specs/README.md), and [project constitution](.specify/memory/constitution.md). New features start with a bounded specification; Agent core learning tasks retain the paired programming approach in `AGENTS.md`.
+协作采用先对齐、spec、plan、tasks、implement、独立 review，见[SDD 流程](specs/README.md)与 [AGENTS.md](AGENTS.md)。历史教程保留当时实现记录；现行导入和命令以[模块入口](docs/modules.md)为准。R3 不因这次结构调整而勾选未完成核心。
 
-## Scope
-
-Implemented: configurable OpenAI-compatible direct prompt, registered local SQLite data sources, AST guard, read-only execution, API health/schema/query endpoints, JSON logging, tests, smoke evaluation, one linear LangGraph workflow, validated offline knowledge snapshots, and PostgreSQL/pgvector knowledge storage with atomic import and independent verification. Pending: embeddings, durable checkpoints, retrieval, SQL repair, multi-turn context/memory, Python analysis, SSE, and production authentication.
+尚未完成：完整检索与排名、embedding、路由/授权、多轮上下文、SQL 修复、持久 checkpoint、Python 分析、SSE 与生产认证。

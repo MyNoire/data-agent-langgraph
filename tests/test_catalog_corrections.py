@@ -3,16 +3,15 @@
 import csv
 from hashlib import sha256
 import json
-import runpy
-import sys
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from querypilot.catalog.corrections import CorrectionError, build_curated_catalog
-from querypilot.catalog.descriptions import enrich_catalog
-from querypilot.catalog.models import CatalogSnapshot, ColumnSchema, TableSchema
+from querypilot.knowledge.knowledge_catalog.api import CorrectionError
+from querypilot.knowledge.knowledge_catalog._corrections import build_curated_catalog
+from querypilot.knowledge.knowledge_catalog.api import enrich_catalog
+from querypilot.knowledge.knowledge_catalog.api import CatalogSnapshot, ColumnSchema, TableSchema
 
 
 def _inputs(tmp_path: Path, *, occupied_target: bool = False) -> tuple[Path, Path, Path]:
@@ -88,12 +87,10 @@ def test_curated_cli_is_traceable_and_non_destructive(
     base, source, plan = _inputs(tmp_path)
     inputs_before = {path: path.read_bytes() for path in [base, source / "items.csv", plan]}
     first, repeat = tmp_path / "candidate", tmp_path / "repeat"
-    script = Path(__file__).resolve().parents[1] / "scripts/curate_catalog.py"
-    monkeypatch.setattr(sys, "argv", [
-        str(script), "--base", str(base), "--source-dir", str(source),
-        "--plan", str(plan), "--output-dir", str(first),
-    ])
-    runpy.run_path(str(script), run_name="__main__")
+    from querypilot.entrypoints.cli import main
+    assert main(["--artifacts-dir", str(tmp_path / "artifacts"), "knowledge", "catalog", "curate",
+                 "--base", str(base), "--source-dir", str(source), "--plan", str(plan),
+                 "--output-dir", str(first)]) == 0
     summary = json.loads(capsys.readouterr().out)
     build_curated_catalog(base, source, plan, repeat)
     assert summary == {"status": "approved_corrections_applied", "database_id": "demo",

@@ -5,15 +5,13 @@ import csv
 import hashlib
 import json
 from pathlib import Path
-import runpy
 import sqlite3
-import sys
 
 import pytest
 
-from querypilot.catalog.descriptions import DescriptionError, enrich_catalog
-from querypilot.catalog.models import CatalogSnapshot
-from querypilot.catalog.sqlite import extract_catalog
+from querypilot.knowledge.knowledge_catalog.api import DescriptionError, enrich_catalog
+from querypilot.knowledge.knowledge_catalog.api import CatalogSnapshot
+from querypilot.knowledge.knowledge_catalog.api import extract_catalog
 
 
 HEADERS = [
@@ -185,18 +183,15 @@ def test_cli_and_strict_decoding(description_inputs, tmp_path: Path, monkeypatch
     catalog_path = tmp_path / "catalog.json"
     catalog_path.write_text(catalog.model_dump_json(), encoding="utf-8")
     output_dir = tmp_path / "result"
-    script = Path(__file__).resolve().parents[1] / "scripts" / "enrich_catalog.py"
-    monkeypatch.setattr(sys, "argv", [
-        str(script), "--catalog", str(catalog_path),
-        "--description-dir", str(root), "--output-dir", str(output_dir),
-    ])
-    runpy.run_path(str(script), run_name="__main__")
+    from querypilot.entrypoints.cli import main
+    args = ["--artifacts-dir", str(tmp_path / "artifacts"), "knowledge", "catalog", "enrich",
+            "--catalog", str(catalog_path), "--description-dir", str(root), "--output-dir", str(output_dir)]
+    assert main(args) == 0
     output = output_dir / "enriched_catalog.json"
     before = output.read_bytes()
     assert len(json.loads(before)["descriptions"]) == 3
     assert json.loads((output_dir / "import_warnings.json").read_text(encoding="utf-8"))["warnings"] == []
-    with pytest.raises(FileExistsError):
-        runpy.run_path(str(script), run_name="__main__")
+    assert main(args) == 1
     assert output.read_bytes() == before
     source_path.write_bytes(b"\xff\xfe invalid UTF-8")
     with pytest.raises(DescriptionError, match="编码"):

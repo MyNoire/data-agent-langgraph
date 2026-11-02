@@ -31,7 +31,7 @@ def test_bird_import_script_with_tiny_local_fixture(tmp_path):
     env = os.environ.copy()
     env["QUERYPILOT_DATA_DIR"] = str(tmp_path)
     completed = subprocess.run(
-        [sys.executable, str(project / "scripts" / "import_bird.py"), "--root", str(root), "--limit", "1", "--output", str(output)],
+        [sys.executable, "-m", "querypilot", "--artifacts-dir", str(tmp_path / "artifacts"), "data", "bird", "import", "--root", str(root), "--limit", "1", "--output", str(output)],
         cwd=project, env=env, capture_output=True, text=True, check=True,
     )
     assert "imported 1 cases" in completed.stdout
@@ -60,7 +60,7 @@ def test_fixed_manifest_prepares_questions_and_rejects_source_changes(tmp_path):
     project = Path(__file__).resolve().parents[1]
     env = os.environ.copy()
     env["QUERYPILOT_DATA_DIR"] = str(tmp_path)
-    command = [sys.executable, str(project / "scripts" / "import_bird.py"), "--root", str(root),
+    command = [sys.executable, "-m", "querypilot", "--artifacts-dir", str(tmp_path / "artifacts"), "data", "bird", "import", "--root", str(root),
                "--manifest", str(manifest), "--questions-only", "--output", str(output)]
     completed = subprocess.run(command, cwd=project, env=env, capture_output=True, text=True, check=True)
     assert "prepared 2 cases" in completed.stdout
@@ -74,7 +74,7 @@ def test_fixed_manifest_prepares_questions_and_rejects_source_changes(tmp_path):
     full_command = [arg for arg in command if arg != "--questions-only"]
     bad_database = subprocess.run(full_command, cwd=project, env=env, capture_output=True, text=True)
     assert bad_database.returncode != 0
-    assert "database checksum mismatch" in bad_database.stderr
+    assert "database_checksum_mismatch" in bad_database.stderr
     assert not (tmp_path / "registry.json").exists()
 
     manifest_data["database_sha256"]["tiny"] = hashlib.sha256((root / "tiny.sqlite").read_bytes()).hexdigest()
@@ -85,4 +85,4 @@ def test_fixed_manifest_prepares_questions_and_rejects_source_changes(tmp_path):
     source.write_text(source.read_text(encoding="utf-8") + "\n", encoding="utf-8")
     rejected = subprocess.run(command, cwd=project, env=env, capture_output=True, text=True)
     assert rejected.returncode != 0
-    assert "checksum mismatch" in rejected.stderr
+    assert "source_checksum_mismatch" in rejected.stderr

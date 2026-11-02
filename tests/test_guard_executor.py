@@ -4,8 +4,8 @@ import sqlite3
 
 import pytest
 
-from querypilot.database.executor import QueryLimitError, execute_readonly
-from querypilot.sql.guard import SqlRejected, guard_sql
+from querypilot.databases.api import QueryLimitError, execute_readonly
+from querypilot.databases.api import SqlRejected, guard_sql
 
 
 @pytest.fixture

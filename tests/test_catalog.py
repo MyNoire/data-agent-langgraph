@@ -3,16 +3,14 @@
 from contextlib import closing
 import hashlib
 from pathlib import Path
-import runpy
 import sqlite3
-import sys
 
 import pytest
 
-from querypilot.catalog.models import CatalogSnapshot
-from querypilot.catalog.sqlite import CatalogError, extract_catalog
-from querypilot.config import Settings
-from querypilot.database.registry import DatabaseRegistry
+from querypilot.knowledge.knowledge_catalog.api import CatalogSnapshot
+from querypilot.knowledge.knowledge_catalog.api import CatalogError, extract_catalog
+from querypilot.runtime.api import Settings
+from querypilot.databases.api import DatabaseRegistry
 
 
 @pytest.fixture
@@ -107,15 +105,16 @@ def test_cli_exports_and_refuses_overwrite(
     """
     DatabaseRegistry(tmp_path).register("fixture", catalog_database)
     settings = Settings(_env_file=None, data_dir=tmp_path)
-    monkeypatch.setattr("querypilot.config.get_settings", lambda: settings)
-    script = Path(__file__).resolve().parents[1] / "scripts" / "export_catalog.py"
+    monkeypatch.setattr("querypilot.runtime.api.get_settings", lambda: settings)
+    from querypilot.entrypoints.cli import main
+    monkeypatch.setattr("querypilot.entrypoints.cli.get_settings", lambda: settings)
     outputs = [tmp_path / "first.json", tmp_path / "second.json"]
     for output in outputs:
-        monkeypatch.setattr(sys, "argv", [str(script), "--database-id", "fixture", "--output", str(output)])
-        runpy.run_path(str(script), run_name="__main__")
+        assert main(["--artifacts-dir", str(tmp_path / "artifacts"), "knowledge", "catalog", "extract",
+                     "--database-id", "fixture", "--output", str(output)]) == 0
     assert outputs[0].read_bytes() == outputs[1].read_bytes()
     assert CatalogSnapshot.model_validate_json(outputs[0].read_text(encoding="utf-8")).database_id == "fixture"
     original = outputs[1].read_bytes()
-    with pytest.raises(FileExistsError):
-        runpy.run_path(str(script), run_name="__main__")
+    assert main(["--artifacts-dir", str(tmp_path / "artifacts"), "knowledge", "catalog", "extract",
+                 "--database-id", "fixture", "--output", str(outputs[1])]) == 1
     assert outputs[1].read_bytes() == original
