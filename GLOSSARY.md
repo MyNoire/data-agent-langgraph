@@ -66,3 +66,16 @@ _避免_：evidence、context（单独使用时）
 **Schema（结构文本）**：
 提供给 SQL 生成的数据库结构文本。
 _避免_：用 schema 指代 Catalog
+
+## 评测
+
+**Relevant Set（相关集合）**：
+一道评测题回答所需的表和列，取自该题金标准 SQL 引用的对象。它是代理标注：等价的 SQL 可能用到别的表。
+_避免_：标签、ground truth（泛指时）
+
+**Table Full Coverage@K（表全覆盖率）**：
+Relevant Set 中的表全部出现在前 K 个 Hit 里的题目占比。表的表 Chunk 或任一列 Chunk 出现即算该表被召回。
+_避免_：Table Recall（指这个意思时）
+
+**Column Recall@K（列召回率）**：
+每道题 Relevant Set 中出现在前 K 个 Hit 里的列所占比例，再对题目取平均。
