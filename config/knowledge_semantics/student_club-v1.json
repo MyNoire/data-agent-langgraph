@@ -1,0 +1,84 @@
+{
+  "format_version": "knowledge-semantics-v1",
+  "database_id": "student_club",
+  "schema_name": "main",
+  "version": "student_club-inferred-v1",
+  "origin": "inferred",
+  "author": "Claude，根据表结构、字段说明和声明外键离线推断，未参考评测题目",
+  "tables": {
+    "member": {
+      "purpose": "记录社团会员的姓名、在社团中的职位、联系方式和 T 恤尺码，是按会员筛选、统计并关联专业、家乡和活动的入口。",
+      "row_grain": "一名社团会员。"
+    },
+    "major": {
+      "purpose": "记录专业及开设该专业的院系和学院，用于按专业、院系或学院分析会员。",
+      "row_grain": "一个专业。"
+    },
+    "zip_code": {
+      "purpose": "记录美国邮政编码对应的城市、县、州及编码类型，用于按地区分析会员的家乡。",
+      "row_grain": "一个邮政编码。"
+    },
+    "event": {
+      "purpose": "记录社团举办或计划举办的活动，包括名称、日期、类型、地点、备注和状态。",
+      "row_grain": "一场活动。"
+    },
+    "attendance": {
+      "purpose": "记录哪位会员参加了哪场活动，用于统计活动的出席人数或会员参加过的活动。",
+      "row_grain": "一名会员出席一场活动。"
+    },
+    "budget": {
+      "purpose": "记录每场活动在各个类别（如广告、餐饮、停车）上的预算金额、已花费金额和剩余金额，用于比较预算与实际支出。",
+      "row_grain": "一场活动在一个类别下的一条预算。"
+    },
+    "expense": {
+      "purpose": "记录会员为某条预算产生的具体支出，包括用途描述、日期、金额以及是否获批。",
+      "row_grain": "一笔支出。"
+    },
+    "income": {
+      "purpose": "记录社团收到的资金，包括到账日期、金额、来源（如会费、学校年度拨款）和备注。",
+      "row_grain": "一笔收入。"
+    }
+  },
+  "relationships": [
+    {
+      "source_table": "attendance", "source_columns": ["link_to_member"],
+      "target_table": "member", "target_columns": ["member_id"],
+      "meaning": "出席记录对应的会员；可查询会员参加过哪些活动，或按会员属性分析出席情况。"
+    },
+    {
+      "source_table": "attendance", "source_columns": ["link_to_event"],
+      "target_table": "event", "target_columns": ["event_id"],
+      "meaning": "出席记录对应的活动；可统计每场活动的出席人数。"
+    },
+    {
+      "source_table": "budget", "source_columns": ["link_to_event"],
+      "target_table": "event", "target_columns": ["event_id"],
+      "meaning": "这条预算所属的活动；可按活动汇总预算、已花费和剩余金额。"
+    },
+    {
+      "source_table": "expense", "source_columns": ["link_to_member"],
+      "target_table": "member", "target_columns": ["member_id"],
+      "meaning": "产生这笔支出的会员；可按会员汇总支出。"
+    },
+    {
+      "source_table": "expense", "source_columns": ["link_to_budget"],
+      "target_table": "budget", "target_columns": ["budget_id"],
+      "meaning": "这笔支出计入的预算条目；可再经预算关联到活动，比较实际支出与预算。"
+    },
+    {
+      "source_table": "income", "source_columns": ["link_to_member"],
+      "target_table": "member", "target_columns": ["member_id"],
+      "meaning": "这笔收入关联的会员；可按会员查看收入记录。"
+    },
+    {
+      "source_table": "member", "source_columns": ["zip"],
+      "target_table": "zip_code", "target_columns": ["zip_code"],
+      "meaning": "会员家乡的邮政编码；可查询会员家乡所在的城市、县和州。"
+    },
+    {
+      "source_table": "member", "source_columns": ["link_to_major"],
+      "target_table": "major", "target_columns": ["major_id"],
+      "meaning": "会员所学的专业；可按专业、院系或学院分析会员。"
+    }
+  ]
+}

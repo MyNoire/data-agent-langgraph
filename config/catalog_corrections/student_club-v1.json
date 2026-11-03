@@ -1,0 +1,48 @@
+{
+  "format_version": "description-quality-plan-v1",
+  "status": "approved",
+  "database_id": "student_club",
+  "base_enriched_sha256": "cd2bb467eaa27ae2264e600dcc0b36958bbb68bd8f04283d04818fdda46d0854",
+  "source_sha256": {
+    "Attendance.csv": "33a5d912e8fea231ecd73d1ee3847433ced7d1768b91866bd1403fb7fd88ea22",
+    "Budget.csv": "4a7b15a4b0ce82541be01e989819693cac37de4cf5ce8047bf62645753d9ff02",
+    "Event.csv": "1bf99aa2ce4ae79886eb0d4204e3edd1f0c8c0e44ed427c166f3a1a1af0aec04",
+    "Expense.csv": "b323e60df3ebfa3ec64686a1d76bece0bb94d81cfe5b642a54b6763b67be302d",
+    "Income.csv": "573755cd0f41a5dce3a053eb877a52f101bf21af745aaf83170093aa5a4d0579",
+    "Major.csv": "baca5c68fa1b1c9a427445bd60a1c8702cbdab9d27d5eb0a4304fb7f2ef32e0d",
+    "Member.csv": "1b9dda90d5fdccc4f70f057bf594a6935975e55a9f81d333714d74d1f4d9674a",
+    "Zip_Code.csv": "1c903324ec3ff9decd6abb10ac96e3746e1c1b776a26d3a8d4bf5244c8620ecb"
+  },
+  "evidence_summary": [
+    "说明来源为本地完整 BIRD mini-dev（minidev_0703）的 student_club/database_description，共 8 个 CSV。",
+    "原始 Budget.csv 不是有效 UTF-8（SHA-256 b9000d8f18b4a1613ea3c1877a41823375c2405647756a694591722ba86e60cd）：event_status 说明里有 3 个 0x95 字节，其余均为 ASCII。按 Windows-1252 解码后重新编码为 UTF-8，0x95 成为项目符号 U+2022，得到 SHA-256 4a7b15a4…ff02 的副本作为本计划的来源；其余 7 个文件与原始字节完全相同。",
+    "Zip_Code.csv 是有效 UTF-8，但 zip_code.type 的取值说明中有 3 个 U+FFFD，位于三条列表项开头，原字符已丢失；按 Budget.csv 同类列表的写法，替换为项目符号 U+2022。",
+    "expense.expense_id 的字段说明写作 unique id of income，疑为来源笔误；修正规则只作用于取值说明，本计划不改动它，原文保留。",
+    "未读取 BIRD 评测题目、evidence 或金标准 SQL 来决定修正规则。"
+  ],
+  "rules": [
+    {
+      "kind": "replace_characters",
+      "rule_id": "student_club-zip_code-type-bullets-v1",
+      "table_name": "zip_code",
+      "column_name": "type",
+      "expected_value_sha256": "d11d2b815e236faa53b857c16db704980031855ed82bfef8359f057c3c0e34ab",
+      "replacements": {
+        "�": "•"
+      },
+      "expected_counts": {
+        "�": 3
+      },
+      "reason": "把已丢失的列表项目符号统一为 U+2022，保留三类邮政编码的说明。"
+    }
+  ],
+  "approval": {
+    "reviewer": "user",
+    "approved_on": "2026-11-03",
+    "decision": "没什么问题，通过",
+    "scope": "listed_corrections_only",
+    "approved_scope_sha256": "4f75e152d2d1a065b1e92e1ebcaa5ddaf92a270a3d8f9be692403f2acb8c9b4a",
+    "reviewed_plan_sha256": "ecb16fd13acc47b002c1ab6b57f03dd09e715df7609496de6af5b144e3cb0cd0",
+    "reviewed_candidate_manifest_sha256": "9c318e630bf45238deaa74dc853e16034f306ffbaeb8aa1f3ee43db5c775132b"
+  }
+}
