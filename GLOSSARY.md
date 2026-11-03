@@ -73,9 +73,19 @@ _避免_：用 schema 指代 Catalog
 一道评测题回答所需的表和列，取自该题金标准 SQL 引用的对象。它是代理标注：等价的 SQL 可能用到别的表。
 _避免_：标签、ground truth（泛指时）
 
-**Table Full Coverage@K（表全覆盖率）**：
-Relevant Set 中的表全部出现在前 K 个 Hit 里的题目占比。表的表 Chunk 或任一列 Chunk 出现即算该表被召回。
-_避免_：Table Recall（指这个意思时）
+**Table Ranking（表排名）**：
+一次检索的 Hit 按 rank 归到所属 Document（关系类 Hit 归到它的源表），去重后得到的有序表列表。
+_避免_：用 Hit 的名次代指表的名次
+
+**Table Complete Recall@K（表完整召回率）**：
+Relevant Set 中的表全部出现在 Table Ranking 前 K 张表里的题目占比；K 以表计。
+_避免_：Table Full Coverage、strict recall（指表时）
+
+**Table Recall@K（表召回率）**：
+每道题 Relevant Set 中出现在 Table Ranking 前 K 张表里的表所占比例，再对题目取平均；K 以表计。
+
+**Tables to Cover（全覆盖所需表数）**：
+沿 Table Ranking 往下取，直到 Relevant Set 中的表全部出现时取到的表数；始终没有全部出现时为空。
 
 **Column Recall@K（列召回率）**：
-每道题 Relevant Set 中出现在前 K 个 Hit 里的列所占比例，再对题目取平均。
+每道题 Relevant Set 中的列有列 Chunk 出现在前 K 个 Hit 里的比例，再对题目取平均；K 以 Hit 计。只用于诊断。
