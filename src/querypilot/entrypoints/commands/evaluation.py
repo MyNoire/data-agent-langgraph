@@ -14,9 +14,10 @@ from querypilot.runtime.api import task_run
 def run(args, settings) -> int:
     """执行 SQL 评测、排他导出或检索题集准备；SQL 评测在实际最外层标明 SQL 类别。
 
-    参数：args 为已解析的 direct/graph/export-public 参数，settings 为运行配置。
-    返回：完整批次（包括合法无预测报告）返回 0；异常由统一 CLI 保持原退出码。
-    副作用：创建一份运行记录、输出摘要与安全位置，内部操作只借用上下文。
+    参数：args 为已解析的 direct/graph/export-public/retrieval-cases 参数，settings 为运行配置。
+    返回：完整批次（包括合法无预测报告）返回 0；检索题集有题无法解析时返回 1；其他异常由统一 CLI 保持原退出码。
+    副作用：direct/graph/export-public 创建一份运行记录并输出摘要与安全位置，内部操作只借用上下文；
+        retrieval-cases 只写题集和 manifest，不建运行记录（manifest 已记下输入 hash 和 Knowledge Scope）。
     """
     if args.action == "retrieval-cases":
         return _retrieval_cases(args)
@@ -54,15 +55,15 @@ def run(args, settings) -> int:
 def _retrieval_cases(args) -> int:
     """生成检索题集，打印各库题数和输出位置；有题无法解析时打印失败题号并返回 1。"""
     try:
-        case_set = prepare_retrieval_cases(args.questions, args.frozen, args.corpus_dir, args.output)
+        prepared = prepare_retrieval_cases(args.questions, args.frozen, args.corpus_dir, args.output)
     except RetrievalCaseError as exc:
         print(json.dumps({"outcome": "failed", "error_type": "retrieval_case_error",
                           "question_ids": exc.question_ids}), file=sys.stderr)
         return 1
     print(json.dumps({
-        "cases": dict(Counter(case.db_id for case in case_set.cases)),
-        "frozen_cases": sum(case.frozen for case in case_set.cases),
-        "output_file": str(args.output),
-        "manifest_file": str(args.output.with_name(f"{args.output.stem}_manifest.json")),
+        "cases": dict(Counter(case.db_id for case in prepared.case_set.cases)),
+        "frozen_cases": sum(case.frozen for case in prepared.case_set.cases),
+        "output_file": str(prepared.case_set_file),
+        "manifest_file": str(prepared.manifest_file),
     }, ensure_ascii=False, indent=2))
     return 0

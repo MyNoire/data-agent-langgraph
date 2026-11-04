@@ -164,3 +164,13 @@ def test_cli_reports_failed_question_ids(tmp_path, r3_corpus_factory, capsys):
     assert json.loads(captured.err) == {"outcome": "failed", "error_type": "retrieval_case_error",
                                         "question_ids": [3]}
     assert "ghost_column" not in captured.out + captured.err
+
+
+def test_relevant_set_uses_corpus_spelling_of_mixed_case_names(tmp_path, r3_corpus_factory):
+    corpus = r3_corpus_factory("demo", mixed_case=True)
+    case_set = _prepare(tmp_path, corpus, [
+        _question(1, "SELECT COUNT(*) FROM events WHERE item_ref = 'a'"),
+        _question(2, "SELECT COUNT(*) FROM EVENTS AS e WHERE e.ITEM_REF = 'a'"),
+    ])
+    for case in case_set["cases"]:
+        assert (case["relevant_tables"], case["relevant_columns"]) == (["Events"], _cols("Events.Item_Ref"))

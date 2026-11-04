@@ -33,26 +33,29 @@ def r2_corpus(tmp_path):
 @pytest.fixture
 def r3_corpus_factory(tmp_path):
     """输入：临时目录；返回：合法多库/多版本构建函数；只写本次测试目录。"""
-    def build(name: str, *, database_id: str = "demo", profile_version: str = "r1-4-v1"):
-        """输入：独立子目录名、库及构建版本；返回：新语料路径；异常：重名/I/O 错误。"""
+    def build(name: str, *, database_id: str = "demo", profile_version: str = "r1-4-v1",
+              mixed_case: bool = False):
+        """输入：独立子目录名、库、构建版本，以及是否把 events/item_ref 写成 Events/Item_Ref；
+        返回：新语料路径；异常：重名/I/O 错误。"""
         root = tmp_path / name
         root.mkdir(exist_ok=False)
-        return _build_test_corpus(root, database_id, profile_version)
+        return _build_test_corpus(root, database_id, profile_version, mixed_case=mixed_case)
     return build
 
 
 def _build_test_corpus(tmp_path: Path, database_id: str = "demo",
-                       profile_version: str = "r1-4-v1") -> Path:
+                       profile_version: str = "r1-4-v1", *, mixed_case: bool = False) -> Path:
     """输入：独立临时根、库与规则版本；返回：真实构建的语料；只写临时文件。"""
     from querypilot.knowledge.knowledge_corpus._corpus import build_knowledge_corpus
-    curated = _curated(tmp_path, database_id=database_id)
+    curated = _curated(tmp_path, database_id=database_id, mixed_case=mixed_case)
+    events, item_ref = ("Events", "Item_Ref") if mixed_case else ("events", "item_ref")
     semantic = tmp_path / "config" / "semantics.json"
     semantic.parent.mkdir()
     _write_json(semantic, {
         "database_id": database_id, "version": "r2-fixture-v1", "author": "原创测试",
         "tables": {"items": {"purpose": "租户内物品。", "row_grain": "一件物品。"},
-                   "events": {"purpose": "物品事件。", "row_grain": "一次事件。"}},
-        "relationships": [{"source_table": "events", "source_columns": ["tenant_ref", "item_ref"],
+                   events: {"purpose": "物品事件。", "row_grain": "一次事件。"}},
+        "relationships": [{"source_table": events, "source_columns": ["tenant_ref", item_ref],
                            "target_table": "items", "target_columns": ["tenant_id", "item_id"],
                            "meaning": "事件关联同租户物品。"}],
     })
@@ -72,13 +75,15 @@ def _write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
-def _curated(tmp_path: Path, mutation: str | None = None, *, database_id: str = "demo") -> Path:
+def _curated(tmp_path: Path, mutation: str | None = None, *, database_id: str = "demo",
+             mixed_case: bool = False) -> Path:
     """使用真实修正流程构造一个原创的已批准输入包。
 
     参数:
         tmp_path: pytest 为当前测试创建的独立目录。
         mutation: 可选原创变化标签，在导入/批准修正前改变来源或结构。
         database_id: 原创业务库标识，默认 demo；在正式构建前进入完整来源链。
+        mixed_case: 为 True 时，Catalog 中的 events 表和 item_ref 列写成 Events 和 Item_Ref。
     返回:
         包含清单、增强目录、来源和报告的整理后目录路径。
     副作用:
@@ -87,14 +92,15 @@ def _curated(tmp_path: Path, mutation: str | None = None, *, database_id: str = 
     source = tmp_path / database_id / "database_description"
     source.mkdir(parents=True)
     values = "+: active\n-: inactive"
+    events, item_ref = ("Events", "Item_Ref") if mixed_case else ("events", "item_ref")
     rows_by_table = {
         "items": [
             ["item_id", "", "item identifier", "text", values],
             ["label", "activation label", "activation status", "text", ""],
             ["tenant_id", "", "tenant identifier", "text", ""],
         ],
-        "events": [
-            ["item_ref", "", "referenced item identifier", "text", ""],
+        events: [
+            [item_ref, "", "referenced item identifier", "text", ""],
             ["tenant_ref", "", "referenced tenant identifier", "text", ""],
         ],
     }
@@ -133,7 +139,7 @@ def _curated(tmp_path: Path, mutation: str | None = None, *, database_id: str = 
             foreign_keys=(
                 [ForeignKeySchema(
                     foreign_key_id=0,
-                    source_columns=["tenant_ref", "item_ref"],
+                    source_columns=["tenant_ref", item_ref],
                     target_table="items",
                     declared_target_columns=["tenant_id", "item_id"],
                     target_columns=["tenant_id", "item_id"],
@@ -141,7 +147,7 @@ def _curated(tmp_path: Path, mutation: str | None = None, *, database_id: str = 
                     on_delete="RESTRICT",
                     match="NONE",
                 )]
-                if table_name == "events" else []
+                if table_name == events else []
             ),
         ))
     if mutation == "type":
