@@ -74,7 +74,7 @@ _避免_：用 schema 指代 Catalog
 _避免_：标签、ground truth（泛指时）
 
 **Table Ranking（表排名）**：
-一次检索的 Hit 按 rank 归到所属 Document（关系类 Hit 归到它的源表），去重后得到的有序表列表。
+一次检索的 Hit 按 rank 归到所属 Document（关系类 Hit 归到它的源表），去重后得到的有序表列表。关系的目标表不计入：取到目标表要靠检索之后的外键扩展，不属于检索本身。
 _避免_：用 Hit 的名次代指表的名次
 
 **Table Complete Recall@K（表完整召回率）**：

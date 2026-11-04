@@ -1,5 +1,7 @@
 """检索评测计分规则：经 evaluate_retrieval 和假检索器，只看报告里逐题和汇总的 scores。"""
 
+import json
+
 from querypilot.evaluation.api import evaluate_retrieval
 from test_retrieval_eval_runner import _case, _cases_file, _hit, _result, _settings
 
@@ -10,6 +12,12 @@ def _scores(tmp_path, hits, *, relevant_tables=("items",), relevant_columns=(("i
     report = evaluate_retrieval(_cases_file(tmp_path, [case]), _settings(tmp_path),
                                 retriever=lambda request: _result(request, hits))
     return report["records"][0]["scores"]
+
+
+def _relationship_hit(rank: int, source_table: str, index: int = 0):
+    """关系类 Hit：三个定位字段为空；chunk_key 是 JSON 数组 [类型, 库, schema, 源表, 序号]，和 Corpus 一致。"""
+    chunk_key = json.dumps(["relationship", "demo", "main", source_table, index])
+    return _hit(rank, "relationship", None, None).model_copy(update={"schema_name": None, "chunk_key": chunk_key})
 
 
 def test_table_ranking_counts_each_table_once_at_its_first_hit(tmp_path):
@@ -33,3 +41,26 @@ def test_relevant_table_never_retrieved_has_no_rank(tmp_path):
 
     # 每张相关表都要报出来；没被检索到的名次为空，这样报告里能直接看到漏了哪张表。
     assert scores["table_ranks"] == {"events": None, "items": 1}
+
+
+def test_relationship_hit_ranks_its_source_table_from_chunk_key(tmp_path):
+    hits = [
+        _relationship_hit(1, "events"),        # 关系 Chunk 没有 table_name，源表 events 从 chunk_key 取，第 1 张
+        _hit(2, "column", "items", "label"),   # items 第 2 张
+    ]
+
+    scores = _scores(tmp_path, hits, relevant_tables=("events", "items"))
+
+    assert scores["table_ranks"] == {"events": 1, "items": 2}
+
+
+def test_relationship_hits_from_the_same_source_table_rank_it_once(tmp_path):
+    hits = [
+        _relationship_hit(1, "events", 0),     # events 的两条外键，events 只占第 1 张
+        _relationship_hit(2, "events", 1),
+        _hit(3, "column", "items", "label"),   # items 第 2 张
+    ]
+
+    scores = _scores(tmp_path, hits, relevant_tables=("events", "items"))
+
+    assert scores["table_ranks"] == {"events": 1, "items": 2}
