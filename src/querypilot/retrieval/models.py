@@ -74,7 +74,10 @@ class RetrievalRequest(RetrievalModel):
 class RetrievalHit(RetrievalModel):
     """一个 Hit：命中的 Chunk 原字段，加上本次的 rank 和 BM25 分数。
 
-    relationship 的三个定位字段为 None；table 的 column_name 为 None。
+    三个定位字段（schema_name、table_name、column_name）随 knowledge_type 而定：
+    - table：table_name 是这张表，column_name 为 None。
+    - column：table_name 是这一列所属的表，column_name 是列名。
+    - relationship：三个字段都为 None（一条关系连着两张表）；源表在 chunk_key 里。
     """
 
     rank: Annotated[int, Field(ge=1)]
@@ -86,6 +89,7 @@ class RetrievalHit(RetrievalModel):
     content: str
     content_hash: Hash
     schema_name: str | None = None
+    # table 和 column 类 Hit 都有值（column 类是所属的表），只有 relationship 类为 None。
     table_name: str | None = None
     column_name: str | None = None
 

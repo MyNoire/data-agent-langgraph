@@ -16,11 +16,13 @@ SCOPE = KnowledgeScope(corpus_id="a" * 64, database_id="demo", schema_version="b
 
 
 def _case(question_id: int, *, question: str = "How many items are active?", frozen: bool = False,
-          db_id: str = "demo") -> RetrievalCase:
+          db_id: str = "demo", relevant_tables: tuple[str, ...] = ("items",),
+          relevant_columns: tuple[tuple[str, str], ...] = (("items", "label"),)) -> RetrievalCase:
     scope = SCOPE.model_copy(update={"database_id": db_id})
     return RetrievalCase(question_id=question_id, db_id=db_id, difficulty="simple", question=question,
-                         frozen=frozen, scope=scope, relevant_tables=["items"],
-                         relevant_columns=[{"table_name": "items", "column_name": "label"}])
+                         frozen=frozen, scope=scope, relevant_tables=list(relevant_tables),
+                         relevant_columns=[{"table_name": table, "column_name": column}
+                                           for table, column in relevant_columns])
 
 
 def _cases_file(tmp_path: Path, cases: list[RetrievalCase]) -> Path:
