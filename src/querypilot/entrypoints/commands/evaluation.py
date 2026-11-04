@@ -6,21 +6,23 @@ from collections import Counter
 from hashlib import sha256
 
 from querypilot.evaluation.api import (
-    RetrievalCaseError, export_public, prepare_retrieval_cases, run_direct, run_graph,
+    RetrievalCaseError, evaluate_retrieval, export_public, prepare_retrieval_cases, run_direct, run_graph,
 )
 from querypilot.runtime.api import task_run
 
 
 def run(args, settings) -> int:
-    """执行 SQL 评测、排他导出或检索题集准备；SQL 评测在实际最外层标明 SQL 类别。
+    """执行 SQL 评测、排他导出、检索评测或检索题集准备；SQL 评测在实际最外层标明 SQL 类别。
 
-    参数：args 为已解析的 direct/graph/export-public/retrieval-cases 参数，settings 为运行配置。
+    参数：args 为已解析的 direct/graph/export-public/retrieval/retrieval-cases 参数，settings 为运行配置。
     返回：完整批次（包括合法无预测报告）返回 0；检索题集有题无法解析时返回 1；其他异常由统一 CLI 保持原退出码。
-    副作用：direct/graph/export-public 创建一份运行记录并输出摘要与安全位置，内部操作只借用上下文；
+    副作用：direct/graph/export-public/retrieval 创建一份运行记录并输出摘要与安全位置，内部操作只借用上下文；
         retrieval-cases 只写题集和 manifest，不建运行记录（manifest 已记下输入 hash 和 Knowledge Scope）。
     """
     if args.action == "retrieval-cases":
         return _retrieval_cases(args)
+    if args.action == "retrieval":
+        return _retrieval(args, settings)
     config = {"mode": "sql"} if args.action == "export-public" else {
         "mode": "sql",
         "provider": getattr(args, "provider", "graph"),
@@ -66,4 +68,19 @@ def _retrieval_cases(args) -> int:
         "output_file": str(prepared.case_set_file),
         "manifest_file": str(prepared.manifest_file),
     }, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _retrieval(args, settings) -> int:
+    """在一份运行记录里跑检索评测，打印结果文件位置和汇总；进度事件同时写到 stderr。"""
+    config = {"mode": "retrieval", "dataset_sha256": sha256(args.cases.read_bytes()).hexdigest()}
+    with task_run("evaluation", settings, command="retrieval", config=config) as context:
+        context.attach_stream(sys.stderr)
+        report = evaluate_retrieval(args.cases, settings, run_context=context)
+        context.complete(report)
+    print(json.dumps({"result_file": str(context.run_dir / "result.json"),
+                      "event_file": str(context.run_dir / "events.jsonl"),
+                      "summary": report["summary"]}, ensure_ascii=False, indent=2))
+    print(json.dumps({"event": "run_saved", "run_id": context.run_id,
+                      "run_dir": str(context.run_dir)}), file=sys.stderr)
     return 0
