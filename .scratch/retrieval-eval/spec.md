@@ -74,7 +74,7 @@ Status: ready-for-agent
 - 题集文件放在本地评测目录（Git 忽略）。另外提交一份 manifest，内容是题号清单、来源文件 sha256、各库 Knowledge Scope 和题集文件 sha256。
 
 **检索评测运行器（Claude 写外层，计分是结对核心，测试接口 1）**
-- 公开入口 `evaluate_retrieval(cases, settings, *, retriever=retrieve_knowledge, run_context=None)`，形状参照 SQL 评测的 `run_direct`。`retriever` 是可以替换的检索函数，签名和 `retrieve_knowledge` 相同。
+- 公开入口 `evaluate_retrieval(cases, settings, *, retriever=None, run_context=None)`，形状参照 SQL 评测的 `run_direct`。`retriever` 是可以替换的检索函数，输入一个 `RetrievalRequest`，返回 `RetrievalResult`；默认用 `.env` 中的知识库只读配置调用 `retrieve_knowledge`。
 - 每题构造一个检索请求：英文原题、题集里的 Knowledge Scope、top_k=20、不限知识类型。
 - 错误处理：`input_error` 记到这道题上，按空的 Hit 列表计分（表级指标为 0，Tables to Cover 为空，有相关列时 Column Recall 为 0）；其他检索错误直接中止整批，并保留原因。
 - **计分规则（结对核心，用户来写）**：
@@ -85,8 +85,9 @@ Status: ready-for-agent
   - **Tables to Cover**：沿 Table Ranking 取到相关表全部出现时的表数；取完都没有全部出现时为空。
   - **Column Recall@20**（以 Hit 计）：相关列中有列 Chunk 出现在前 20 个 Hit 里的比例；没有相关列时为空。
   - 表级和列级指标分开报告，不合成总分。
+- 计分规则的结果放在逐题结果和汇总各自的 `scores` 字段下，不和运行器的字段平铺，避免重名覆盖。`score_case` 只接收 Relevant Set 和 Hit 列表。
 - 逐题结果包括：题号、`db_id`、难度、是否冻结、结果（ok / input_error）、每个相关表在 Table Ranking 中的名次、每个相关列第一次出现的 Hit rank、各表级 K 下的完整召回和召回率、Tables to Cover、Column Recall@20、耗时。**不包含问题原文、SQL 和 Hit 正文。**
-- 汇总分整体和各库：每个表级 K 下的 Table Complete Recall@K 与 Table Recall@K、Tables to Cover 的中位数和平均数（另报为空的题数）、Column Recall@20，还包括题数、input_error 题数、无相关列的题数，以及耗时 P50/P95。库的表数不超过 K 时，该库这一项标为"无区分度"。
+- 汇总分整体和各库：每个表级 K 下的 Table Complete Recall@K 与 Table Recall@K、Tables to Cover 的中位数和平均数（另报为空的题数）、Column Recall@20，还包括题数、input_error 题数、无相关列的题数，以及耗时 P50/P95（只统计有检索结果的题，不含 input_error 题；耗时取检索结果自带的 elapsed_ms）。库的表数不超过 K 时，该库这一项标为"无区分度"。
 - 冻结题和其他题一起计分，汇总里不单独拆出冻结题（见 ADR 0001）。
 - 报告配置包括：题集 sha256、各库 Knowledge Scope、检索方法、检索配置版本、top_k、表级 K 列表、列级 K、Relevant Set 的来源说明（"金标准 SQL 引用的对象，代理标注"）。
 - 运行记录沿用 runtime 的 `task_run`，与 SQL 评测一致。报告本身不含原题和 SQL，因此不需要另外做 public 导出。

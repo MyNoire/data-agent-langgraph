@@ -109,6 +109,7 @@ def test_other_retrieval_errors_abort_the_batch(tmp_path, error):
     runs = list((tmp_path / "artifacts").glob("runs/evaluation/*/*"))
     record = json.loads((runs[0] / "run.json").read_text(encoding="utf-8"))
     assert record["status"] == "failed" and not (runs[0] / "result.json").exists()
+    assert record["error_type"] == getattr(error, "error_type", type(error).__name__)
 
 
 def test_summary_counts_cases_and_latency_overall_and_by_database(tmp_path):
@@ -125,10 +126,13 @@ def test_summary_counts_cases_and_latency_overall_and_by_database(tmp_path):
 
     assert report["records"][2]["elapsed_ms"] is None
     assert report["summary"] == {
-        "overall": {"cases": 4, "input_error_cases": 1, "elapsed_ms_p50": 20.0, "elapsed_ms_p95": 40.0},
+        "overall": {"cases": 4, "input_error_cases": 1, "elapsed_ms_p50": 20.0, "elapsed_ms_p95": 40.0,
+                    "scores": {}},
         "by_database": {
-            "demo": {"cases": 3, "input_error_cases": 1, "elapsed_ms_p50": 15.0, "elapsed_ms_p95": 20.0},
-            "other": {"cases": 1, "input_error_cases": 0, "elapsed_ms_p50": 40.0, "elapsed_ms_p95": 40.0},
+            "demo": {"cases": 3, "input_error_cases": 1, "elapsed_ms_p50": 15.0, "elapsed_ms_p95": 20.0,
+                     "scores": {}},
+            "other": {"cases": 1, "input_error_cases": 0, "elapsed_ms_p50": 40.0, "elapsed_ms_p95": 40.0,
+                      "scores": {}},
         },
     }
 

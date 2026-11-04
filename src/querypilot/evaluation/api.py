@@ -6,7 +6,7 @@ from .sql.api import (
 )
 from .retrieval.api import (
     PreparedCases, RelevantColumn, RetrievalCase, RetrievalCaseError, RetrievalCaseSet, evaluate_retrieval,
-    prepare_retrieval_cases,
+    prepare_retrieval_cases, retrieval_run_config,
 )
 
 from .datasets._errors import DataPreparationError
@@ -20,5 +20,5 @@ __all__ = [
     "run_direct", "run_graph", "read_report", "export_public",
     "CaseRecord", "CaseOutcome", "EvalReport", "EvalSummary", "DataPreparationError",
     "fetch_bird", "import_bird", "select_final100", "freeze_final100", "prepare_final100",
-    "prepare_retrieval_cases", "evaluate_retrieval", "PreparedCases", "RetrievalCaseError", "RetrievalCase", "RetrievalCaseSet", "RelevantColumn",
+    "prepare_retrieval_cases", "evaluate_retrieval", "retrieval_run_config", "PreparedCases", "RetrievalCaseError", "RetrievalCase", "RetrievalCaseSet", "RelevantColumn",
 ]

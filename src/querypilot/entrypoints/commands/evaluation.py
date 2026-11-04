@@ -6,7 +6,8 @@ from collections import Counter
 from hashlib import sha256
 
 from querypilot.evaluation.api import (
-    RetrievalCaseError, evaluate_retrieval, export_public, prepare_retrieval_cases, run_direct, run_graph,
+    RetrievalCaseError, evaluate_retrieval, export_public, prepare_retrieval_cases, retrieval_run_config,
+    run_direct, run_graph,
 )
 from querypilot.runtime.api import task_run
 
@@ -73,8 +74,7 @@ def _retrieval_cases(args) -> int:
 
 def _retrieval(args, settings) -> int:
     """在一份运行记录里跑检索评测，打印结果文件位置和汇总；进度事件同时写到 stderr。"""
-    config = {"mode": "retrieval", "dataset_sha256": sha256(args.cases.read_bytes()).hexdigest()}
-    with task_run("evaluation", settings, command="retrieval", config=config) as context:
+    with task_run("evaluation", settings, command="retrieval", config=retrieval_run_config(args.cases)) as context:
         context.attach_stream(sys.stderr)
         report = evaluate_retrieval(args.cases, settings, run_context=context)
         context.complete(report)

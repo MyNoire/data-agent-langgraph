@@ -6,30 +6,36 @@ from math import ceil
 from pathlib import Path
 from statistics import median
 
+from querypilot.knowledge.api import KnowledgeStorageSettings
 from querypilot.retrieval.api import KnowledgeRetrievalError, RetrievalRequest, RetrievalResult, retrieve_knowledge
 from querypilot.runtime.api import Settings, task_run
 
 from . import _scoring
 from .models import RetrievalCaseSet
 
+# 检索预算：每题检索一次取这么多个 Hit，所有指标都从这份排序算出。
 TOP_K = 20
 RELEVANT_SET_SOURCE = "金标准 SQL 引用的表和列（代理标注）"
 
 Retriever = Callable[[RetrievalRequest], RetrievalResult]
 
 
+def retrieval_run_config(cases_file: Path) -> dict:
+    """检索评测运行记录的安全配置：评测类别和题集 hash。CLI 建外层运行时也用这一份。"""
+    return {"mode": "retrieval", "dataset_sha256": sha256(cases_file.read_bytes()).hexdigest()}
+
+
 def _default_retriever() -> Retriever:
     """用 .env 中的知识库只读配置调用 retrieve_knowledge。"""
-    from querypilot.knowledge.api import KnowledgeStorageSettings
-
     storage = KnowledgeStorageSettings()
     return lambda request: retrieve_knowledge(request, storage)
 
 
 def _summarize(records: list[dict]) -> dict:
-    """一组逐题结果的汇总：题数、input_error 题数、检索耗时 P50/P95，再加计分规则的汇总。
+    """一组逐题结果的汇总：题数、input_error 题数、检索耗时 P50/P95，以及计分规则的汇总 scores。
 
-    P95 用最近秩法（排序后第 ceil(0.95n) 个）；没有耗时可算时为空。
+    耗时只统计有检索结果的题（不含 input_error 题）。P95 用最近秩法（排序后第 ceil(0.95n) 个）；
+    没有耗时可算时为空。
     """
     elapsed = sorted(r["elapsed_ms"] for r in records if r["elapsed_ms"] is not None)
     return {
@@ -37,7 +43,7 @@ def _summarize(records: list[dict]) -> dict:
         "input_error_cases": sum(r["outcome"] == "input_error" for r in records),
         "elapsed_ms_p50": median(elapsed) if elapsed else None,
         "elapsed_ms_p95": elapsed[ceil(0.95 * len(elapsed)) - 1] if elapsed else None,
-        **_scoring.summarize(records),
+        "scores": _scoring.summarize([r["scores"] for r in records]),
     }
 
 
@@ -52,15 +58,16 @@ def evaluate_retrieval(cases_file: Path, settings: Settings, *, retriever: Retri
             调用 retrieve_knowledge。测试可替换成假检索器。
         run_context：外层运行上下文；为空时自建一份 evaluation 运行记录。
     返回：
-        报告字典：config（题集 hash、各库 Knowledge Scope、检索配置、K）、records（逐题结果）
-        和 summary（整体和各库的汇总）。
+        报告字典：config（题集 hash、各库 Knowledge Scope、检索配置、K）、records（逐题结果，
+        计分规则的字段在 scores 下）和 summary（整体和各库的汇总）。
         报告不含问题原文、SQL 和 Hit 正文。
     副作用：
         每题调用一次检索器；写出运行记录和 result.json。
     """
-    case_set = RetrievalCaseSet.model_validate_json(cases_file.read_bytes())
+    raw = cases_file.read_bytes()
+    case_set = RetrievalCaseSet.model_validate_json(raw)
+    dataset_sha256 = sha256(raw).hexdigest()
     retriever = retriever or _default_retriever()
-    dataset_sha256 = sha256(cases_file.read_bytes()).hexdigest()
     owned = run_context is None
     with task_run("evaluation", settings, run_context=run_context, command="retrieval",
                   config={"mode": "retrieval", "dataset_sha256": dataset_sha256}) as context:
@@ -84,7 +91,7 @@ def evaluate_retrieval(cases_file: Path, settings: Settings, *, retriever: Retri
             records.append({
                 "question_id": case.question_id, "db_id": case.db_id, "difficulty": case.difficulty,
                 "frozen": case.frozen, "outcome": outcome, "elapsed_ms": elapsed_ms,
-                **_scoring.score_case(case, hits),
+                "scores": _scoring.score_case(case.relevant_tables, case.relevant_columns, hits),
             })
             context.event("eval_case_finished", question_id=case.question_id, case_index=index,
                           total_cases=len(case_set.cases), database_id=case.db_id, elapsed_ms=elapsed_ms,
