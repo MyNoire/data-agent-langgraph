@@ -1,9 +1,10 @@
-"""评测公开出口：SQL 完整操作与既有数据准备分别由各自实现拥有。"""
+"""评测公开出口：SQL 评测、检索评测与既有数据准备分别由各自实现拥有。"""
 
 from .sql.api import (
     CaseRecord, CaseOutcome, EvalReport, EvalSummary,
     run_direct, run_graph, read_report, export_public,
 )
+from .retrieval.api import RelevantColumn, RetrievalCaseError, RetrievalCase, RetrievalCaseSet, prepare_retrieval_cases
 
 from .datasets._errors import DataPreparationError
 from .datasets._fetch import fetch_bird
@@ -16,4 +17,5 @@ __all__ = [
     "run_direct", "run_graph", "read_report", "export_public",
     "CaseRecord", "CaseOutcome", "EvalReport", "EvalSummary", "DataPreparationError",
     "fetch_bird", "import_bird", "select_final100", "freeze_final100", "prepare_final100",
+    "prepare_retrieval_cases", "RetrievalCaseError", "RetrievalCase", "RetrievalCaseSet", "RelevantColumn",
 ]

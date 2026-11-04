@@ -25,9 +25,9 @@ ALLOWED_DEPENDENCIES = {
     "querying": {"sql_generation", "databases", "runtime"},
     "sql_generation": {"runtime"},
     "databases": {"runtime"},
-    "evaluation": {"evaluation.sql"},
+    "evaluation": {"evaluation.sql", "evaluation.retrieval"},
     "evaluation.sql": {"querying", "sql_generation", "databases", "runtime"},
-    "evaluation.retrieval": {"runtime"},
+    "evaluation.retrieval": {"retrieval", "knowledge", "runtime"},
     "evaluation.datasets": {"databases", "runtime"},
     "knowledge": {*(f"knowledge.{part}" for part in KNOWLEDGE_PARTS), "runtime"},
     "knowledge.knowledge_catalog": {"runtime"},
@@ -302,6 +302,7 @@ def _evaluation_fixture_files() -> dict[str, str]:
         "src/querypilot/evaluation/__init__.py": "",
         "src/querypilot/evaluation/api.py": (
             "from .sql.api import run_direct, EvalReport\n"
+            "from .retrieval.api import prepare_retrieval_cases\n"
             "from .datasets._errors import DataPreparationError\n"
             "from .datasets._fetch import fetch_bird\n"
             "from .datasets._import import import_bird\n"
@@ -309,7 +310,8 @@ def _evaluation_fixture_files() -> dict[str, str]:
             "from .datasets._freeze import freeze_final100\n"
             "from .datasets._prepare import prepare_final100\n"
             "__all__ = ['run_direct', 'EvalReport', 'DataPreparationError', 'fetch_bird', "
-            "'import_bird', 'select_final100', 'freeze_final100', 'prepare_final100']\n"
+            "'import_bird', 'select_final100', 'freeze_final100', 'prepare_final100', "
+            "'prepare_retrieval_cases']\n"
         ),
         "src/querypilot/evaluation/sql/__init__.py": "",
         "src/querypilot/evaluation/sql/api.py": (
@@ -325,7 +327,17 @@ def _evaluation_fixture_files() -> dict[str, str]:
             "from ._compare import normalized_rows\ndef run_direct(): pass\n"
         ),
         "src/querypilot/evaluation/sql/_compare.py": "def normalized_rows(): pass\n",
-        "src/querypilot/evaluation/retrieval/__init__.py": "from querypilot.runtime.api import Settings\n",
+        "src/querypilot/evaluation/retrieval/__init__.py": "",
+        "src/querypilot/evaluation/retrieval/api.py": (
+            "from ._cases import prepare_retrieval_cases\n"
+            "__all__ = ['prepare_retrieval_cases']\n"
+        ),
+        "src/querypilot/evaluation/retrieval/_cases.py": (
+            "from querypilot.knowledge.api import open_read_scope\n"
+            "from querypilot.retrieval.api import RetrievalRequest\n"
+            "from querypilot.runtime.api import Settings\n"
+            "def prepare_retrieval_cases(): pass\n"
+        ),
         "src/querypilot/evaluation/datasets/__init__.py": "",
         "src/querypilot/evaluation/datasets/_errors.py": "class DataPreparationError(Exception): pass\n",
         "src/querypilot/evaluation/datasets/_fetch.py": "from ._errors import DataPreparationError\ndef fetch_bird(): pass\n",
@@ -360,7 +372,7 @@ def test_evaluation_subcapability_ownership(module_name: str, expected: str) -> 
 
 
 def test_evaluation_aggregation_and_retrieval_types_are_legal(tmp_path: Path) -> None:
-    """验证根 SQL 聚合、六项数据导出、子能力内部调用与入口读取已有类型合法。"""
+    """验证根聚合、六项数据导出、检索评测经公开 api 使用检索和知识、入口读取已有类型均合法。"""
     root = _fixture_project(tmp_path, _evaluation_fixture_files())
     assert scan_module_boundaries(root) == []
 
@@ -368,7 +380,7 @@ def test_evaluation_aggregation_and_retrieval_types_are_legal(tmp_path: Path) ->
 @pytest.mark.parametrize(("path", "source", "expected"), [
     ("evaluation/api.py", "from .sql._direct import run_direct", "private-import"),
     ("evaluation/api.py", "from .sql.models import EvalReport", "private-import"),
-    ("evaluation/api.py", "from .retrieval.api import evaluate_retrieval_cases", "dependency-direction"),
+    ("evaluation/api.py", "from .retrieval._cases import prepare_retrieval_cases", "private-import"),
     ("evaluation/api.py", "from .datasets._fetch import hidden", "private-import"),
     ("evaluation/api.py", "from .datasets._fetch import import_bird", "private-import"),
     ("evaluation/api.py", "from .datasets import _fetch", "private-import"),
@@ -388,15 +400,17 @@ def test_evaluation_aggregation_and_retrieval_types_are_legal(tmp_path: Path) ->
     ("entrypoints/commands/evaluation.py", "from querypilot.evaluation.sql.api import run_direct", "dependency-direction"),
     ("entrypoints/commands/retrieval.py", "from querypilot.retrieval.models import RetrievalRequest", "private-import"),
     ("entrypoints/commands/retrieval.py", "from querypilot.retrieval.api import project_query", "non-public-symbol"),
-    ("evaluation/retrieval/_runner.py", "from querypilot.retrieval.api import RetrievalRequest", "dependency-direction"),
-    ("evaluation/retrieval/_runner.py", "from querypilot.knowledge.api import open_read_scope", "dependency-direction"),
+    ("evaluation/retrieval/_runner.py", "from querypilot.retrieval.models import RetrievalRequest", "private-import"),
+    ("evaluation/retrieval/_runner.py", "from querypilot.knowledge.knowledge_corpus.api import load_corpus",
+     "dependency-direction"),
+    ("evaluation/retrieval/_runner.py", "from querypilot.sql_generation.api import generate", "dependency-direction"),
     ("evaluation/sql/_direct.py", "from querypilot.knowledge.api import open_read_scope", "dependency-direction"),
     ("evaluation/datasets/_fetch.py", "from querypilot.sql_generation.api import generate", "dependency-direction"),
 ])
 def test_evaluation_boundaries_reject_shortcuts(
     tmp_path: Path, path: str, source: str, expected: str
 ) -> None:
-    """验证评测越界、例外泛化和 A 阶段尚未开放的检索依赖均被拒绝。"""
+    """验证评测越界、例外泛化，以及检索评测绕过公开 api 或依赖 SQL 生成均被拒绝。"""
     files = _evaluation_fixture_files()
     files[f"src/querypilot/{path}"] = source + "\n"
     root = _fixture_project(tmp_path, files)

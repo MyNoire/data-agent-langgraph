@@ -2,19 +2,24 @@
 
 import json
 import sys
+from collections import Counter
 from hashlib import sha256
 
-from querypilot.evaluation.api import export_public, run_direct, run_graph
+from querypilot.evaluation.api import (
+    RetrievalCaseError, export_public, prepare_retrieval_cases, run_direct, run_graph,
+)
 from querypilot.runtime.api import task_run
 
 
 def run(args, settings) -> int:
-    """执行 SQL 评测或排他导出，并在实际最外层标明 SQL 类别。
+    """执行 SQL 评测、排他导出或检索题集准备；SQL 评测在实际最外层标明 SQL 类别。
 
     参数：args 为已解析的 direct/graph/export-public 参数，settings 为运行配置。
     返回：完整批次（包括合法无预测报告）返回 0；异常由统一 CLI 保持原退出码。
     副作用：创建一份运行记录、输出摘要与安全位置，内部操作只借用上下文。
     """
+    if args.action == "retrieval-cases":
+        return _retrieval_cases(args)
     config = {"mode": "sql"} if args.action == "export-public" else {
         "mode": "sql",
         "provider": getattr(args, "provider", "graph"),
@@ -43,4 +48,21 @@ def run(args, settings) -> int:
     print(summary)
     print(json.dumps({"event": "run_saved", "run_id": context.run_id,
                       "run_dir": str(context.run_dir)}), file=sys.stderr)
+    return 0
+
+
+def _retrieval_cases(args) -> int:
+    """生成检索题集，打印各库题数和输出位置；有题无法解析时打印失败题号并返回 1。"""
+    try:
+        case_set = prepare_retrieval_cases(args.questions, args.frozen, args.corpus_dir, args.output)
+    except RetrievalCaseError as exc:
+        print(json.dumps({"outcome": "failed", "error_type": "retrieval_case_error",
+                          "question_ids": exc.question_ids}), file=sys.stderr)
+        return 1
+    print(json.dumps({
+        "cases": dict(Counter(case.db_id for case in case_set.cases)),
+        "frozen_cases": sum(case.frozen for case in case_set.cases),
+        "output_file": str(args.output),
+        "manifest_file": str(args.output.with_name(f"{args.output.stem}_manifest.json")),
+    }, ensure_ascii=False, indent=2))
     return 0

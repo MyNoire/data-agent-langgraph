@@ -8,6 +8,8 @@ __pycache__/
 data/
 evals/bird_smoke.json
 evals/bird_final100.json
+evals/retrieval/*.json
+!evals/retrieval/*_manifest.json
 results/*.json
 results/*.jsonl
 results/*.tmp
