@@ -23,10 +23,11 @@ def score_case(relevant_tables: list[str], relevant_columns: list[RelevantColumn
     for hit in hits:
         if hit.table_name not in hit_tables:
             hit_tables.append(hit.table_name)
+    table_ranks = {}
+    for table_name in relevant_tables:
+        table_ranks[table_name] = hit_tables.index(table_name) + 1 if table_name in hit_tables else None
     return {
-        "table_ranks": {
-            table_name: table_rank for table_rank, table_name in enumerate(hit_tables, start=1) if table_name in relevant_tables
-        }
+        "table_ranks": table_ranks
     }
 
 

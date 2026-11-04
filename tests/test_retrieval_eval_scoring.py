@@ -24,3 +24,12 @@ def test_table_ranking_counts_each_table_once_at_its_first_hit(tmp_path):
 
     # 只报相关表的名次；users 不是相关表，不出现在这里，但它把 events 挤到了第 3。
     assert scores["table_ranks"] == {"events": 3, "items": 1}
+
+
+def test_relevant_table_never_retrieved_has_no_rank(tmp_path):
+    hits = [_hit(1, "column", "items", "label")]
+
+    scores = _scores(tmp_path, hits, relevant_tables=("events", "items"))
+
+    # 每张相关表都要报出来；没被检索到的名次为空，这样报告里能直接看到漏了哪张表。
+    assert scores["table_ranks"] == {"events": None, "items": 1}
