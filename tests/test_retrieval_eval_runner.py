@@ -127,16 +127,16 @@ def test_summary_counts_cases_and_latency_overall_and_by_database(tmp_path):
     report = evaluate_retrieval(_cases_file(tmp_path, cases), _settings(tmp_path), retriever=retriever)
 
     assert report["records"][2]["elapsed_ms"] is None
-    assert report["summary"] == {
-        "overall": {"cases": 4, "input_error_cases": 1, "elapsed_ms_p50": 20.0, "elapsed_ms_p95": 40.0,
-                    "scores": {}},
-        "by_database": {
-            "demo": {"cases": 3, "input_error_cases": 1, "elapsed_ms_p50": 15.0, "elapsed_ms_p95": 20.0,
-                     "scores": {}},
-            "other": {"cases": 1, "input_error_cases": 0, "elapsed_ms_p50": 40.0, "elapsed_ms_p95": 40.0,
-                      "scores": {}},
-        },
+    # 计分规则的汇总在 scores 下，由计分测试覆盖；这里只看运行器自己的字段和分组。
+    runner_fields = {group: {key: value for key, value in summary.items() if key != "scores"}
+                     for group, summary in [("overall", report["summary"]["overall"]),
+                                            *report["summary"]["by_database"].items()]}
+    assert runner_fields == {
+        "overall": {"cases": 4, "input_error_cases": 1, "elapsed_ms_p50": 20.0, "elapsed_ms_p95": 40.0},
+        "demo": {"cases": 3, "input_error_cases": 1, "elapsed_ms_p50": 15.0, "elapsed_ms_p95": 20.0},
+        "other": {"cases": 1, "input_error_cases": 0, "elapsed_ms_p50": 40.0, "elapsed_ms_p95": 40.0},
     }
+    assert list(report["summary"]["by_database"]) == ["demo", "other"]
 
 
 def test_cli_runs_one_recorded_evaluation_and_prints_locations(tmp_path, monkeypatch, capsys):

@@ -5,6 +5,7 @@ import json
 import pytest
 
 from querypilot.evaluation.api import evaluate_retrieval
+from querypilot.retrieval.api import KnowledgeRetrievalError
 from test_retrieval_eval_runner import _case, _cases_file, _hit, _result, _settings
 
 
@@ -14,6 +15,19 @@ def _scores(tmp_path, hits, *, relevant_tables=("items",), relevant_columns=(("i
     report = evaluate_retrieval(_cases_file(tmp_path, [case]), _settings(tmp_path),
                                 retriever=lambda request: _result(request, hits))
     return report["records"][0]["scores"]
+
+
+def _summary_scores(tmp_path, hits_by_question: dict, **relevant) -> dict:
+    """每道题一份固定的 Hit 列表（值为 None 表示这道题 input_error），返回整体汇总的 scores。"""
+    cases = [_case(number, question=question, **relevant) for number, question in enumerate(hits_by_question, 1)]
+
+    def retriever(request):
+        if hits_by_question[request.query] is None:
+            raise KnowledgeRetrievalError("input_error")
+        return _result(request, hits_by_question[request.query])
+
+    report = evaluate_retrieval(_cases_file(tmp_path, cases), _settings(tmp_path), retriever=retriever)
+    return report["summary"]["overall"]["scores"]
 
 
 def _relationship_hit(rank: int, source_table: str, index: int = 0):
@@ -127,3 +141,18 @@ def test_column_recall_at_10_counts_columns_hit_within_the_first_10_hits(tmp_pat
     scores = _scores(tmp_path, hits, relevant_columns=relevant_columns)
 
     assert scores["column_recall@10"] == expected
+
+
+def test_summary_averages_table_recall_with_input_error_cases_in_the_denominator(tmp_path):
+    hits_by_question = {
+        "q1": [_hit(1, "column", "items", "label"), _hit(3, "column", "events", "id")],   # @5 完整
+        "q2": [_hit(1, "column", "items", "label"), _hit(7, "column", "events", "id")],   # @5 一半，@10 完整
+        "q3": None,                                                                     # input_error：按 0 计
+    }
+
+    scores = _summary_scores(tmp_path, hits_by_question, relevant_tables=("events", "items"))
+
+    assert {key: value for key, value in scores.items() if key.startswith("table_")} == pytest.approx({
+        "table_complete_recall@5": 1 / 3, "table_recall@5": (1.0 + 0.5 + 0.0) / 3,
+        "table_complete_recall@10": 2 / 3, "table_recall@10": (1.0 + 1.0 + 0.0) / 3,
+    })

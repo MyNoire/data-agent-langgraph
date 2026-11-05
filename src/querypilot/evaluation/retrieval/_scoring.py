@@ -65,4 +65,8 @@ def summarize(scores: list[dict]) -> dict:
 
     scores 是这组题各自的 score_case 结果。
     """
-    return {}
+    summary = {}
+    for k in TABLE_KS:
+        for key in (f"table_complete_recall@{k}", f"table_recall@{k}"):
+            summary[key] = sum(score[key] for score in scores) / len(scores)
+    return summary
