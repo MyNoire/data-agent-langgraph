@@ -20,18 +20,18 @@ def _relationship_hit(rank: int, source_table: str, index: int = 0):
     return _hit(rank, "relationship", None, None).model_copy(update={"schema_name": None, "chunk_key": chunk_key})
 
 
-def test_table_ranking_counts_each_table_once_at_its_first_hit(tmp_path):
+def test_relevant_table_rank_is_its_first_hit_rank(tmp_path):
     hits = [
-        _hit(1, "column", "items", "label"),   # 列 Chunk 把 items 带进排名，第 1 张
-        _hit(2, "table", "items", None),       # items 再次出现，不再占名次
-        _hit(3, "column", "users", "name"),    # 不相关的表也占名次，第 2 张
-        _hit(4, "column", "events", "id"),     # events 第 3 张
+        _hit(1, "column", "items", "label"),   # 列 Chunk 也算 items 命中
+        _hit(2, "table", "items", None),       # items 再次出现，名次仍取第 1 个 Hit
+        _hit(3, "column", "users", "name"),    # 不相关的表也占 Hit 名额
+        _hit(4, "column", "events", "id"),
     ]
 
     scores = _scores(tmp_path, hits, relevant_tables=("events", "items"))
 
-    # 只报相关表的名次；users 不是相关表，不出现在这里，但它把 events 挤到了第 3。
-    assert scores["table_ranks"] == {"events": 3, "items": 1}
+    # 名次以 Hit 计，和 top_k 同一单位；users 不是相关表，不报，但它占了第 3 个 Hit。
+    assert scores["table_ranks"] == {"events": 4, "items": 1}
 
 
 def test_relevant_table_never_retrieved_has_no_rank(tmp_path):
@@ -45,8 +45,8 @@ def test_relevant_table_never_retrieved_has_no_rank(tmp_path):
 
 def test_relationship_hit_ranks_its_source_table_from_chunk_key(tmp_path):
     hits = [
-        _relationship_hit(1, "events"),        # 关系 Chunk 没有 table_name，源表 events 从 chunk_key 取，第 1 张
-        _hit(2, "column", "items", "label"),   # items 第 2 张
+        _relationship_hit(1, "events"),        # 关系 Chunk 没有 table_name，源表 events 从 chunk_key 取
+        _hit(2, "column", "items", "label"),
     ]
 
     scores = _scores(tmp_path, hits, relevant_tables=("events", "items"))
@@ -54,13 +54,17 @@ def test_relationship_hit_ranks_its_source_table_from_chunk_key(tmp_path):
     assert scores["table_ranks"] == {"events": 1, "items": 2}
 
 
-def test_relationship_hits_from_the_same_source_table_rank_it_once(tmp_path):
+def test_table_recall_at_k_cuts_at_the_kth_hit(tmp_path):
     hits = [
-        _relationship_hit(1, "events", 0),     # events 的两条外键，events 只占第 1 张
-        _relationship_hit(2, "events", 1),
-        _hit(3, "column", "items", "label"),   # items 第 2 张
+        _hit(1, "column", "items", "label"),
+        *(_hit(rank, "column", "users", f"c{rank}") for rank in range(2, 7)),   # 无关表的 5 个列 Chunk
+        _hit(7, "column", "events", "id"),
     ]
 
     scores = _scores(tmp_path, hits, relevant_tables=("events", "items"))
 
-    assert scores["table_ranks"] == {"events": 1, "items": 2}
+    # 前 5 个 Hit 只有 items：不完整，召回一半；前 10 个 Hit 两张相关表都在。
+    assert {key: value for key, value in scores.items() if "recall@" in key} == {
+        "table_complete_recall@5": False, "table_recall@5": 0.5,
+        "table_complete_recall@10": True, "table_recall@10": 1.0,
+    }

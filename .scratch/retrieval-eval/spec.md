@@ -12,7 +12,7 @@ Status: ready-for-agent
 
 1. 新增一个贴近日常业务的库 **student_club**（学生社团：会员、活动、签到、预算、报销、收入），按 toxicology 的流程构建 Corpus 并导入知识库。
 2. 用 BIRD mini-dev 中 toxicology（40 题）和 student_club（48 题）的全部题目组成**检索题集**。查询用英文原题，不带 evidence。每题的 **Relevant Set** 从金标准 SQL 中解析，冻结题加标记。
-3. 检索评测运行器逐题调用 `retrieve_knowledge`（每题按 `db_id` 给定 Knowledge Scope，top_k=20），把 Hit 归并成 **Table Ranking**，在表级 K=2/3/5 上计算 **Table Complete Recall@K**（主指标）和 **Table Recall@K**，再给出每题的 **Tables to Cover**；列层面只报告诊断用的 **Column Recall@20**（K 以 Hit 计）。最后输出逐题结果和汇总。
+3. 检索评测运行器逐题调用 `retrieve_knowledge`（每题按 `db_id` 给定 Knowledge Scope，top_k=20），记下每张相关表的**首次命中名次**，在 K=5/10 上计算 **Table Complete Recall@K**（主指标）和 **Table Recall@K**，再给出每题的 **Hits to Cover**；列层面只报告诊断用的 **Column Recall@10**。所有 K 都以 Hit 计，和 top_k 同一单位。最后输出逐题结果和汇总。
 4. 把 L01–L10 落成真实 toxicology Corpus 上的集成测试，作为冒烟。它不进评测报告。
 
 ## 用户故事
@@ -33,15 +33,15 @@ Status: ready-for-agent
 14. 作为评测开发者，我想让题集文件留在本地，只把题号清单和来源 hash 组成的 manifest 提交进 Git，这样不会提交 BIRD 原始数据。
 15. 作为评测开发者，我想用一条命令跑完整个检索评测，这样每次改完检索都能马上重测。
 16. 作为评测开发者，我想让每题只检索一次（top_k=20），所有指标都从这一份排序算出，这样各指标之间彼此一致，也更省时间。
-17. 作为评测开发者，我想把 Hit 按 rank 归到所属的表（Document）并去重，得到 Table Ranking，这样评的就是下游真正拿到的 Documents。
+17. 作为评测开发者，我想把每个 Hit 归到所属的表（Document），记下每张相关表第一次出现的 Hit rank，这样能看出前 top_k 个 Hit 里有没有这张表。
 18. 作为评测开发者，我想让关系类 Hit 归到它的源表，这样排进一个有用的关系不会被当成"浪费名额"。
-19. 作为评测开发者，我想让表级 K 以表计，而不是以 Hit 计，这样一张表切成多少个 Chunk 不会影响分数，不同 Build Profile 之间可以公平比较。
-20. 作为评测开发者，我想看到 Table Complete Recall@K（K=2/3/5），这样我知道有多少题的必需表全部拿到了；少一张表，SQL 基本就写不对。
+19. 作为评测开发者，我想让 K 以 Hit 计，和检索参数 top_k 同一单位，这样指标能直接回答 top_k 设多少够用；一张无关表的列 Chunk 挤占前排，也是真实的上下文代价。代价是换 Build Profile（Chunk 切法）时分数也会跟着变。
+20. 作为评测开发者，我想看到 Table Complete Recall@K（K=5/10），这样我知道有多少题的必需表全部拿到了；少一张表，SQL 基本就写不对。
 21. 作为评测开发者，我想同时看到 Table Recall@K，这样能区分"差一张表"和"一张都没拿到"。
-22. 作为评测开发者，我想看到每题的 Tables to Cover，以及它的中位数和平均数，这样在只有 4 到 8 张表的小库上，也能看出检索混进了多少无关的表。
-23. 作为评测开发者，我想看到 Column Recall@20（K 以 Hit 计），只作诊断，不和表级指标合成一个分数，这样能看出排序在列层面哪里不好，又不会让下游用不到的列影响主结论。
+22. 作为评测开发者，我想看到每题的 Hits to Cover，以及它的中位数和平均数，这样能看出每道题至少需要多大的 top_k。
+23. 作为评测开发者，我想看到 Column Recall@10，只作诊断，不和表级指标合成一个分数，这样能看出排序在列层面哪里不好，又不会让下游用不到的列影响主结论。
 24. 作为评测开发者，我想让 Relevant Set 里没有列的题不参与 Column Recall 平均，并在报告里写明这样的题有几道，这样平均值不会被 0/0 扭曲。
-25. 作为评测开发者，我想在逐题结果里看到每个相关表在 Table Ranking 中的名次、每个相关列第一次出现的 Hit rank（没出现就是空），这样不用重跑也能分析失败。
+25. 作为评测开发者，我想在逐题结果里看到每个相关表的首次命中名次、每个相关列第一次出现的 Hit rank（没出现就是空），这样不用重跑也能分析失败。
 26. 作为评测开发者，我想看到按库分开的汇总和整体汇总，这样能比较两个库的差别。
 27. 作为评测开发者，我想看到每题和整体的检索耗时，这样能注意到性能问题。
 28. 作为评测开发者，我想让查询没有有效词（input_error）的题记为未覆盖，计入分母并写明原因，这样不会因为报错少算一道题。
@@ -76,18 +76,18 @@ Status: ready-for-agent
 **检索评测运行器（Claude 写外层，计分是结对核心，测试接口 1）**
 - 公开入口 `evaluate_retrieval(cases, settings, *, retriever=None, run_context=None)`，形状参照 SQL 评测的 `run_direct`。`retriever` 是可以替换的检索函数，输入一个 `RetrievalRequest`，返回 `RetrievalResult`；默认用 `.env` 中的知识库只读配置调用 `retrieve_knowledge`。
 - 每题构造一个检索请求：英文原题、题集里的 Knowledge Scope、top_k=20、不限知识类型。
-- 错误处理：`input_error` 记到这道题上，按空的 Hit 列表计分（表级指标为 0，Tables to Cover 为空，有相关列时 Column Recall 为 0）；其他检索错误直接中止整批，并保留原因。
+- 错误处理：`input_error` 记到这道题上，按空的 Hit 列表计分（表级指标为 0，Hits to Cover 为空，有相关列时 Column Recall 为 0）；其他检索错误直接中止整批，并保留原因。
 - **计分规则（结对核心，用户来写）**：
   - 名称按原样比较：Relevant Set 在题集准备时已映射回 Corpus 写法，和 Hit 的定位字段、chunk_key 拼写一致。
-  - **Table Ranking**：按 Hit 的 rank 顺序，把每个 Hit 归到所属的表，去重，保留第一次出现的顺序。表 Chunk 和列 Chunk 取 `table_name`；关系 Chunk 的定位字段为空，从 `chunk_key` 取源表（`chunk_key` 的格式由测试固定）。
-  - **Table Complete Recall@K**（K=2/3/5，以表计）：单题为"相关表全部在 Table Ranking 前 K 张中"的是/否。
-  - **Table Recall@K**（同一组 K）：单题为前 K 张表中相关表所占比例。
-  - **Tables to Cover**：沿 Table Ranking 取到相关表全部出现时的表数；取完都没有全部出现时为空。
-  - **Column Recall@20**（以 Hit 计）：相关列中有列 Chunk 出现在前 20 个 Hit 里的比例；没有相关列时为空。
+  - **首次命中名次**：把每个 Hit 归到所属的表，记下每张相关表第一次出现的 Hit rank，没出现为空。表 Chunk 和列 Chunk 取 `table_name`；关系 Chunk 的定位字段为空，从 `chunk_key` 取源表（`chunk_key` 的格式由测试固定），目标表不计入。
+  - **Table Complete Recall@K**（K=5/10，以 Hit 计）：单题为"相关表全部在前 K 个 Hit 里命中"的是/否。
+  - **Table Recall@K**（同一组 K）：单题为前 K 个 Hit 里命中的相关表所占比例。
+  - **Hits to Cover**：各相关表首次命中名次的最大值，即这道题至少需要的 top_k；返回的 Hit 里没有全部命中时为空。
+  - **Column Recall@10**：相关列中有列 Chunk 出现在前 10 个 Hit 里的比例；没有相关列时为空。
   - 表级和列级指标分开报告，不合成总分。
 - 计分规则的结果放在逐题结果和汇总各自的 `scores` 字段下，不和运行器的字段平铺，避免重名覆盖。`score_case` 只接收 Relevant Set 和 Hit 列表。
-- 逐题结果包括：题号、`db_id`、难度、是否冻结、结果（ok / input_error）、每个相关表在 Table Ranking 中的名次、每个相关列第一次出现的 Hit rank、各表级 K 下的完整召回和召回率、Tables to Cover、Column Recall@20、耗时。**不包含问题原文、SQL 和 Hit 正文。**
-- 汇总分整体和各库：每个表级 K 下的 Table Complete Recall@K 与 Table Recall@K、Tables to Cover 的中位数和平均数（另报为空的题数）、Column Recall@20，还包括题数、input_error 题数、无相关列的题数，以及耗时 P50/P95（只统计有检索结果的题，不含 input_error 题；耗时取检索结果自带的 elapsed_ms）。库的表数不超过 K 时，该库这一项标为"无区分度"。
+- 逐题结果包括：题号、`db_id`、难度、是否冻结、结果（ok / input_error）、每个相关表的首次命中名次、每个相关列第一次出现的 Hit rank、各 K 下的完整召回和召回率、Hits to Cover、Column Recall@10、耗时。**不包含问题原文、SQL 和 Hit 正文。**
+- 汇总分整体和各库：每个 K 下的 Table Complete Recall@K 与 Table Recall@K、Hits to Cover 的中位数和平均数（另报为空的题数）、Column Recall@10，还包括题数、input_error 题数、无相关列的题数，以及耗时 P50/P95（只统计有检索结果的题，不含 input_error 题；耗时取检索结果自带的 elapsed_ms）。K 都小于两个库各自的 Chunk 数（toxicology 20、student_club 64），不另标"无区分度"。
 - 冻结题和其他题一起计分，汇总里不单独拆出冻结题（见 ADR 0001）。
 - 报告配置包括：题集 sha256、各库 Knowledge Scope、检索方法、检索配置版本、top_k、表级 K 列表、列级 K、Relevant Set 的来源说明（"金标准 SQL 引用的对象，代理标注"）。
 - 运行记录沿用 runtime 的 `task_run`，与 SQL 评测一致。报告本身不含原题和 SQL，因此不需要另外做 public 导出。
@@ -108,11 +108,10 @@ Status: ready-for-agent
 
 - **好测试的标准**：只通过公开入口观察行为。题集准备看输出的题集内容；评测看报告；冒烟看 `retrieve_knowledge` 的结果。不直接测私有函数。内部重构时测试不需要修改。
 - **接口 1 `evaluate_retrieval`（主接口，不连 PG）**：每个测试在临时目录写一份很小的题集，注入一个假检索器，让它按题返回固定的 Hit 列表，然后断言报告。乒乓 TDD 的计分用例都在这里，例如：
-  - 同一张表的多个 Hit 在 Table Ranking 里只算一次，名次取第一次出现；
-  - 只命中某张表的一个列 Chunk，这张表也进入 Table Ranking；
+  - 同一张表的多个 Hit 取第一次出现的 Hit rank；列 Chunk 也算它所属的表命中；
   - 关系类 Hit 按 `chunk_key` 归到源表；
-  - 相关表排在 Table Ranking 第 3 张时，K=2 未完整召回、K=3 完整召回；
-  - Tables to Cover 的正常值，以及取完仍未全覆盖时为空；
+  - 相关表首次命中在第 7 个 Hit 时，K=5 未完整召回、K=10 完整召回；
+  - Hits to Cover 的正常值，以及没有全部命中时为空；
   - 没有相关列的题不参与列召回平均；
   - `input_error` 计入分母，算作未覆盖；
   - 基础设施错误中止整批；
@@ -142,8 +141,8 @@ Status: ready-for-agent
 ## 补充说明
 
 - 题数：toxicology 40 题（其中冻结 8 题），student_club 48 题（其中冻结 8 题；另有 4 题属于 12 题开发集）。分析失败时只看非冻结的 72 题。
-- 指标设计参考了表检索和 schema linking 的论文：JAR 和多表迭代检索用 Recall@K 与 Complete Recall@K，K 以表计；RSL-SQL 把列召回分为 Strict 和 Non-Strict；CRUSH4SQL 在固定预算下算召回。它们的相关集合都取自金标准 SQL，表和列都分开报告。
-- 每题通常需要 2 张表（toxicology 40 题中有 24 题，student_club 48 题中有 29 题），所以表级 K=2 是"刚好够数"，最严格。toxicology 只有 4 张表，K=5 无区分度。
+- 指标设计参考了表检索和 schema linking 的论文：JAR 和多表迭代检索用 Recall@K 与 Complete Recall@K，K 以表计；RSL-SQL 把列召回分为 Strict 和 Non-Strict；CRUSH4SQL 在固定预算下算召回。它们的相关集合都取自金标准 SQL，表和列都分开报告。这些论文的 K 以表计，前提是命中后把整张表交给下游；本项目目前直接把前 top_k 个 Hit 交给下游，所以 K 以 Hit 计。以后做了按表取 Document 的上下文组装，再加回以表计的 K。
+- 每题通常需要 2 张表（toxicology 40 题中有 24 题，student_club 48 题中有 29 题）。toxicology 只有 20 个 Chunk，K=20 会整库返回，所以 K 最大取 10。
 - 只给定一个库时，表级检索偏容易；论文常把多个库的 schema 合在一起来加大难度。以后做选库或多库评测时，可以沿用同一组指标。
 - 可以预见英文问题和中文表用途之间会有词汇对不上的问题。这本身就是这次要量化的局限，不要为了提高分数提前修补。
 - 结对核心那张工单（计分规则）标为 `ready-for-human`。

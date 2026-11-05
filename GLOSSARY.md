@@ -73,19 +73,22 @@ _避免_：用 schema 指代 Catalog
 一道评测题回答所需的表和列，取自该题金标准 SQL 引用的对象。它是代理标注：等价的 SQL 可能用到别的表。
 _避免_：标签、ground truth（泛指时）
 
-**Table Ranking（表排名）**：
-一次检索的 Hit 按 rank 归到所属 Document（关系类 Hit 归到它的源表），去重后得到的有序表列表。关系的目标表不计入：取到目标表要靠检索之后的外键扩展，不属于检索本身。
-_避免_：用 Hit 的名次代指表的名次
+**首次命中名次（First-Hit Rank）**：
+一张表第一次出现的 Hit rank。每个 Hit 归到所属 Document 的表（关系类 Hit 归到它的源表）；关系的目标表不计入：取到目标表要靠检索之后的外键扩展，不属于检索本身。
+_避免_：Table Ranking、去重后的表名次
+
+评测里的 K 都以 Hit 计，和检索参数 top_k 是同一个单位：下游拿到的就是前 top_k 个 Hit。
 
 **Table Complete Recall@K（表完整召回率）**：
-Relevant Set 中的表全部出现在 Table Ranking 前 K 张表里的题目占比；K 以表计。
+Relevant Set 中的表都在前 K 个 Hit 里命中的题目占比。
 _避免_：Table Full Coverage、strict recall（指表时）
 
 **Table Recall@K（表召回率）**：
-每道题 Relevant Set 中出现在 Table Ranking 前 K 张表里的表所占比例，再对题目取平均；K 以表计。
+每道题 Relevant Set 中在前 K 个 Hit 里命中的表所占比例，再对题目取平均。
 
-**Tables to Cover（全覆盖所需表数）**：
-沿 Table Ranking 往下取，直到 Relevant Set 中的表全部出现时取到的表数；始终没有全部出现时为空。
+**Hits to Cover（全覆盖所需 Hit 数）**：
+各相关表首次命中名次中的最大值，也就是这道题至少需要的 top_k；检索返回的 Hit 里始终没有全部命中时为空。
+_避免_：Tables to Cover
 
 **Column Recall@K（列召回率）**：
-每道题 Relevant Set 中的列有列 Chunk 出现在前 K 个 Hit 里的比例，再对题目取平均；K 以 Hit 计。只用于诊断。
+每道题 Relevant Set 中的列有列 Chunk 出现在前 K 个 Hit 里的比例，再对题目取平均。只用于诊断。

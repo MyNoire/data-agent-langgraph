@@ -72,8 +72,8 @@ def test_each_case_is_retrieved_once_and_recorded_without_question_text(tmp_path
         "scopes": {"demo": SCOPE.model_dump(mode="json")},
         "retrieval": [{"method": "lexical", "retrieval_config_version": "r3-bm25-v1"}],
         "top_k": 20,
-        "table_ks": [2, 3, 5],
-        "column_k": 20,
+        "table_ks": [5, 10],
+        "column_k": 10,
         "relevant_set_source": "金标准 SQL 引用的表和列（代理标注）",
     }
 
