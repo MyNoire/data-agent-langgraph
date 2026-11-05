@@ -78,7 +78,7 @@ Status: ready-for-agent
 - 每题构造一个检索请求：英文原题、题集里的 Knowledge Scope、top_k=20、不限知识类型。
 - 错误处理：`input_error` 记到这道题上，按空的 Hit 列表计分（表级指标为 0，Tables to Cover 为空，有相关列时 Column Recall 为 0）；其他检索错误直接中止整批，并保留原因。
 - **计分规则（结对核心，用户来写）**：
-  - 名称比较不区分大小写。
+  - 名称按原样比较：Relevant Set 在题集准备时已映射回 Corpus 写法，和 Hit 的定位字段、chunk_key 拼写一致。
   - **Table Ranking**：按 Hit 的 rank 顺序，把每个 Hit 归到所属的表，去重，保留第一次出现的顺序。表 Chunk 和列 Chunk 取 `table_name`；关系 Chunk 的定位字段为空，从 `chunk_key` 取源表（`chunk_key` 的格式由测试固定）。
   - **Table Complete Recall@K**（K=2/3/5，以表计）：单题为"相关表全部在 Table Ranking 前 K 张中"的是/否。
   - **Table Recall@K**（同一组 K）：单题为前 K 张表中相关表所占比例。
@@ -113,7 +113,6 @@ Status: ready-for-agent
   - 关系类 Hit 按 `chunk_key` 归到源表；
   - 相关表排在 Table Ranking 第 3 张时，K=2 未完整召回、K=3 完整召回；
   - Tables to Cover 的正常值，以及取完仍未全覆盖时为空；
-  - 大小写不同的名称照样能匹配；
   - 没有相关列的题不参与列召回平均；
   - `input_error` 计入分母，算作未覆盖；
   - 基础设施错误中止整批；
