@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-human
+**Status:** done
 
 乒乓 TDD，全部通过 `evaluate_retrieval` 加假检索器来测：Claude 写一个失败的测试并说明它验证什么，用户写实现让它通过，Claude 审查。
 
@@ -16,10 +16,11 @@
 - [x] `input_error` 题计入分母
 - [x] 汇总分整体和按库
 - [x] 冻结标记原样出现在逐题结果里，汇总不拆分冻结题
-- [ ] 用户能讲清楚每个指标怎么算、为什么 K 以 Hit 计
+- [x] 用户能讲清楚每个指标怎么算、为什么 K 以 Hit 计
 
 ## Comments
 
 - K 改为以 Hit 计（2026-11-05 用户决定）：系统里能调的只有 top_k，以表计的 K 预设了"按表取整个 Document"的上下文组装，而这一步还没有。K 取 5/10，最大不超过 10；两个库的 Chunk 数（20、64）都大于 K，不再需要"无区分度"标记。已写好的首次命中名次和 Recall@K 由 Claude 按新口径重构。
 
 - 不做名称大小写归一：Hit 的定位字段、关系 Chunk 的 chunk_key 和 Relevant Set（题集准备时已映射回 Corpus 写法）用的是同一份 Corpus 拼写。
+- 完成（2026-11-06）：单题计分（首次命中名次、Table Recall@K、Hits to Cover、列名次、Column Recall@10）由用户结对实现；汇总和最后的整理由 Claude 完成。两轴审查后同步了 docs 里的旧口径。用户口头讲清了各指标的算法、关系目标表不计入的原因、0 与空的区别和 K 以 Hit 计的理由。
