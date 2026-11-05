@@ -44,13 +44,19 @@ def score_case(relevant_tables: list[str], relevant_columns: list[RelevantColumn
             scores["hits_to_cover"] = None
             break
         scores["hits_to_cover"] = max(top_k, scores.get("hits_to_cover", 0))
-    # 列排名
+    # 列ranks构造
     column_first_ranks: dict[tuple[str | None, str | None], int] = {}
     for hit in hits:
         if hit.knowledge_type == "column":
             column_first_ranks.setdefault((hit.table_name, hit.column_name), hit.rank)
     column_ranks = {f"{column.table_name}.{column.column_name}": column_first_ranks.get((column.table_name, column.column_name)) for column in relevant_columns}
     scores["column_ranks"] = column_ranks
+    # 列排名
+    if not relevant_columns:
+        scores[f"column_recall@{COLUMN_K}"] = None
+    else:
+        found = sum(rank is not None and rank <= COLUMN_K for rank in column_ranks.values())
+        scores[f"column_recall@{COLUMN_K}"] = found / len(relevant_columns)
     return scores
 
 

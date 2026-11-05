@@ -66,7 +66,7 @@ def test_table_recall_at_k_cuts_at_the_kth_hit(tmp_path):
     scores = _scores(tmp_path, hits, relevant_tables=("events", "items"))
 
     # 前 5 个 Hit 只有 items：不完整，召回一半；前 10 个 Hit 两张相关表都在。
-    assert {key: value for key, value in scores.items() if "recall@" in key} == {
+    assert {key: value for key, value in scores.items() if key.startswith("table_") and "recall@" in key} == {
         "table_complete_recall@5": False, "table_recall@5": 0.5,
         "table_complete_recall@10": True, "table_recall@10": 1.0,
     }
@@ -109,3 +109,21 @@ def test_same_column_name_in_two_relevant_tables_is_kept_apart(tmp_path):
                      relevant_columns=(("items", "label"), ("events", "id")))
 
     assert scores["column_ranks"] == {"items.label": 2, "events.id": 3}
+
+
+@pytest.mark.parametrize(("relevant_columns", "expected"), [
+    # items.label 在第 3 个 Hit，items.qty 在第 12 个：前 10 个 Hit 里只拿到一半
+    ((("items", "label"), ("items", "qty")), 0.5),
+    # 没有相关列（例如只有 COUNT(*) 的题）：没有可召回的列，为空，不是 0
+    ((), None),
+])
+def test_column_recall_at_10_counts_columns_hit_within_the_first_10_hits(tmp_path, relevant_columns, expected):
+    hits = [
+        _hit(1, "table", "items", None),
+        _hit(3, "column", "items", "label"),
+        _hit(12, "column", "items", "qty"),
+    ]
+
+    scores = _scores(tmp_path, hits, relevant_columns=relevant_columns)
+
+    assert scores["column_recall@10"] == expected
