@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from querypilot.evaluation.api import evaluate_retrieval
 from test_retrieval_eval_runner import _case, _cases_file, _hit, _result, _settings
 
@@ -68,3 +70,15 @@ def test_table_recall_at_k_cuts_at_the_kth_hit(tmp_path):
         "table_complete_recall@5": False, "table_recall@5": 0.5,
         "table_complete_recall@10": True, "table_recall@10": 1.0,
     }
+
+
+@pytest.mark.parametrize(("hits", "expected"), [
+    # 全部命中：取各相关表首次命中名次的最大值，也就是这道题至少要 top_k=7
+    ([_hit(1, "column", "items", "label"), _hit(2, "column", "users", "name"), _hit(7, "column", "events", "id")], 7),
+    # events 始终没出现：多大的 top_k（在检索预算内）都盖不全，为空
+    ([_hit(1, "column", "items", "label"), _hit(2, "column", "users", "name")], None),
+])
+def test_hits_to_cover_is_the_smallest_top_k_that_covers_all_relevant_tables(tmp_path, hits, expected):
+    scores = _scores(tmp_path, hits, relevant_tables=("events", "items"))
+
+    assert scores["hits_to_cover"] == expected

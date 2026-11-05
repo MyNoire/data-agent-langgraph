@@ -37,6 +37,11 @@ def score_case(relevant_tables: list[str], relevant_columns: list[RelevantColumn
         found = sum(rank is not None and rank <= k for rank in table_ranks.values())
         scores[f"table_complete_recall@{k}"] = found == len(relevant_tables)
         scores[f"table_recall@{k}"] = found / len(relevant_tables)
+    for top_k in table_ranks.values():
+        if top_k is None:
+            scores["hits_to_cover"] = None
+            break
+        scores["hits_to_cover"] = max(top_k, scores.get("hits_to_cover", 0))
     return scores
 
 
