@@ -27,37 +27,41 @@ def score_case(relevant_tables: list[str], relevant_columns: list[RelevantColumn
                hits: list[RetrievalHit]) -> dict:
     """单题计分，返回逐题结果中 scores 字段的内容。
 
-    hits 按 rank 排列；input_error 的题传入空列表。
+    hits 按 rank 排列；input_error 的题传入空列表。名次都是 Hit rank，没命中为空。
     """
-    first_ranks: dict[str, int] = {}
+    # 每张相关表的首次命中名次：表、列、关系三类 Hit 都算它所属的表。
+    first_table_ranks: dict[str, int] = {}
     for hit in hits:
-        first_ranks.setdefault(_hit_table(hit), hit.rank)
-    table_ranks = {table: first_ranks.get(table) for table in relevant_tables}
+        first_table_ranks.setdefault(_hit_table(hit), hit.rank)
+    table_ranks = {table: first_table_ranks.get(table) for table in relevant_tables}
+
+    # 拿全相关表至少要多少个 Hit：最晚命中的那张表的名次；有一张没命中就为空。
+    ranks = list(table_ranks.values())
+    hits_to_cover = None if None in ranks else max(ranks)
+
     scores: dict = {"table_ranks": table_ranks}
-    # 表排名
     for k in TABLE_KS:
-        found = sum(rank is not None and rank <= k for rank in table_ranks.values())
-        scores[f"table_complete_recall@{k}"] = found == len(relevant_tables)
+        found = sum(rank is not None and rank <= k for rank in ranks)
+        scores[f"table_complete_recall@{k}"] = hits_to_cover is not None and hits_to_cover <= k
         scores[f"table_recall@{k}"] = found / len(relevant_tables)
-    # 需要多少top_K才能覆盖所需要的表
-    for top_k in table_ranks.values():
-        if top_k is None:
-            scores["hits_to_cover"] = None
-            break
-        scores["hits_to_cover"] = max(top_k, scores.get("hits_to_cover", 0))
-    # 列ranks构造
-    column_first_ranks: dict[tuple[str | None, str | None], int] = {}
+    scores["hits_to_cover"] = hits_to_cover
+
+    # 每个相关列的首次命中名次：只有这一列自己的列 Chunk 算；按（表, 列）区分同名列。
+    first_column_ranks: dict[tuple[str | None, str | None], int] = {}
     for hit in hits:
         if hit.knowledge_type == "column":
-            column_first_ranks.setdefault((hit.table_name, hit.column_name), hit.rank)
-    column_ranks = {f"{column.table_name}.{column.column_name}": column_first_ranks.get((column.table_name, column.column_name)) for column in relevant_columns}
+            first_column_ranks.setdefault((hit.table_name, hit.column_name), hit.rank)
+    column_ranks = {f"{column.table_name}.{column.column_name}":
+                    first_column_ranks.get((column.table_name, column.column_name))
+                    for column in relevant_columns}
     scores["column_ranks"] = column_ranks
-    # 列排名
-    if not relevant_columns:
-        scores[f"column_recall@{COLUMN_K}"] = None
-    else:
+
+    # Column Recall：没有相关列时为空，不参与汇总平均。
+    if relevant_columns:
         found = sum(rank is not None and rank <= COLUMN_K for rank in column_ranks.values())
         scores[f"column_recall@{COLUMN_K}"] = found / len(relevant_columns)
+    else:
+        scores[f"column_recall@{COLUMN_K}"] = None
     return scores
 
 
