@@ -82,3 +82,30 @@ def test_hits_to_cover_is_the_smallest_top_k_that_covers_all_relevant_tables(tmp
     scores = _scores(tmp_path, hits, relevant_tables=("events", "items"))
 
     assert scores["hits_to_cover"] == expected
+
+
+def test_relevant_column_rank_is_the_first_hit_of_its_column_chunk(tmp_path):
+    hits = [
+        _hit(1, "table", "items", None),       # 表 Chunk 不算任何列命中
+        _hit(2, "column", "events", "label"),  # 同名列，但属于别的表
+        _hit(3, "column", "items", "label"),   # items.label 第一次命中
+        _relationship_hit(4, "items"),         # 关系 Chunk 也不算列命中
+    ]
+
+    scores = _scores(tmp_path, hits, relevant_columns=(("items", "label"), ("items", "qty")))
+
+    # 键是"表.列"；没命中的列为空。
+    assert scores["column_ranks"] == {"items.label": 3, "items.qty": None}
+
+
+def test_same_column_name_in_two_relevant_tables_is_kept_apart(tmp_path):
+    hits = [
+        _hit(1, "column", "events", "label"),  # events 也是相关表，但 events.label 不是相关列
+        _hit(2, "column", "items", "label"),
+        _hit(3, "column", "events", "id"),
+    ]
+
+    scores = _scores(tmp_path, hits, relevant_tables=("events", "items"),
+                     relevant_columns=(("items", "label"), ("events", "id")))
+
+    assert scores["column_ranks"] == {"items.label": 2, "events.id": 3}

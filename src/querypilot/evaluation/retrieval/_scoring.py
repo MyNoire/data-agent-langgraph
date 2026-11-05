@@ -33,15 +33,24 @@ def score_case(relevant_tables: list[str], relevant_columns: list[RelevantColumn
         first_ranks.setdefault(_hit_table(hit), hit.rank)
     table_ranks = {table: first_ranks.get(table) for table in relevant_tables}
     scores: dict = {"table_ranks": table_ranks}
+    # 表排名
     for k in TABLE_KS:
         found = sum(rank is not None and rank <= k for rank in table_ranks.values())
         scores[f"table_complete_recall@{k}"] = found == len(relevant_tables)
         scores[f"table_recall@{k}"] = found / len(relevant_tables)
+    # 需要多少top_K才能覆盖所需要的表
     for top_k in table_ranks.values():
         if top_k is None:
             scores["hits_to_cover"] = None
             break
         scores["hits_to_cover"] = max(top_k, scores.get("hits_to_cover", 0))
+    # 列排名
+    column_first_ranks: dict[tuple[str | None, str | None], int] = {}
+    for hit in hits:
+        if hit.knowledge_type == "column":
+            column_first_ranks.setdefault((hit.table_name, hit.column_name), hit.rank)
+    column_ranks = {f"{column.table_name}.{column.column_name}": column_first_ranks.get((column.table_name, column.column_name)) for column in relevant_columns}
+    scores["column_ranks"] = column_ranks
     return scores
 
 
