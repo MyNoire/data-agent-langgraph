@@ -5,6 +5,7 @@ Hits to Cover，以及只作诊断的 Column Recall@K。K 都以 Hit 计，和�
 """
 
 import json
+from statistics import median
 
 from querypilot.retrieval.api import RetrievalHit
 
@@ -60,13 +61,28 @@ def score_case(relevant_tables: list[str], relevant_columns: list[RelevantColumn
     return scores
 
 
+def _mean(values: list) -> float | None:
+    """平均数；没有值可算时为空。"""
+    return sum(values) / len(values) if values else None
+
+
 def summarize(scores: list[dict]) -> dict:
     """一组题（整体或某个库）的指标汇总，返回 summary 中 scores 字段的内容。
 
-    scores 是这组题各自的 score_case 结果。
+    scores 是这组题各自的 score_case 结果。表级召回对所有题取平均（input_error 题按 0 计入分母）；
+    Hits to Cover 只对能全覆盖的题取中位数和平均数，盖不全的题数另报；Column Recall 只对有相关列的题
+    取平均，没有相关列的题数另报。
     """
-    summary = {}
+    summary: dict = {}
     for k in TABLE_KS:
         for key in (f"table_complete_recall@{k}", f"table_recall@{k}"):
-            summary[key] = sum(score[key] for score in scores) / len(scores)
+            summary[key] = _mean([score[key] for score in scores])
+    covered = [score["hits_to_cover"] for score in scores if score["hits_to_cover"] is not None]
+    summary["hits_to_cover_median"] = median(covered) if covered else None
+    summary["hits_to_cover_mean"] = _mean(covered)
+    summary["uncovered_cases"] = len(scores) - len(covered)
+    column_key = f"column_recall@{COLUMN_K}"
+    column_recalls = [score[column_key] for score in scores if score[column_key] is not None]
+    summary[column_key] = _mean(column_recalls)
+    summary["no_relevant_column_cases"] = len(scores) - len(column_recalls)
     return summary

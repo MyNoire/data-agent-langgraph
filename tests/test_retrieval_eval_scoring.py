@@ -17,17 +17,20 @@ def _scores(tmp_path, hits, *, relevant_tables=("items",), relevant_columns=(("i
     return report["records"][0]["scores"]
 
 
-def _summary_scores(tmp_path, hits_by_question: dict, **relevant) -> dict:
-    """每道题一份固定的 Hit 列表（值为 None 表示这道题 input_error），返回整体汇总的 scores。"""
-    cases = [_case(number, question=question, **relevant) for number, question in enumerate(hits_by_question, 1)]
-
+def _summary(tmp_path, cases: list, hits_by_question: dict) -> dict:
+    """按问题原文给每道题一份固定的 Hit 列表（值为 None 表示这道题 input_error），返回报告的 summary。"""
     def retriever(request):
         if hits_by_question[request.query] is None:
             raise KnowledgeRetrievalError("input_error")
         return _result(request, hits_by_question[request.query])
 
-    report = evaluate_retrieval(_cases_file(tmp_path, cases), _settings(tmp_path), retriever=retriever)
-    return report["summary"]["overall"]["scores"]
+    return evaluate_retrieval(_cases_file(tmp_path, cases), _settings(tmp_path), retriever=retriever)["summary"]
+
+
+def _summary_scores(tmp_path, hits_by_question: dict, **relevant) -> dict:
+    """同一个 Relevant Set 的一组题，返回整体汇总的 scores。"""
+    cases = [_case(number, question=question, **relevant) for number, question in enumerate(hits_by_question, 1)]
+    return _summary(tmp_path, cases, hits_by_question)["overall"]["scores"]
 
 
 def _relationship_hit(rank: int, source_table: str, index: int = 0):
@@ -156,3 +159,54 @@ def test_summary_averages_table_recall_with_input_error_cases_in_the_denominator
         "table_complete_recall@5": 1 / 3, "table_recall@5": (1.0 + 0.5 + 0.0) / 3,
         "table_complete_recall@10": 2 / 3, "table_recall@10": (1.0 + 1.0 + 0.0) / 3,
     })
+
+
+def test_summary_reports_hits_to_cover_over_covered_cases_and_counts_the_rest(tmp_path):
+    hits_by_question = {
+        "q1": [_hit(1, "column", "items", "label"), _hit(3, "column", "events", "id")],    # 3
+        "q2": [_hit(1, "column", "items", "label"), _hit(7, "column", "events", "id")],    # 7
+        "q3": [_hit(2, "column", "events", "id"), _hit(12, "column", "items", "label")],   # 12
+        "q4": [_hit(1, "column", "items", "label")],                                     # events 没出现：为空
+        "q5": None,                                                                      # input_error：也为空
+    }
+
+    scores = _summary_scores(tmp_path, hits_by_question, relevant_tables=("events", "items"))
+
+    # 中位数和平均数只算能全覆盖的 3 道题；盖不全的 2 道单独报数，不能当成 0 或 20 混进去。
+    assert {key: value for key, value in scores.items() if "cover" in key} == pytest.approx({
+        "hits_to_cover_median": 7, "hits_to_cover_mean": (3 + 7 + 12) / 3, "uncovered_cases": 2,
+    })
+
+
+
+def test_summary_hits_to_cover_is_empty_when_no_case_is_covered(tmp_path):
+    scores = _summary_scores(tmp_path, {"q1": [_hit(1, "column", "items", "label")], "q2": None},
+                             relevant_tables=("events", "items"))
+
+    # 没有一道题能全覆盖：没有可算的数，中位数和平均数为空，而不是报错或 0。
+    assert {key: value for key, value in scores.items() if "cover" in key} == {
+        "hits_to_cover_median": None, "hits_to_cover_mean": None, "uncovered_cases": 2,
+    }
+
+
+def test_summary_column_recall_skips_cases_without_relevant_columns(tmp_path):
+    label, qty = ("items", "label"), ("items", "qty")
+    cases = [
+        _case(1, question="q1", relevant_columns=(label,)),                      # 1.0
+        _case(2, question="q2", relevant_columns=(label, qty)),                  # 0.5
+        _case(3, question="q3", relevant_columns=()),                            # 没有相关列：不参与平均
+        _case(4, question="q4", relevant_columns=(label,)),                      # input_error：有相关列，按 0 计
+        _case(5, question="q5", relevant_columns=(), db_id="other"),             # other 库只有这一道无列的题
+    ]
+    hits = [_hit(1, "column", "items", "label")]
+
+    summary = _summary(tmp_path, cases, {"q1": hits, "q2": hits, "q3": hits, "q4": None, "q5": hits})
+
+    column = {group: {key: value for key, value in scores.items() if "column" in key}
+              for group, scores in [("overall", summary["overall"]["scores"]),
+                                    *((db, s["scores"]) for db, s in summary["by_database"].items())]}
+    assert column == {
+        "overall": {"column_recall@10": 0.5, "no_relevant_column_cases": 2},   # (1.0 + 0.5 + 0.0) / 3
+        "demo": {"column_recall@10": 0.5, "no_relevant_column_cases": 1},
+        "other": {"column_recall@10": None, "no_relevant_column_cases": 1},
+    }
