@@ -131,9 +131,9 @@ read_report(source) 显式读取旧 JSON 或完整的新评测运行目录，不
 
 BIRD 的 fetch/import/select/freeze/prepare 逻辑归 evaluation/datasets；命令层只适配参数。搬迁没有重新下载、选题或冻结正式数据。
 
-检索评测归 `evaluation/retrieval`，以后通过完整检索操作计算独立的 Recall@K，按需离线运行；当前只有待实现说明，不提供评分或完整操作。SQL 报告不接收检索分数，SQL 的延迟计算也不为此改公式。
+检索评测归 `evaluation/retrieval`，按需离线运行：`prepare_retrieval_cases` 从 BIRD 题目和 Corpus 生成检索题集（`eval retrieval-cases`），`evaluate_retrieval` 逐题调用 `retrieve_knowledge` 并按 GLOSSARY「评测」的口径计分（`eval retrieval`），报告写进运行记录。SQL 报告不接收检索分数，SQL 的延迟计算也不为此改公式。
 
-检索本体的 `retrieval.api` 当前只导出八个已实现的数据与错误类型；KnowledgeScope 仍从 `knowledge.api` 取得。参数和 scope 文件解析位于 `entrypoints/commands/retrieval.py`，安全解析器在 `entrypoints/_arguments.py` 共用。完整 retrieve_knowledge、检索评测和统一检索命令仍待 B 阶段，不公开内部查询或会话辅助函数凑接口。
+检索本体的 `retrieval.api` 导出 `retrieve_knowledge`（限定 Knowledge Scope 的 BM25 检索）和它的请求、结果、Hit、错误与 ScopeFile 类型；KnowledgeScope 仍从 `knowledge.api` 取得。参数和 scope 文件解析位于 `entrypoints/commands/retrieval.py`，安全解析器在 `entrypoints/_arguments.py` 共用。统一检索命令还没有接进 CLI，不公开内部查询或会话辅助函数凑接口。
 
 ## 一次任务的记录归谁管
 

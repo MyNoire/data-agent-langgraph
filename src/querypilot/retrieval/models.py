@@ -89,7 +89,6 @@ class RetrievalHit(RetrievalModel):
     content: str
     content_hash: Hash
     schema_name: str | None = None
-    # table 和 column 类 Hit 都有值（column 类是所属的表），只有 relationship 类为 None。
     table_name: str | None = None
     column_name: str | None = None
 

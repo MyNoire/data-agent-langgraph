@@ -74,7 +74,7 @@ _避免_：用 schema 指代 Catalog
 _避免_：标签、ground truth（泛指时）
 
 **首次命中名次（First-Hit Rank）**：
-一张表第一次出现的 Hit rank。每个 Hit 归到所属 Document 的表（关系类 Hit 归到它的源表）；关系的目标表不计入：取到目标表要靠检索之后的外键扩展，不属于检索本身。
+一张表第一次出现的 Hit rank。每个 Hit 归到所属 Document 的表（关系类 Hit 归到它的源表）；关系的目标表不计入：取到目标表要靠检索之后的外键扩展，不属于检索本身。列的首次命中名次只看这一列自己的列 Chunk。报告字段为 `table_ranks` / `column_ranks`。
 _避免_：Table Ranking、去重后的表名次
 
 评测里的 K 都以 Hit 计，和检索参数 top_k 是同一个单位：下游拿到的就是前 top_k 个 Hit。
@@ -91,4 +91,4 @@ _避免_：Table Full Coverage、strict recall（指表时）
 _避免_：Tables to Cover
 
 **Column Recall@K（列召回率）**：
-每道题 Relevant Set 中的列有列 Chunk 出现在前 K 个 Hit 里的比例，再对题目取平均。只用于诊断。
+每道题 Relevant Set 中的列有列 Chunk 出现在前 K 个 Hit 里的比例，再对题目取平均；没有相关列的题不参与平均，另报题数。只用于诊断。

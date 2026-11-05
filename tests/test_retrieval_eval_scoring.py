@@ -178,7 +178,6 @@ def test_summary_reports_hits_to_cover_over_covered_cases_and_counts_the_rest(tm
     })
 
 
-
 def test_summary_hits_to_cover_is_empty_when_no_case_is_covered(tmp_path):
     scores = _summary_scores(tmp_path, {"q1": [_hit(1, "column", "items", "label")], "q2": None},
                              relevant_tables=("events", "items"))
