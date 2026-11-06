@@ -19,7 +19,7 @@ QueryPilot 是 Python + LangGraph 的多轮自然语言数据助手：在授权�
 3. **实现**：`/implement`，按 `/tdd` 一次一个测试：红（失败）→ 绿（刚好通过）。开始前先和用户确认要在哪些公开接口（seam）上测试。
 4. **审查**：`/code-review`，重构在这一步做。
 
-普通缺陷修复用 `/diagnosing-bugs`，不必走完整流程。已有的 `specs/` 是旧流程的历史记录，只读参考，不再追加。
+普通缺陷修复用 `/diagnosing-bugs`，不必走完整流程。
 
 插件的默认行为在本项目中的调整：
 
@@ -81,7 +81,7 @@ TDD 测的是确定性行为（guard、路由、重试上限、融合排序）�
 
 ## 8. 背景资料
 
-`README.md`、`docs/modules.md`（模块与入口）、`docs/product-evaluation-roadmap.md`、`docs/learning/rag-work-plan.md`、`docs/rag-knowledge-design.md`、`docs/attribution.md`。它们可能落后于代码，冲突时以代码为准并更新文档。
+`README.md`、`docs/README.md`（文档导航）、`docs/roadmap.md`（已完成与下一步）、`docs/architecture/modules.md`（模块与入口）、`docs/knowledge/knowledge-base.md`、`docs/evaluation/`、`docs/attribution.md`。它们可能落后于代码，冲突时以代码为准并更新文档。
 
 ## Agent skills
 

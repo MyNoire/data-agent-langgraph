@@ -21,8 +21,7 @@
 
 ## 自有表达词资源
 
-`zh-courtesy-v1.txt` 来自本项目
-[2026-10-30 用户决定](../../../../specs/003-r3-lexical-retrieval/decisions/2026-10-30-lexical-recall.md)，
+`zh-courtesy-v1.txt` 来自本项目 2026-10-30 的用户决定，
 不是外部大型中文停用词表。文件按该决定的原顺序保存 13 个词，采用 UTF-8
 无 BOM、每行一词、LF 换行，并保留末尾 LF。过滤采用整词精确相等，不能
 从复合词内部删除字符。

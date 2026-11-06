@@ -40,11 +40,8 @@ def test_each_old_tool_has_an_explicit_parser(old, arguments, command):
     assert old.endswith(".py")
 
 
-def test_mappings_exactly_match_contract_and_defaults():
-    """对照契约的18项集合及关键默认值，语料目标与运行根分别保留。"""
-    contract = Path(__file__).resolve().parents[2] / "specs/004-modular-refactor/contracts/cli.md"
-    import re
-    assert set(re.findall(r"\| (\w+\.py) \|", contract.read_text(encoding="utf-8"))) == {row[0] for row in MAPPINGS}
+def test_mappings_keep_key_defaults():
+    """关键默认值：语料目标与运行根分别保留。"""
     parser = create_parser()
     direct = parser.parse_args(["eval", "direct"])
     assert (direct.provider, direct.evidence_mode, direct.cases) == ("model", "none", Path("evals/bird_smoke.json"))

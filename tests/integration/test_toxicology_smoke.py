@@ -1,8 +1,7 @@
 """检索冒烟 L01–L10：只读访问正式知识库里已有的 toxicology 知识，作为检索行为的回归保护。
 
 不导入 Corpus，也不进评测报告。Knowledge Scope 取自本地 toxicology Corpus 的 manifest；
-期望值来自 R3 规格的样例表（specs/003-r3-lexical-retrieval/spec.md）。实际结果和期望不一致时
-先报告，不改期望值。
+期望值是 R3 阶段定下的样例表，写在下面的参数里。实际结果和期望不一致时先报告，不改期望值。
 """
 
 import json

@@ -14,13 +14,13 @@ src/querypilot/
   databases/         数据库登记、结构、安全检查、只读执行
   evaluation/        对外统一出口，内部三项职责分开
     sql/             已有 direct/graph SQL 结果评测与报告
-    retrieval/       检索评测职责，当前仅有待实现说明
+    retrieval/       检索评测：题集准备、逐题检索、计分与报告
     datasets/        既有 BIRD 数据准备工具
   knowledge/
     knowledge_catalog/    提取结构、导入说明、应用批准修正
     knowledge_corpus/     渲染、生成身份、构建和校验 Corpus（知识语料）
     knowledge_store/      PostgreSQL 导入、复验、限定只读会话
-  retrieval/         保留 R3；匹配和排名仍待结对完成
+  retrieval/         限定 Knowledge Scope 的 BM25 检索（retrieve_knowledge）
   runtime/           配置、运行目录、事件、审计、版本信息
 ~~~
 
@@ -104,9 +104,9 @@ except CorpusError:
 
 这些目录必须包含真实批准资料，不能用空目录代替。相同批准输入和语义配置产生同一快照身份，运行 ID 不参与身份。已有目标完整且与候选一致时只读复用，损坏或不同则拒绝。来源变化时构建到新目标，再导入 PG；没有新增后台巡检。VerifiedCorpus 是本次核验后持有的对象，不承诺嵌套数据深不可变，不应修改它。
 
-读会话只暴露 scope/counts/search_bytes 和有界 fetch_one/fetch_rows，返回普通映射，不给连接、游标或 commit。SQL 必须来自受控源码，问题只当绑定参数；查询构造者仍须绑定 scope。它不替代上层授权，也不代表完整检索已实现。
+读会话只暴露 scope/counts/search_bytes 和有界 fetch_one/fetch_rows，返回普通映射，不给连接、游标或 commit。SQL 必须来自受控源码，问题只当绑定参数；查询构造者仍须绑定 scope。它不替代上层授权。
 
-PG 的真实事务和权限必须在专用测试库验证；替身只能证明接线。004 当前实测与限制见[验证指南](../specs/004-modular-refactor/quickstart.md)的实施记录。
+PG 的真实事务和权限必须在专用测试库验证；替身只能证明接线。
 
 ### 怎样判断每项知识操作成功或失败
 
@@ -141,4 +141,4 @@ ask/execute_sql/curate_catalog/build_corpus/manage_store/import_corpus/verify_im
 
 普通提取、渲染、校验和图编译不偷偷创建另一份任务；作为独立命令时由命令层持有上下文。runtime.api.task_run 管理配置、事件和终态；RunArtifactError 单独表达记录失败。比如数据库操作成功而结果文件发布失败，保留“操作成功、产物失败”，不宣称回滚。原业务错误与记录错误同时发生时，业务错误优先。
 
-目录、隐私和字段见[运行记录](observability.md)与[事件接口](observability-interface.md)。18 项命令映射见[命令契约](../specs/004-modular-refactor/contracts/cli.md)。
+目录、隐私、事件字段和接口见[运行记录与事件](observability.md)。全部命令见 `querypilot --help`。

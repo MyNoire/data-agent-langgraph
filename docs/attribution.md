@@ -3,7 +3,7 @@
 ## Development workflow
 
 - Since 2026-11-02 the project uses [mattpocock/skills](https://github.com/mattpocock/skills) (MIT, Copyright (c) 2026 Matt Pocock), installed as the Claude Code plugin `mattpocock-skills@claude-plugins-official` at user scope. No skill files are copied into this repository.
-- From 2026-10-12 to 2026-11-02 the project used [GitHub Spec Kit](https://github.com/github/spec-kit/releases/tag/v1.1.3) v1.1.3 (MIT, Copyright GitHub, Inc.) and local `qp-align`/`qp-review` skills, which contained verbatim copies of Matt Pocock's `grilling`, `code-review` and `to-spec` files and HumanLayer's `show-me` file ([humanlayer/skills](https://github.com/humanlayer/skills), MIT, Copyright (c) 2026 HumanLayer). These files were removed from the working tree on 2026-11-02; they and their license notices remain in Git history at commit `fedc40b`. Specs written in that period stay under `specs/`.
+- From 2026-10-12 to 2026-11-02 the project used [GitHub Spec Kit](https://github.com/github/spec-kit/releases/tag/v1.1.3) v1.1.3 (MIT, Copyright GitHub, Inc.) and local `qp-align`/`qp-review` skills, which contained verbatim copies of Matt Pocock's `grilling`, `code-review` and `to-spec` files and HumanLayer's `show-me` file ([humanlayer/skills](https://github.com/humanlayer/skills), MIT, Copyright (c) 2026 HumanLayer). These copies, the Spec Kit files and the specs written in that period were removed on 2026-11-02 and are not part of this repository's published history.
 
 ## Existing sources and data
 
