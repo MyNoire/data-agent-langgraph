@@ -100,7 +100,7 @@ Status: ready-for-agent
 - 根 `evaluation.api` 重新导出检索评测的公开入口。
 
 **冒烟（Claude 直接做，测试接口 3）**
-- L01–L10 写成集成测试：把本地真实的 toxicology Corpus 导入测试库，通过 `retrieve_knowledge` 检查前 5 名。
+- L01–L10 写成集成测试：只读访问正式知识库里已有的 toxicology 知识（Knowledge Scope 取自本地 Corpus 的 manifest），通过 `retrieve_knowledge` 检查指定类型的前 5 名。
 - 期望值沿用旧规格中的样例表。实现时如果发现 BM25 的真实结果和旧期望不一致，先报告给用户，不改期望。
 - 本地没有 Corpus 文件时跳过并写明原因，但不能当作通过。
 
@@ -118,7 +118,7 @@ Status: ready-for-agent
   - 冻结标记原样出现在逐题结果里；
   - 报告不含问题原文。
 - **接口 2 `prepare_retrieval_cases`（不连 PG）**：使用原创的小型 Catalog、小题目文件和小 Corpus manifest 夹具，覆盖别名、不带表名的列、JOIN、子查询、`COUNT(*)`、大小写、冻结标记、解析失败时整体报错并给出题号、题集里不出现金标准 SQL 和 evidence。
-- **接口 3 `retrieve_knowledge` 冒烟（真实 PG）**：L01–L10，跑在 `querypilot_knowledge_test` 测试库上。
+- **接口 3 `retrieve_knowledge` 冒烟（真实 PG）**：L01–L10，只读访问正式知识库，不导入、不写入。
 - **端到端一条（真实 PG）**：用原创的小夹具 Corpus 加两三道小题，经 `evaluate_retrieval` 和真实检索器跑出一份报告，确认真实接线没问题。
 - **接口 4 CLI**：参照现有 CLI 契约测试，检查参数、输出位置和退出码。
 - **模块边界**：修改现有模块边界测试的允许规则，并加一个反例。
