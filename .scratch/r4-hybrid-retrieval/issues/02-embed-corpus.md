@@ -2,7 +2,7 @@
 
 **What to build:** 开发者用一条命令，为指定 Knowledge Scope 的全部 Chunk 生成向量并写进向量表。所有向量在一个事务里一次写入：要么全部写入，要么一条不写；已有就报告"已存在"，不再调用 API。
 
-**Blocked by:** 01
+**Blocked by:** 01、01b
 
 **Status:** ready-for-agent
 

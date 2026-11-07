@@ -11,7 +11,9 @@
 - [ ] import 角色可以读写这张表，reader 角色只能读
 - [ ] 删除 `knowledge_chunks` 的三个向量列和对应的 CHECK；导入核对去掉 `embedding_absent`，读取和比对这三列的代码一起删掉
 - [ ] `store migrate` / `check` 认识迁移 002；已有的导入、`store verify` 和检索集成测试在测试库上全部通过
-- [ ] 正式知识库执行迁移 002 后，两个正式 Corpus 的 `store verify` 仍然通过
+- [ ] ~~正式知识库执行迁移 002 后，两个正式 Corpus 的 `store verify` 仍然通过~~（移到工单 01b）
 - [ ] 知识库文档的存储一节写上向量表和三个角色的权限
 
 ## Comments
+
+- 代码已提交（ed39e96、a12f219）。审查发现结构 AST 比对过重、阻碍后续迁移，精简与正式库迁移拆到工单 01b。
