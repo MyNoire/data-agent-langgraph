@@ -61,9 +61,10 @@ def test_all_migrations_are_applied_and_reused(pg_database):
     assert pg.check(pg_database).migration_version == "002"
 
 
-def test_database_at_001_upgrades_to_002(pg_database):
-    """输入：降回 001 结构的专用库；输出：bootstrap 不拦截，migrate 补跑 002 后核对通过。"""
-    pg, _, _ = _api()
+def test_database_at_001_upgrades_to_002(pg_database, r2_corpus):
+    """输入：已导入 Corpus、降回 001 结构的专用库；输出：migrate 补跑 002 后核对通过，Corpus 仍能复验。"""
+    pg, api, load = _api(); source = load(r2_corpus)
+    imported = api.import_verified_corpus(source, pg_database)
     with pg.connection(pg_database, "admin") as conn, conn.transaction():
         conn.execute("DROP TABLE querypilot_kb.chunk_embeddings")
         conn.execute("ALTER TABLE querypilot_kb.knowledge_chunks ADD COLUMN embedding public.vector, "
@@ -77,6 +78,29 @@ def test_database_at_001_upgrades_to_002(pg_database):
     assert pg.bootstrap(pg_database).outcome == "reused"
     assert pg.migrate(pg_database).outcome == "applied"
     assert pg.check(pg_database).migration_version == "002"
+    verified = api.verify_corpus_import(source, pg_database)
+    assert verified.projection_digest == imported.projection_digest
+
+
+@pytest.mark.parametrize("statement", [
+    "UPDATE querypilot_kb.schema_migrations SET checksum=repeat('0',64) WHERE version='001'",
+    "INSERT INTO querypilot_kb.schema_migrations(version,checksum) VALUES ('999',repeat('0',64))",
+])
+def test_migration_records_must_match_files(pg_database, statement):
+    """输入：迁移记录被改或多出陌生版本；输出：migrate 与 check 都报 migration_conflict。"""
+    pg, _, _ = _api()
+    with pg.connection(pg_database, "admin") as conn, conn.transaction():
+        conn.execute(statement)
+    try:
+        for command in (pg.migrate, pg.check):
+            with pytest.raises(KnowledgeStorageError) as caught:
+                command(pg_database)
+            assert caught.value.error_type == "migration_conflict"
+    finally:
+        with pg.connection(pg_database, "admin") as conn, conn.transaction():
+            conn.execute("DELETE FROM querypilot_kb.schema_migrations")
+            for record in pg.migration_records():
+                conn.execute("INSERT INTO querypilot_kb.schema_migrations(version,checksum) VALUES (%(version)s,%(checksum)s)", record)
 
 
 def test_migration_reuse_and_meaningful_constraint_drift(pg_database):
