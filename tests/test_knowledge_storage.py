@@ -13,8 +13,7 @@ from test_knowledge_corpus import _inputs
 from querypilot.knowledge.knowledge_corpus.api import load_corpus as load_verified_corpus, CorpusError
 from querypilot.knowledge.knowledge_corpus._corpus import build_knowledge_corpus
 from querypilot.knowledge.knowledge_store._postgres import (
-    TABLES, corpus_record, verify_rows, verification_digests, expected_structure,
-    _constraint_expression,
+    TABLES, corpus_record, verify_rows, verification_digests,
 )
 from querypilot.knowledge.knowledge_store.api import KnowledgeStorageSettings, KnowledgeStorageError
 
@@ -317,8 +316,6 @@ def stored_sample(tmp_path):
                 if field.endswith("_id") and field != "database_id" and field != "corpus_id" and row[field]:
                     row[field] = UUID(row[field])
             row["created_at"] = moment
-            if group == "chunks":
-                row.update(embedding=None, embedding_profile_id=None, embedding_dimensions=None)
             rows[group].append(row)
     return corpus, record, rows, root
 
@@ -347,7 +344,7 @@ def test_digests_preserve_ordered_keys_and_ignore_session_representation(stored_
     assert verify_rows(corpus, record, other) == first
 
 
-@pytest.mark.parametrize("mutation", ["content", "metadata", "pair", "time", "missing", "extra", "embedding", "registry"])
+@pytest.mark.parametrize("mutation", ["content", "metadata", "pair", "time", "missing", "extra", "registry"])
 def test_projection_changes_or_target_conflicts_are_not_hidden(stored_sample, mutation):
     """输入：不同污染类别；输出：指纹分离正确且复验拒绝污染；无数据库副作用。"""
     corpus, record, rows, _ = stored_sample
@@ -363,13 +360,12 @@ def test_projection_changes_or_target_conflicts_are_not_hidden(stored_sample, mu
     elif mutation == "pair": rows["relations"][0]["source_columns"].reverse()
     elif mutation == "missing": rows["chunks"].pop()
     elif mutation == "extra": rows["chunks"].append(deepcopy(rows["chunks"][0]))
-    elif mutation == "embedding": rows["chunks"][0]["embedding"] = "[1,2]"
     elif mutation == "registry": record["manifest"]["counts"]["chunks"] += 1
     if mutation in {"content", "metadata", "pair", "registry"}:
         after = verification_digests(record, rows)
         assert after.projection_digest != before.projection_digest
         assert after.timestamps_digest == before.timestamps_digest
-    with pytest.raises(KnowledgeStorageError, match="不一致|未验收"):
+    with pytest.raises(KnowledgeStorageError, match="不一致"):
         verify_rows(corpus, record, rows)
 
 
@@ -385,17 +381,6 @@ def test_config_is_optional_and_private_and_roles_are_explicit():
     with pytest.raises(KnowledgeStorageError) as caught:
         settings.connection_info("read")
     assert "private-password" not in str(caught.value)
-
-
-def test_structure_checker_compares_expression_semantics():
-    """输入：可信迁移与 PG 常见反解析表达；输出：忽略冗余 cast，但区分逻辑改变。"""
-    expected = expected_structure()
-    assert set(expected) == {"schema_migrations", "knowledge_corpora", *TABLES.values()}
-    assert _constraint_expression("CHECK ((status = 'stored'::text))") == _constraint_expression("CHECK (status = 'stored')")
-    assert _constraint_expression("CHECK (a AND (b OR c))") != _constraint_expression("CHECK ((a AND b) OR c)")
-    assert _constraint_expression("CHECK (public.vector_norm(embedding) > 0::double precision)") == _constraint_expression("CHECK (public.vector_norm(embedding) > 0)")
-    assert _constraint_expression("CHECK (public.vector_norm(embedding) > 1::double precision)") != _constraint_expression("CHECK (public.vector_norm(embedding) > 0)")
-    assert _constraint_expression("CHECK (amount > 0::double precision)") != _constraint_expression("CHECK (amount > 0)")
 
 
 def test_cli_bad_source_and_existing_receipt_never_call_database(tmp_path, monkeypatch, capsys):

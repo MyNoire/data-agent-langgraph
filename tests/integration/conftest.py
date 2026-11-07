@@ -46,7 +46,7 @@ def pg_database(pg_settings):
         with connection(pg_settings, "admin") as conn, conn.transaction():
             if conn.execute("SELECT current_database() AS name").fetchone()["name"] != "querypilot_knowledge_test":
                 pytest.fail("测试连接目标发生变化", pytrace=False)
-            for table in ("knowledge_chunks", "schema_relations", "knowledge_documents", "knowledge_corpora"):
+            for table in ("chunk_embeddings", "knowledge_chunks", "schema_relations", "knowledge_documents", "knowledge_corpora"):
                 conn.execute(f"DELETE FROM {SCHEMA}.{table}")
     clear()
     try:

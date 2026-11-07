@@ -53,6 +53,10 @@ _避免_：单独说 scope
 一次请求被允许访问哪些数据库。与 Knowledge Scope 是不同的概念。
 _避免_：授权范围、scope
 
+**Embedding Profile（嵌入方案）**：
+把 Chunk 和查询变成向量的一组固定选择：用哪个模型、多少维、Chunk 取哪段文本嵌入、查询前加什么指令。按它算出的向量是 Corpus 的派生索引，不属于 Corpus；同一份 Corpus 可以同时有多个 Embedding Profile 的向量。
+_避免_：向量快照、向量库
+
 **Hit（命中）**：
 一次检索匹配到的 Chunk。
 _避免_：result、match

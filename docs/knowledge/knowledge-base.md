@@ -126,9 +126,12 @@ BIRD 的说明文件里有编码错误。比如 toxicology 的 `atom.element` �
 | `knowledge_documents` | 每张表一个 Document |
 | `knowledge_chunks` | 检索单元：正文、类型、表列定位、metadata |
 | `schema_relations` | 结构化的外键边 |
+| `chunk_embeddings` | 每个 (Chunk, Embedding Profile) 一条向量；是从 Corpus 派生的索引，不属于 Corpus（[ADR 0002](../adr/0002-embeddings-outside-corpus.md)） |
 | `schema_migrations` | 迁移版本 |
 
-**三个角色，权限最小化**：admin 只负责建库和迁移；importer 只能 SELECT 和 INSERT，没有 UPDATE 和 DELETE，所以导入只能新增、不能改写已有知识；reader 只能 SELECT。
+**迁移**：结构变化写成按编号执行的迁移文件。`001` 建知识表；`002` 建向量表，并删掉 `knowledge_chunks` 上预留的三个向量列（`embedding`、`embedding_profile_id`、`embedding_dimensions`）和对应的 CHECK。`store migrate` 在一个事务里按顺序补跑缺少的迁移，已执行的迁移版本和摘要必须与文件一致，否则拒绝。`store check` 核对 PostgreSQL 与 pgvector 版本、迁移已执行到最新且摘要一致，以及三个角色的实际权限；不逐列比对表结构，迁移文件不被改动由摘要保证，数据是否完整由 `store verify` 逐字段核对。
+
+**三个角色，权限最小化**：admin 只负责建库和迁移；importer 只能 SELECT 和 INSERT（包括向量表），没有 UPDATE 和 DELETE，所以导入和写向量都只能新增、不能改写已有知识；reader 只能 SELECT。
 
 - **导入**：先重新校验快照，再在一个事务里写入。如果同一个快照已经导入过，就逐字段读回核对，一致就复用（`reused`），不一致就拒绝，绝不覆盖。如果没收到 COMMIT 的确认，结果记为 `unknown`，不会猜成功或失败。
 - **读取**：`open_read_scope` 开一个 `REPEATABLE READ READ ONLY` 事务，先核对 Scope 存在，之后的查询都在同一个一致的快照视图里进行。会话只暴露有上限的读取方法，不给连接和游标。
