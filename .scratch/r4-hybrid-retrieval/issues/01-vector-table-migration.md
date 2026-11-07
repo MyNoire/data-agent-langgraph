@@ -6,7 +6,8 @@
 
 **Status:** ready-for-agent
 
-- [ ] 迁移 002 新建向量表：带 Knowledge Scope 定位、profile id、维度和向量；维度和向量实际维数一致、向量非零；同一个 (Chunk, Profile) 只有一行；通过外键引用这份 Corpus 里的 Chunk，向量挂不到别的 Corpus 上
+- [ ] 迁移 002 新建向量表：`chunk_id`（外键引用 Chunk）、profile id、维度和向量；主键 (`chunk_id`, profile id)；维度和向量实际维数一致、向量非零。不另存 Scope 字段
+- [ ] `migrate` 按顺序补跑缺少的迁移，已执行的迁移版本和摘要必须与文件一致；`check` 要求迁移为 [001, 002]，预期结构由两个迁移依次推导
 - [ ] import 角色可以读写这张表，reader 角色只能读
 - [ ] 删除 `knowledge_chunks` 的三个向量列和对应的 CHECK；导入核对去掉 `embedding_absent`，读取和比对这三列的代码一起删掉
 - [ ] `store migrate` / `check` 认识迁移 002；已有的导入、`store verify` 和检索集成测试在测试库上全部通过

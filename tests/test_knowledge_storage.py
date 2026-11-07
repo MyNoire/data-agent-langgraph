@@ -317,8 +317,6 @@ def stored_sample(tmp_path):
                 if field.endswith("_id") and field != "database_id" and field != "corpus_id" and row[field]:
                     row[field] = UUID(row[field])
             row["created_at"] = moment
-            if group == "chunks":
-                row.update(embedding=None, embedding_profile_id=None, embedding_dimensions=None)
             rows[group].append(row)
     return corpus, record, rows, root
 
@@ -347,7 +345,7 @@ def test_digests_preserve_ordered_keys_and_ignore_session_representation(stored_
     assert verify_rows(corpus, record, other) == first
 
 
-@pytest.mark.parametrize("mutation", ["content", "metadata", "pair", "time", "missing", "extra", "embedding", "registry"])
+@pytest.mark.parametrize("mutation", ["content", "metadata", "pair", "time", "missing", "extra", "registry"])
 def test_projection_changes_or_target_conflicts_are_not_hidden(stored_sample, mutation):
     """输入：不同污染类别；输出：指纹分离正确且复验拒绝污染；无数据库副作用。"""
     corpus, record, rows, _ = stored_sample
@@ -363,13 +361,12 @@ def test_projection_changes_or_target_conflicts_are_not_hidden(stored_sample, mu
     elif mutation == "pair": rows["relations"][0]["source_columns"].reverse()
     elif mutation == "missing": rows["chunks"].pop()
     elif mutation == "extra": rows["chunks"].append(deepcopy(rows["chunks"][0]))
-    elif mutation == "embedding": rows["chunks"][0]["embedding"] = "[1,2]"
     elif mutation == "registry": record["manifest"]["counts"]["chunks"] += 1
     if mutation in {"content", "metadata", "pair", "registry"}:
         after = verification_digests(record, rows)
         assert after.projection_digest != before.projection_digest
         assert after.timestamps_digest == before.timestamps_digest
-    with pytest.raises(KnowledgeStorageError, match="不一致|未验收"):
+    with pytest.raises(KnowledgeStorageError, match="不一致"):
         verify_rows(corpus, record, rows)
 
 
@@ -390,7 +387,10 @@ def test_config_is_optional_and_private_and_roles_are_explicit():
 def test_structure_checker_compares_expression_semantics():
     """输入：可信迁移与 PG 常见反解析表达；输出：忽略冗余 cast，但区分逻辑改变。"""
     expected = expected_structure()
-    assert set(expected) == {"schema_migrations", "knowledge_corpora", *TABLES.values()}
+    assert set(expected) == {"schema_migrations", "knowledge_corpora", *TABLES.values(), "chunk_embeddings"}
+    # 002 删掉的列和约束不再出现在预期结构里。
+    assert not {"embedding", "embedding_profile_id", "embedding_dimensions"} & {c[0] for c in expected["knowledge_chunks"]["columns"]}
+    assert "chunks_embedding" not in expected["knowledge_chunks"]["constraints"]
     assert _constraint_expression("CHECK ((status = 'stored'::text))") == _constraint_expression("CHECK (status = 'stored')")
     assert _constraint_expression("CHECK (a AND (b OR c))") != _constraint_expression("CHECK ((a AND b) OR c)")
     assert _constraint_expression("CHECK (public.vector_norm(embedding) > 0::double precision)") == _constraint_expression("CHECK (public.vector_norm(embedding) > 0)")

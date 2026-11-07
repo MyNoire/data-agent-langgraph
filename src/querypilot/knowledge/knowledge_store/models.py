@@ -13,7 +13,7 @@ STORAGE_VERSION = "knowledge-storage-v1"
 DIGEST_VERSION = "knowledge-import-digests-v1"
 IMPORT_CHECKS = [
     "source_verified", "registered_manifest_match", "object_set_match",
-    "all_original_fields_match", "references_match", "embedding_absent",
+    "all_original_fields_match", "references_match",
 ]
 UNVERIFIED = [
     "embedding", "online_retrieval", "inferred_business_truth",
@@ -44,7 +44,7 @@ class ImportSummary(VerificationDigests):
     core_digest: Hash
     counts: Counts
     storage_contract_version: Literal["knowledge-storage-v1"] = STORAGE_VERSION
-    migration_version: Literal["001"] = "001"
+    migration_version: Literal["002"] = "002"
     import_run_id: str
     elapsed_ms: float = Field(ge=0, allow_inf_nan=False)
     checks: list[str] = Field(default_factory=lambda: list(IMPORT_CHECKS))

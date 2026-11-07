@@ -59,8 +59,9 @@ Status: ready-for-agent
 ### 知识存储
 
 - **迁移 002**：
-  - 新建向量表，每行对应一个 (Chunk, Embedding Profile)，带 Knowledge Scope 定位、profile id、维度和向量，向量类型为 pgvector 的 `vector`，维度不固定。
-  - 约束：维度和向量实际维数一致、向量非零。同一个 (Chunk, Profile) 只能有一行。Chunk 通过外键引用 `knowledge_chunks`，并带上 Scope 字段，保证向量不会挂到别的 Corpus 上。
+  - 新建向量表，每行对应一个 (Chunk, Embedding Profile)：`chunk_id`、profile id、维度和向量，向量类型为 pgvector 的 `vector`，维度不固定。
+  - 约束：维度和向量实际维数一致、向量非零。主键是 (`chunk_id`, profile id)。`chunk_id` 通过外键引用 `knowledge_chunks`。不另存 Scope 字段：`chunk_id` 由 `corpus_id` 和 chunk key 派生，一个 Chunk 只属于一份 Corpus，按 Scope 查询时 JOIN `knowledge_chunks` 即可。
+  - `migrate` 改为按顺序补跑缺少的迁移；已执行的迁移版本和摘要必须与文件一致。结构核对按 001、002 依次推导预期结构，权限核对包括新表。
   - import 角色可写，reader 角色只能读。
 - **删除** `knowledge_chunks` 上预留的三个向量列和对应的 CHECK 约束。导入核对中的 `embedding_absent` 检查，以及读取、比对这三列的代码一起删掉。打开 Scope 时的检查（计数、引用完整性）不涉及向量，不改。
 - **Embedding Profile 的身份**：一个可读的字符串，和每条向量一起存，不单独建 profile 表。真实 Profile 为 `siliconflow:Qwen/Qwen3-Embedding-8B:4096:content-v1:query-instruct-v1`：
