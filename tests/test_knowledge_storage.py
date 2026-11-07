@@ -13,8 +13,7 @@ from test_knowledge_corpus import _inputs
 from querypilot.knowledge.knowledge_corpus.api import load_corpus as load_verified_corpus, CorpusError
 from querypilot.knowledge.knowledge_corpus._corpus import build_knowledge_corpus
 from querypilot.knowledge.knowledge_store._postgres import (
-    TABLES, corpus_record, verify_rows, verification_digests, expected_structure,
-    _constraint_expression,
+    TABLES, corpus_record, verify_rows, verification_digests,
 )
 from querypilot.knowledge.knowledge_store.api import KnowledgeStorageSettings, KnowledgeStorageError
 
@@ -382,20 +381,6 @@ def test_config_is_optional_and_private_and_roles_are_explicit():
     with pytest.raises(KnowledgeStorageError) as caught:
         settings.connection_info("read")
     assert "private-password" not in str(caught.value)
-
-
-def test_structure_checker_compares_expression_semantics():
-    """输入：可信迁移与 PG 常见反解析表达；输出：忽略冗余 cast，但区分逻辑改变。"""
-    expected = expected_structure()
-    assert set(expected) == {"schema_migrations", "knowledge_corpora", *TABLES.values(), "chunk_embeddings"}
-    # 002 删掉的列和约束不再出现在预期结构里。
-    assert not {"embedding", "embedding_profile_id", "embedding_dimensions"} & {c[0] for c in expected["knowledge_chunks"]["columns"]}
-    assert "chunks_embedding" not in expected["knowledge_chunks"]["constraints"]
-    assert _constraint_expression("CHECK ((status = 'stored'::text))") == _constraint_expression("CHECK (status = 'stored')")
-    assert _constraint_expression("CHECK (a AND (b OR c))") != _constraint_expression("CHECK ((a AND b) OR c)")
-    assert _constraint_expression("CHECK (public.vector_norm(embedding) > 0::double precision)") == _constraint_expression("CHECK (public.vector_norm(embedding) > 0)")
-    assert _constraint_expression("CHECK (public.vector_norm(embedding) > 1::double precision)") != _constraint_expression("CHECK (public.vector_norm(embedding) > 0)")
-    assert _constraint_expression("CHECK (amount > 0::double precision)") != _constraint_expression("CHECK (amount > 0)")
 
 
 def test_cli_bad_source_and_existing_receipt_never_call_database(tmp_path, monkeypatch, capsys):

@@ -103,22 +103,14 @@ def test_migration_records_must_match_files(pg_database, statement):
                 conn.execute("INSERT INTO querypilot_kb.schema_migrations(version,checksum) VALUES (%(version)s,%(checksum)s)", record)
 
 
-def test_migration_reuse_and_meaningful_constraint_drift(pg_database):
-    """输入：专用库；输出：复用不改迁移时间，修改 CHECK 语义被拒绝；事务回滚漂移。"""
+def test_migration_reuse_keeps_records(pg_database):
+    """输入：已迁移到最新的专用库；输出：再次 migrate 返回 reused，迁移记录和执行时间不变。"""
     pg, _, _ = _api()
     with pg.connection(pg_database, "admin") as conn:
         before = conn.execute("SELECT * FROM querypilot_kb.schema_migrations").fetchall()
     assert pg.migrate(pg_database).outcome == "reused"
     with pg.connection(pg_database, "admin") as conn:
         assert conn.execute("SELECT * FROM querypilot_kb.schema_migrations").fetchall() == before
-        with pytest.raises(RuntimeError, match="restore"):
-            with conn.transaction():
-                conn.execute("ALTER TABLE querypilot_kb.knowledge_corpora DROP CONSTRAINT corpora_state")
-                conn.execute("ALTER TABLE querypilot_kb.knowledge_corpora ADD CONSTRAINT corpora_state CHECK (status='different')")
-                with pytest.raises(KnowledgeStorageError) as caught: pg.check_structure(conn)
-                assert caught.value.error_type == "migration_conflict"
-                raise RuntimeError("restore")
-    assert pg.check(pg_database).outcome == "checked"
 
 
 def test_import_reuse_verification_and_composite_order(pg_database, r2_corpus):
