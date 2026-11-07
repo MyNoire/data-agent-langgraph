@@ -103,6 +103,19 @@ def test_migration_records_must_match_files(pg_database, statement):
                 conn.execute("INSERT INTO querypilot_kb.schema_migrations(version,checksum) VALUES (%(version)s,%(checksum)s)", record)
 
 
+def test_check_rejects_unmigrated_schema(pg_database):
+    """输入：空的知识 Schema；输出：核对报 migration_conflict，提示先迁移；事务回滚。"""
+    pg, _, _ = _api()
+    with pg.connection(pg_database, "admin") as conn:
+        with pytest.raises(RuntimeError, match="restore"):
+            with conn.transaction():
+                conn.execute("ALTER SCHEMA querypilot_kb RENAME TO querypilot_kb_aside")
+                conn.execute("CREATE SCHEMA querypilot_kb")
+                with pytest.raises(KnowledgeStorageError) as caught: pg.check_database(conn)
+                assert caught.value.error_type == "migration_conflict"
+                raise RuntimeError("restore")
+
+
 def test_migration_reuse_keeps_records(pg_database):
     """输入：已迁移到最新的专用库；输出：再次 migrate 返回 reused，迁移记录和执行时间不变。"""
     pg, _, _ = _api()

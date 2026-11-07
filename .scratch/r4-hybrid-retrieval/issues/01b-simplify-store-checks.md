@@ -19,5 +19,6 @@
 
 - 起因：工单 01 的审查发现结构 AST 比对约 100 行、依赖 PG 反解析细节（如 `0::double precision` 特判），每种新 DDL 都要扩展推导；它挡的"绕过迁移手工改表"在单人项目里基本不会发生。摘要保证迁移文件没被改，事务保证迁移整体执行，`store verify` 仍逐行核对数据摘要。
 - 一并处理工单 01 审查里的小项：测试里函数内 `import psycopg`、`uuid5(NAMESPACE_URL, str(uuid4()))` 改为 `uuid4()`、迁移文件首行"R4"和测试注释"不再"的措辞。
-- 实现（2026-11-07）：`check_database` = 版本 + `applied_migrations` 与全部迁移文件一致 + 权限；`bootstrap` 和 `migrate` 共用 `has_migration_table` 拒绝部分初始化；`_postgres.py` 净减约 100 行。测试库上在回滚事务里从空 Schema 按原文执行 001、002，得到 6 张表、Chunk 表无向量列。
+- 实现（2026-11-07）：`check_database` = 版本 + `applied_migrations` 与全部迁移文件一致 + 权限；`applied_migrations` 同时处理空 Schema（返回空列表）和部分初始化（报冲突），`bootstrap`、`migrate`、`check` 共用；`_postgres.py` 净减约 100 行。测试库上在回滚事务里从空 Schema 按原文执行 001、002，得到 6 张表、Chunk 表无向量列。
 - 小项处理：测试里的 `uuid5(NAMESPACE_URL, …)` **不能**换成 `uuid4()`，`knowledge_chunks` 的 `chunks_uuid` 约束要求 v5（改了之后 7 个测试失败，已还原）；函数内 `import psycopg` 保留，因为 psycopg 是可选依赖，集成测试按需导入；迁移 002 首行的"R4"不改，迁移文件已在测试库执行，改字节会让摘要冲突。
+- 审查（2026-11-07）：空 Schema 上 `check` 报的是笼统的 `database_error`，精简前是 `migration_conflict`；已补测试并修复。测试注释里剩下的"不再变化"是描述现在的行为（污染后不再变化），不是历史口吻，不改。

@@ -22,6 +22,7 @@ from .models import (
 SCHEMA = "querypilot_kb"
 TABLES = {"documents": "knowledge_documents", "relations": "schema_relations", "chunks": "knowledge_chunks"}
 # 只能依次追加，已发布的迁移文件不能修改；数据库里记录的版本和摘要必须与这里一一对应。
+# 版本号固定三位补零，按文本排序即执行顺序。
 MIGRATIONS = (("001", "001_corpus.sql"), ("002", "002_chunk_embeddings.sql"))
 LATEST_MIGRATION = MIGRATIONS[-1][0]
 # 除迁移表外的知识表：reader 只读，importer 只读和追加。
@@ -127,25 +128,18 @@ def check_permissions(conn: psycopg.Connection, *, tables: bool = True) -> None:
 def applied_migrations(conn: psycopg.Connection) -> list[dict]:
     """读出已执行的迁移，并确认它们与迁移文件的前若干个一致。
 
-    返回：已执行迁移的版本和摘要，按顺序排列。
-    异常：KnowledgeStorageError(migration_conflict)：版本、顺序或摘要与文件不一致。
+    返回：已执行迁移的版本和摘要，按顺序排列；知识 Schema 为空时返回空列表。
+    异常：KnowledgeStorageError(migration_conflict)：版本、顺序或摘要与文件不一致，
+        或 Schema 里有对象却没有迁移表（未知或部分初始化的状态）。
     """
+    if not conn.execute("SELECT to_regclass(%s) AS t", (f"{SCHEMA}.schema_migrations",)).fetchone()["t"]:
+        if conn.execute("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s LIMIT 1", (SCHEMA,)).fetchone():
+            raise KnowledgeStorageError("migration_conflict", "已有知识 Schema 含未知或部分初始化对象")
+        return []
     applied = conn.execute(f"SELECT version,checksum FROM {SCHEMA}.schema_migrations ORDER BY version").fetchall()
     if applied != migration_records()[:len(applied)]:
         raise KnowledgeStorageError("migration_conflict", "已执行的迁移与迁移文件不一致")
     return applied
-
-
-def has_migration_table(conn: psycopg.Connection) -> bool:
-    """知识 Schema 已有迁移表时返回 True，Schema 为空时返回 False。
-
-    异常：KnowledgeStorageError(migration_conflict)：Schema 里有对象却没有迁移表，说明是未知或部分初始化的状态。
-    """
-    if conn.execute("SELECT to_regclass(%s) AS t", (f"{SCHEMA}.schema_migrations",)).fetchone()["t"]:
-        return True
-    if conn.execute("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s LIMIT 1", (SCHEMA,)).fetchone():
-        raise KnowledgeStorageError("migration_conflict", "已有知识 Schema 含未知或部分初始化对象")
-    return False
 
 
 def check_database(conn: psycopg.Connection) -> tuple[str, str]:
@@ -189,8 +183,8 @@ def bootstrap(settings: KnowledgeStorageSettings) -> ManagementSummary:
             conn.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(sql.Identifier(SCHEMA), sql.Identifier(name)))
         conn.execute(sql.SQL("ALTER ROLE {} IN DATABASE {} SET default_transaction_read_only=on").format(sql.Identifier(ROLE_NAMES["read"]), sql.Identifier(database)))
         check_permissions(conn, tables=False)
-        # 迁移状态由 migrate / check 负责，这里只拒绝部分初始化的 Schema。
-        has_migration_table(conn)
+        # 只拒绝部分初始化或与文件不一致的 Schema；落后的迁移由 migrate 补跑。
+        applied_migrations(conn)
         return ManagementSummary(command="bootstrap", outcome="reused" if initial else "applied", server_version=server, vector_version=vector, migration_version=None)
 
 
@@ -208,7 +202,7 @@ def migrate(settings: KnowledgeStorageSettings) -> ManagementSummary:
         conn.execute("SELECT pg_advisory_xact_lock(%s)", (650277169901,))
         server, vector = versions(conn)
         check_permissions(conn, tables=False)
-        applied = applied_migrations(conn) if has_migration_table(conn) else []
+        applied = applied_migrations(conn)
         pending = MIGRATIONS[len(applied):]
         for version, filename in pending:
             conn.execute(migration_bytes(filename).decode("utf-8"))
