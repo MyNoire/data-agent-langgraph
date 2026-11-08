@@ -275,3 +275,34 @@ def test_vector_without_embedder_builds_one_from_settings(retrieval_source, monk
     with pytest.raises(KnowledgeRetrievalError) as caught:
         retrieve_knowledge(RetrievalRequest(query=VECTOR_QUERY, scope=scope, method="vector"), settings)
     assert caught.value.error_type == "embedding_missing"
+
+
+def test_vector_filters_by_knowledge_types(vector_source):
+    """输入：method=vector，只要表块；输出：只返回表块，items 表（0.7071）排第一。"""
+    settings, _, scope, embedder = vector_source
+    result = retrieve_knowledge(RetrievalRequest(query=VECTOR_QUERY, scope=scope, method="vector",
+                                                 knowledge_types=["table"]), settings, embedder=embedder)
+    assert result.hits and {hit.knowledge_type for hit in result.hits} == {"table"}
+    assert result.hits[0].chunk_key == _key("table", scope.database_id, "main", "items")
+    assert round(result.hits[0].score, 4) == 0.7071
+
+
+def test_vector_query_needs_no_lexical_terms(vector_source):
+    """输入：method=vector，查询全是标点（BM25 会报 input_error）；输出：照常嵌入并返回结果。"""
+    settings, _, scope, embedder = vector_source
+    result = retrieve_knowledge(RetrievalRequest(query="？！……", scope=scope, method="vector"),
+                                settings, embedder=embedder)
+    assert result.outcome == "matched" and embedder.query_calls == 1
+
+
+def test_lexical_neither_calls_nor_builds_an_embedder(vector_source, monkeypatch, tmp_path):
+    """输入：method=lexical。传了 embedder 也不调用；没传且没有 Embedding 配置也照常检索。"""
+    settings, _, scope, embedder = vector_source
+    request = RetrievalRequest(query="items label", scope=scope)
+    result = retrieve_knowledge(request, settings, embedder=embedder)
+    assert (result.method, result.embedding_profile_id) == ("lexical", None)
+    assert embedder.query_calls == 0
+    for name in ("BASE_URL", "MODEL", "API_KEY"):
+        monkeypatch.delenv(f"QUERYPILOT_EMBEDDING_{name}", raising=False)
+    monkeypatch.chdir(tmp_path)                       # 不读仓库的 .env
+    assert retrieve_knowledge(request, settings).method == "lexical"
