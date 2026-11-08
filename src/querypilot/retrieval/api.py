@@ -4,7 +4,7 @@ from hashlib import sha256
 import time
 from uuid import uuid4
 
-from querypilot.knowledge.api import KnowledgeReadError, KnowledgeStorageSettings, open_read_scope
+from querypilot.knowledge.api import Embedder, KnowledgeReadError, KnowledgeStorageSettings, open_read_scope
 
 from . import _search, _text
 from .models import (
@@ -16,26 +16,37 @@ from .models import (
 )
 
 
-def retrieve_knowledge(request: RetrievalRequest, settings: KnowledgeStorageSettings) -> RetrievalResult:
-    """在 request.scope 指定的 Corpus 中做一次 BM25 检索。
+def retrieve_knowledge(request: RetrievalRequest, settings: KnowledgeStorageSettings,
+                       embedder: Embedder | None = None) -> RetrievalResult:
+    """在 request.scope 指定的 Corpus 中按 request.method 做一次检索。
+
+    lexical 为 BM25，不使用 embedder；vector 先确认当前 Embedding Profile 的向量存在，
+    再把查询嵌入一次，按余弦距离做精确全表扫描。
 
     参数：
-        request：查询原文、Knowledge Scope、top_k 和知识类型。
+        request：查询原文、Knowledge Scope、检索方法、top_k 和知识类型。
         settings：知识存储的读取配置（使用只读账号）。
+        embedder：vector 使用的 Embedder，决定 Embedding Profile。
     返回：
-        RetrievalResult。有 Hit 时 outcome 为 matched，hits 按 rank 从 1 连续排列；
-        否则为 no_match。
+        RetrievalResult，写明实际方法和 Embedding Profile（lexical 时为 None）。有 Hit 时
+        outcome 为 matched，hits 按 rank 从 1 连续排列；否则为 no_match。
     异常：
-        KnowledgeRetrievalError：查询没有有效词时为 input_error；范围不存在或不匹配、
-        超出资源上限、连接或权限等读取失败时，沿用读取层的错误类别。
+        KnowledgeRetrievalError：lexical 查询没有有效词时为 input_error；当前 Profile 没有向量时
+        为 embedding_missing；范围不存在或不匹配、超出资源上限、连接或权限等读取失败时，
+        沿用读取层的错误类别。
     副作用：
-        只读访问知识库；不记录查询原文。
+        只读访问知识库；vector 调用一次 Embedding 服务；不记录查询原文。
     """
     started = time.perf_counter()
     try:
-        terms = _text.query_terms(request.query)
+        terms = _text.query_terms(request.query) if request.method == "lexical" else None
         with open_read_scope(request.scope, settings) as session:
-            rows = _search.search_chunks(session, request, terms)
+            if request.method == "lexical":
+                rows = _search.search_chunks(session, request, terms)
+            elif request.method == "vector":
+                if not _search.has_vectors(session, embedder.profile_id):
+                    raise KnowledgeRetrievalError("embedding_missing")
+                rows = _search.vector_chunks(session, request, embedder.profile_id, embedder.embed_query(request.query))
         hits = [RetrievalHit(rank=i, **row) for i, row in enumerate(rows, start=1)]
     except KnowledgeReadError as exc:
         raise KnowledgeRetrievalError(exc.error_type, str(exc)) from exc
@@ -50,6 +61,8 @@ def retrieve_knowledge(request: RetrievalRequest, settings: KnowledgeStorageSett
         hit_count=len(hits),
         hits=hits,
         elapsed_ms=(time.perf_counter() - started) * 1000,
+        method=request.method,
+        embedding_profile_id=embedder.profile_id if request.method == "vector" else None,
     )
 
 

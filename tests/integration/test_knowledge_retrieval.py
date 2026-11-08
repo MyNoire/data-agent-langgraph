@@ -4,6 +4,8 @@
 当前可立即执行的设施组在 test_bm25_search_setup.py。
 """
 
+import json
+
 import pytest
 from hashlib import sha256
 from math import isfinite
@@ -12,6 +14,7 @@ from uuid import uuid4
 from querypilot.knowledge.api import KnowledgeReadError, KnowledgeScope, ReadLimits, open_read_scope
 from querypilot.retrieval.api import KnowledgeRetrievalError, RetrievalRequest, retrieve_knowledge
 from _bm25_fixtures import live_bm25_settings, role_connection, unchanged_live_knowledge
+from _embedding_fakes import FakeEmbedder
 
 
 @pytest.fixture
@@ -186,3 +189,61 @@ def test_complete_scores_and_order_equal_raw_plugin_bm25(retrieval_source):
     assert expected
     assert [(str(hit.chunk_id), hit.chunk_key, hit.score) for hit in result.hits] == [
         (row["chunk_id"], row["chunk_key"], row["score"]) for row in expected]
+
+
+# ---- 向量检索（工单 03）：Seam 1，retrieve_knowledge + 真实 PG + 假 embedder ----
+
+VECTOR_QUERY = "哪一列是物品的名称？"
+
+
+def _key(*parts):
+    """Chunk 的 chunk_key：紧凑 JSON 数组。"""
+    return json.dumps(list(parts), ensure_ascii=False, separators=(",", ":"))
+
+
+@pytest.fixture
+def vector_source(retrieval_source):
+    """给探针 Corpus 写入假 Profile 的向量。查询向量 [1,0,0]：
+
+    items.label  → [1,0,0]  余弦 1.0
+    items 表     → [1,1,0]  余弦 0.7071
+    其余 6 个 Chunk → [0,0,1]  余弦 0，并列时按 chunk_key 排
+    """
+    from querypilot.knowledge.api import embed_corpus
+    settings, source, scope = retrieval_source
+    db = scope.database_id
+    content = {chunk.chunk_key: chunk.content for chunk in source.chunks}
+    embedder = FakeEmbedder({
+        content[_key("column", db, "main", "items", "label")]: [1.0, 0.0, 0.0],
+        content[_key("table", db, "main", "items")]: [1.0, 1.0, 0.0],
+        VECTOR_QUERY: [1.0, 0.0, 0.0],
+    }, default=(0.0, 0.0, 1.0))
+    embed_corpus(scope, settings, embedder)
+    return settings, source, scope, embedder
+
+
+def test_vector_ranks_chunks_by_cosine_similarity(vector_source):
+    """输入：method=vector，top_k=3；输出：按余弦相似度排序，并列按 chunk_key；查询只嵌入一次。"""
+    settings, _, scope, embedder = vector_source
+    db = scope.database_id
+    result = retrieve_knowledge(RetrievalRequest(query=VECTOR_QUERY, scope=scope, method="vector", top_k=3),
+                                settings, embedder=embedder)
+    assert (result.method, result.embedding_profile_id) == ("vector", "fake:3:test-v1")
+    assert [hit.chunk_key for hit in result.hits] == [
+        _key("column", db, "main", "items", "label"),
+        _key("table", db, "main", "items"),
+        _key("column", db, "main", "events", "item_ref"),
+    ]
+    assert [round(hit.score, 4) for hit in result.hits] == [1.0, 0.7071, 0.0]
+    assert embedder.query_calls == 1
+
+
+def test_vector_without_vectors_for_profile_is_embedding_missing(retrieval_source):
+    """输入：探针 Corpus 没有当前 Profile 的向量；输出：embedding_missing，查询不嵌入（不花钱）。"""
+    settings, _, scope = retrieval_source
+    embedder = FakeEmbedder()
+    with pytest.raises(KnowledgeRetrievalError) as caught:
+        retrieve_knowledge(RetrievalRequest(query=VECTOR_QUERY, scope=scope, method="vector"),
+                           settings, embedder=embedder)
+    assert caught.value.error_type == "embedding_missing"
+    assert embedder.query_calls == 0
