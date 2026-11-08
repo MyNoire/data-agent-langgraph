@@ -260,3 +260,18 @@ def test_embedding_failure_is_embedding_error_without_bm25_fallback(vector_sourc
     assert caught.value.error_type == "embedding_error"
     assert embedder.query_calls == 1
     assert VECTOR_QUERY not in str(caught.value)
+
+
+def test_vector_without_embedder_builds_one_from_settings(retrieval_source, monkeypatch):
+    """输入：vector 检索没传 embedder；输出：按 QUERYPILOT_EMBEDDING_* 配置创建，用真实 Profile 检查向量。
+
+    探针 Corpus 没有真实 Profile 的向量，所以在调用服务前就报 embedding_missing。base_url 指向本机
+    不监听的端口，万一调用了服务也只会失败，不会产生费用。
+    """
+    settings, _, scope = retrieval_source
+    monkeypatch.setenv("QUERYPILOT_EMBEDDING_BASE_URL", "http://127.0.0.1:9/v1")
+    monkeypatch.setenv("QUERYPILOT_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-8B")
+    monkeypatch.setenv("QUERYPILOT_EMBEDDING_API_KEY", "sk-not-a-real-key")
+    with pytest.raises(KnowledgeRetrievalError) as caught:
+        retrieve_knowledge(RetrievalRequest(query=VECTOR_QUERY, scope=scope, method="vector"), settings)
+    assert caught.value.error_type == "embedding_missing"

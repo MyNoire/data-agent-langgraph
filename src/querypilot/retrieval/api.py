@@ -4,7 +4,7 @@ from hashlib import sha256
 import time
 from uuid import uuid4
 
-from querypilot.knowledge.api import Embedder, EmbeddingError, KnowledgeReadError, KnowledgeStorageSettings, open_read_scope
+from querypilot.knowledge.api import Embedder, EmbeddingError, EmbeddingSettings, KnowledgeReadError, KnowledgeStorageSettings, open_read_scope, OpenAIEmbedder
 
 from . import _search, _text
 from .models import (
@@ -40,6 +40,8 @@ def retrieve_knowledge(request: RetrievalRequest, settings: KnowledgeStorageSett
     started = time.perf_counter()
     try:
         terms = _text.query_terms(request.query) if request.method == "lexical" else None
+        if request.method != "lexical" and embedder is None:
+            embedder = OpenAIEmbedder(EmbeddingSettings())
         with open_read_scope(request.scope, settings) as session:
             if request.method == "lexical":
                 rows = _search.search_chunks(session, request, terms)
