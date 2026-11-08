@@ -39,7 +39,7 @@ from .knowledge_corpus.api import (
     parse_json,
 )
 
-from .knowledge_embedding.api import Embedder, EmbeddingError
+from .knowledge_embedding.api import Embedder, EmbeddingError, EmbeddingSettings, OpenAIEmbedder
 
 from .knowledge_store.api import (
     KnowledgeStorageError,
@@ -126,4 +126,6 @@ __all__ = [
     "embed_corpus",
     "Embedder",
     "EmbeddingError",
+    "EmbeddingSettings",
+    "OpenAIEmbedder",
 ]
