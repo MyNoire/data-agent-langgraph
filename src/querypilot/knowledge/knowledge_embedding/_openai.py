@@ -1,11 +1,14 @@
 """走 OpenAI 兼容 /embeddings 接口的 Embedder（硅基流动 Qwen3-Embedding）。"""
 
-import httpx
-from openai import OpenAI, OpenAIError
+from typing import TYPE_CHECKING
+
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .models import EmbeddingError
+
+if TYPE_CHECKING:
+    import httpx
 
 DIMENSIONS = 4096
 BATCH_SIZE = 32
@@ -31,7 +34,9 @@ class OpenAIEmbedder:
     返回的条数或维度不对、请求失败，都抛 EmbeddingError，原因放在异常链里。
     """
 
-    def __init__(self, settings: EmbeddingSettings, *, http_client: httpx.Client | None = None):
+    def __init__(self, settings: EmbeddingSettings, *, http_client: "httpx.Client | None" = None):
+        # 用到时才加载 openai，只做 BM25 检索时不依赖模型 SDK。
+        from openai import OpenAI
         self._model = settings.model
         self._client = OpenAI(base_url=settings.base_url, api_key=settings.api_key.get_secret_value(),
                               timeout=60, http_client=http_client)
@@ -45,6 +50,7 @@ class OpenAIEmbedder:
         return self._embed([f"Instruct: {QUERY_TASK}\nQuery:{text}"])[0]
 
     def _embed(self, texts: list[str]) -> list[list[float]]:
+        from openai import OpenAIError
         try:
             response = self._client.embeddings.create(model=self._model, input=texts, encoding_format="float")
         except OpenAIError as exc:
