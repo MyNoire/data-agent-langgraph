@@ -5,6 +5,7 @@ from hashlib import sha256
 from querypilot.runtime.api import RunContext
 
 from querypilot.knowledge.knowledge_corpus.api import CorpusError, load_corpus
+from querypilot.knowledge.knowledge_embedding.api import Embedder
 from .settings import (
     KnowledgeStorageError,
     KnowledgeStorageSettings,
@@ -20,6 +21,7 @@ from .models import (
     ImportSummary,
     ImportVerificationSummary,
     ManagementSummary,
+    EmbeddingSummary,
     KnowledgeScope,
     ReadLimits,
     ReadView,
@@ -106,6 +108,29 @@ def _manage_search(operation: str, settings: KnowledgeStorageSettings,
         return result
 
 
+def embed_corpus(scope: KnowledgeScope, settings: KnowledgeStorageSettings, embedder: Embedder,
+                 *, run_context: RunContext | None = None) -> EmbeddingSummary:
+    """为一个 Knowledge Scope 的全部 Chunk 生成向量，写进向量表。
+
+    参数：scope 指定 Corpus；settings 需要 reader（读 Chunk）和 importer（写向量）的 DSN；
+        embedder 决定 Embedding Profile；run_context 可借用上层运行。
+    返回：EmbeddingSummary。这份 Corpus 在该 Profile 下已有向量时为 exists，不调用 embedder；
+        否则为 embedded，写入条数等于 Chunk 数。
+    异常：KnowledgeReadError（范围不存在或不匹配等）；EmbeddingError；KnowledgeStorageError。
+    副作用：Embedding 调用在数据库事务之外；全部向量在一个事务里写入，任何一步失败都不写。
+    """
+    from querypilot.runtime.api import task_run
+    owned = run_context is None
+    with task_run("knowledge_embed", run_context=run_context, command="knowledge store embed",
+                  secrets=_secrets(settings)) as context:
+        _driver()
+        from ._embedding import embed_scope
+        result = embed_scope(scope, settings, embedder)
+        if owned:
+            context.complete(result, outcome="reused" if result.outcome == "exists" else "succeeded")
+        return result
+
+
 def _secrets(settings: KnowledgeStorageSettings) -> tuple[str, ...]:
     """输入：存储配置；返回：供清理器匹配的秘密原值；不记录配置、不连接。"""
     return tuple(secret.get_secret_value() for name in ("admin_dsn", "import_dsn", "read_dsn")
@@ -179,6 +204,7 @@ __all__ = [
     "ImportSummary",
     "ImportVerificationSummary",
     "ManagementSummary",
+    "EmbeddingSummary",
     "KnowledgeScope",
     "ReadLimits",
     "ReadView",
@@ -194,4 +220,5 @@ __all__ = [
     "manage_store",
     "import_corpus",
     "verify_import",
+    "embed_corpus",
 ]

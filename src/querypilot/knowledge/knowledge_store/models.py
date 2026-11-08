@@ -58,6 +58,19 @@ class ImportVerificationSummary(ImportSummary):
     outcome: Literal["verified"] = "verified"
 
 
+class EmbeddingSummary(CorpusModel):
+    """一次生成向量的结果：写入了多少条、用的哪个 Profile 和维度；不含 Chunk 正文和向量。"""
+
+    result_version: Literal["knowledge-embedding-result-v1"] = "knowledge-embedding-result-v1"
+    outcome: Literal["embedded", "exists"]
+    corpus_id: Hash
+    database_id: str
+    schema_version: Hash
+    embedding_profile_id: str
+    dimensions: int = Field(ge=1)
+    embedded_chunks: int = Field(ge=0)
+
+
 class ManagementSummary(CorpusModel):
     """输入：管理命令的实际版本/结果；输出：不含凭据的结构摘要。"""
 

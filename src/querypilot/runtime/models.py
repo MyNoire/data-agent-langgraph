@@ -4,7 +4,7 @@ from typing import Any, TypedDict
 
 OPERATIONS = frozenset({
     "query", "evaluation", "knowledge_catalog", "knowledge_corpus",
-    "knowledge_import", "knowledge_verify", "knowledge_manage", "data_prepare",
+    "knowledge_import", "knowledge_verify", "knowledge_manage", "knowledge_embed", "data_prepare",
 })
 OPERATION_OUTCOMES = frozenset({
     "not_started", "unknown", "succeeded", "imported", "reused", "verified", "failed",
