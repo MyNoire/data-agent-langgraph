@@ -14,7 +14,7 @@ MAX_SCOPE_FILE_BYTES = 16 * 1024
 def build_retrieval_parser() -> SafeArgumentParser:
     """输入：无；返回：单次检索参数解析器；副作用：无，不启动尚未接线的检索。"""
     parser = SafeArgumentParser(
-        prog="retrieve_knowledge", description="QueryPilot 限定范围词法检索",
+        prog="retrieve_knowledge", description="QueryPilot 限定范围检索（BM25 或向量）",
         error_message="参数语法错误；请使用 --help 查看支持的参数。\n",
         show_usage_on_error=True,
     )
@@ -23,6 +23,7 @@ def build_retrieval_parser() -> SafeArgumentParser:
     parser.add_argument("--database-id")
     parser.add_argument("--schema-version")
     parser.add_argument("--scope-file", type=Path)
+    parser.add_argument("--method", choices=("lexical", "vector"), default="lexical")
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--knowledge-type", choices=("table", "column", "relationship"), action="append")
     parser.add_argument("--output", type=Path)

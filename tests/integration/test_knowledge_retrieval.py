@@ -34,6 +34,9 @@ def retrieval_source(live_bm25_settings, r3_corpus_factory, unchanged_live_knowl
     finally:
         # 先证明是本次生成且此前不存在的身份，再逐表按完整 scope 和记录 ID 清理。
         with role_connection(live_bm25_settings, "admin") as conn, conn.transaction():
+            # 向量表对 Chunk 的外键是 RESTRICT，先删本次 Chunk 的向量。
+            conn.execute("DELETE FROM querypilot_kb.chunk_embeddings WHERE chunk_id=ANY(%s::uuid[])",
+                         ([str(chunk.chunk_id) for chunk in source.chunks],))
             for table, key, records in (
                 ("knowledge_chunks", "chunk_id", source.chunks),
                 ("schema_relations", "relation_id", source.relations),

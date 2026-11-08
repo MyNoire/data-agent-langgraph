@@ -166,8 +166,9 @@ def test_relocated_parser_preserves_arguments_and_defaults(tmp_path):
     arguments = parser.parse_args([
         "--query", "  原子 cl  ", "--scope-file", str(tmp_path / "scope.json"),
         "--top-k", "5", "--knowledge-type", "column", "--knowledge-type", "table",
-        "--output", str(tmp_path / "result.json"),
+        "--output", str(tmp_path / "result.json"), "--method", "vector",
     ])
+    assert arguments.method == "vector"
     assert arguments.query == "  原子 cl  "
     assert arguments.scope_file == tmp_path / "scope.json"
     assert arguments.top_k == 5
@@ -175,6 +176,7 @@ def test_relocated_parser_preserves_arguments_and_defaults(tmp_path):
     assert arguments.output == tmp_path / "result.json"
     defaults = parser.parse_args(["--query", "atom"])
     assert defaults.top_k == 10
+    assert defaults.method == "lexical"
     assert defaults.knowledge_type is None
     assert defaults.scope_file is None and defaults.output is None
 

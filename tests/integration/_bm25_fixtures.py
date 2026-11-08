@@ -59,6 +59,10 @@ def knowledge_state(settings):
                 "SELECT count(*) AS count, md5(coalesce(string_agg(md5(to_jsonb(t)::text), '' "
                 "ORDER BY {}), '')) AS digest FROM {}.{} AS t"
             ).format(sql.Identifier(key), sql.Identifier("querypilot_kb"), sql.Identifier(table))).fetchone()
+        tables["chunk_embeddings"] = conn.execute(
+            "SELECT count(*) AS count, md5(coalesce(string_agg(md5(to_jsonb(t)::text), '' "
+            "ORDER BY chunk_id, embedding_profile_id), '')) AS digest FROM querypilot_kb.chunk_embeddings AS t"
+        ).fetchone()
         roles = conn.execute("""SELECT rolname,rolsuper,rolcreatedb,rolcreaterole,rolreplication,
             rolbypassrls,rolcanlogin FROM pg_roles
             WHERE rolname IN ('querypilot_kb_reader','querypilot_kb_importer') ORDER BY rolname""").fetchall()
