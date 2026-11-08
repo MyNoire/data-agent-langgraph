@@ -4,7 +4,7 @@ from hashlib import sha256
 import time
 from uuid import uuid4
 
-from querypilot.knowledge.api import Embedder, KnowledgeReadError, KnowledgeStorageSettings, open_read_scope
+from querypilot.knowledge.api import Embedder, EmbeddingError, KnowledgeReadError, KnowledgeStorageSettings, open_read_scope
 
 from . import _search, _text
 from .models import (
@@ -32,7 +32,7 @@ def retrieve_knowledge(request: RetrievalRequest, settings: KnowledgeStorageSett
         outcome 为 matched，hits 按 rank 从 1 连续排列；否则为 no_match。
     异常：
         KnowledgeRetrievalError：lexical 查询没有有效词时为 input_error；当前 Profile 没有向量时
-        为 embedding_missing；范围不存在或不匹配、超出资源上限、连接或权限等读取失败时，
+        为 embedding_missing；嵌入查询失败时为 embedding_error，不退回 BM25；范围不存在或不匹配、超出资源上限、连接或权限等读取失败时，
         沿用读取层的错误类别。
     副作用：
         只读访问知识库；vector 调用一次 Embedding 服务；不记录查询原文。
@@ -45,8 +45,12 @@ def retrieve_knowledge(request: RetrievalRequest, settings: KnowledgeStorageSett
                 rows = _search.search_chunks(session, request, terms)
             elif request.method == "vector":
                 if not _search.has_vectors(session, embedder.profile_id):
-                    raise KnowledgeRetrievalError("embedding_missing")
-                rows = _search.vector_chunks(session, request, embedder.profile_id, embedder.embed_query(request.query))
+                    raise KnowledgeRetrievalError("embedding_missing", "当前 Embedding Profile 在该 Scope 下没有向量")
+                try:
+                    query_vector = embedder.embed_query(request.query)
+                except EmbeddingError as exc:
+                    raise KnowledgeRetrievalError(exc.error_type, str(exc)) from exc
+                rows = _search.vector_chunks(session, request, embedder.profile_id, query_vector)
         hits = [RetrievalHit(rank=i, **row) for i, row in enumerate(rows, start=1)]
     except KnowledgeReadError as exc:
         raise KnowledgeRetrievalError(exc.error_type, str(exc)) from exc

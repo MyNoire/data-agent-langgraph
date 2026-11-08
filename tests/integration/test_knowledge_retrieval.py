@@ -247,3 +247,16 @@ def test_vector_without_vectors_for_profile_is_embedding_missing(retrieval_sourc
                            settings, embedder=embedder)
     assert caught.value.error_type == "embedding_missing"
     assert embedder.query_calls == 0
+
+
+def test_embedding_failure_is_embedding_error_without_bm25_fallback(vector_source):
+    """输入：已有向量，但嵌入查询时 Embedding 服务失败；输出：embedding_error，不退回 BM25 返回结果。"""
+    from _embedding_fakes import ErrorEmbedder
+    settings, _, scope, _ = vector_source
+    embedder = ErrorEmbedder()
+    with pytest.raises(KnowledgeRetrievalError) as caught:
+        retrieve_knowledge(RetrievalRequest(query=VECTOR_QUERY, scope=scope, method="vector"),
+                           settings, embedder=embedder)
+    assert caught.value.error_type == "embedding_error"
+    assert embedder.query_calls == 1
+    assert VECTOR_QUERY not in str(caught.value)
