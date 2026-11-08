@@ -507,3 +507,33 @@ def test_commit_confirmation_loss_is_unknown_and_private(stored_sample, monkeypa
     assert caught.value.error_type == "commit_outcome_unknown"
     assert isinstance(caught.value.__cause__, psycopg.OperationalError)
     assert "private-password" not in str(caught.value)
+
+
+def test_cli_embed_passes_scope_and_real_embedder_without_printing_secrets(monkeypatch, capsys, tmp_path):
+    """输入：三元组范围和 Embedding 配置；输出：调用 embed_corpus，回执只有摘要，没有密钥。"""
+    import json
+    from querypilot.entrypoints.cli import main
+    from querypilot.entrypoints.commands import knowledge
+    from querypilot.knowledge.api import EmbeddingSummary, OpenAIEmbedder
+    monkeypatch.setenv("QUERYPILOT_EMBEDDING_BASE_URL", "https://embedding.test/v1")
+    monkeypatch.setenv("QUERYPILOT_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-8B")
+    monkeypatch.setenv("QUERYPILOT_EMBEDDING_API_KEY", "sk-private-cli-key")
+    calls = []
+
+    def fake_embed(scope, settings, embedder, *, run_context=None):
+        calls.append((scope, embedder))
+        return EmbeddingSummary(outcome="embedded", corpus_id=scope.corpus_id, database_id=scope.database_id,
+                                schema_version=scope.schema_version, embedding_profile_id=embedder.profile_id,
+                                dimensions=4096, embedded_chunks=20)
+    monkeypatch.setattr(knowledge, "embed_corpus", fake_embed)
+    assert main(["--artifacts-dir", str(tmp_path), "knowledge", "store", "embed", "--corpus-id", "a" * 64,
+                 "--database-id", "toxicology", "--schema-version", "b" * 64]) == 0
+    (scope, embedder), = calls
+    assert (scope.corpus_id, scope.database_id, scope.schema_version) == ("a" * 64, "toxicology", "b" * 64)
+    assert isinstance(embedder, OpenAIEmbedder)
+    captured = capsys.readouterr()
+    summary = json.loads(captured.out)
+    assert (summary["outcome"], summary["embedded_chunks"], summary["dimensions"]) == ("embedded", 20, 4096)
+    assert summary["embedding_profile_id"] == "siliconflow:Qwen/Qwen3-Embedding-8B:4096:content-v1:query-instruct-v1"
+    assert "sk-private-cli-key" not in captured.out + captured.err
+    assert not any("sk-private-cli-key" in path.read_text(encoding="utf-8") for path in tmp_path.rglob("*.json*"))

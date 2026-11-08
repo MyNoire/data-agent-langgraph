@@ -14,6 +14,7 @@ BIRD 字段说明 CSV ──enrich──▶ 增强目录（每列绑定说明和
 Data Semantics 配置 ──corpus build──▶ Corpus 快照（Documents / Chunks / Relations + manifest）
                           │
                  corpus verify ──▶ store import ──▶ store verify ──▶ BM25 检索
+                                                      └──▶ store embed（向量表）
 ```
 
 | 步骤 | 命令 | 做什么 |
@@ -24,6 +25,7 @@ Data Semantics 配置 ──corpus build──▶ Corpus 快照（Documents / Ch
 | 构建快照 | `querypilot knowledge corpus build` | 加上中文语义，渲染成知识块，生成确定性的身份和 manifest |
 | 校验快照 | `querypilot knowledge corpus verify` | 重新读取每个文件，核对 hash 和引用关系 |
 | 导入 | `querypilot knowledge store import` / `verify` | 写进 PostgreSQL，并把每个字段读回来核对 |
+| 生成向量 | `querypilot knowledge store embed` | 按 `--corpus-id/--database-id/--schema-version` 或 `--scope-file` 指定 Scope，用当前 Embedding Profile 为全部 Chunk 算向量，一个事务写进向量表；已有就报 `exists`，不调用 API。会产生费用 |
 
 目前有两个库的正式快照：
 

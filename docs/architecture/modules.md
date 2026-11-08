@@ -19,7 +19,8 @@ src/querypilot/
   knowledge/
     knowledge_catalog/    提取结构、导入说明、应用批准修正
     knowledge_corpus/     渲染、生成身份、构建和校验 Corpus（知识语料）
-    knowledge_store/      PostgreSQL 导入、复验、限定只读会话
+    knowledge_store/      PostgreSQL 导入、复验、限定只读会话、写入向量
+    knowledge_embedding/  Embedder 接口、硅基流动 Embedding 客户端
   retrieval/         限定 Knowledge Scope 的 BM25 检索（retrieve_knowledge）
   runtime/           配置、运行目录、事件、审计、版本信息
 ~~~
@@ -86,6 +87,8 @@ with TemporaryDirectory() as temporary:
 | knowledge_store | manage_store(operation, storage_settings, *, run_context=None) → ManagementSummary | 只执行 bootstrap/migrate/check；所选操作才加载 PG 驱动 |
 | knowledge_store | import_corpus(corpus_dir, storage_settings, *, run_context=None) → ImportSummary；verify_import(...) → ImportVerificationSummary | 先重读快照；原事务锁、全字段回读、imported/reused 和未知提交语义保留；KnowledgeStorageError |
 | knowledge_store | open_read_scope(scope, storage_settings, limits=None) → 上下文 ReadSession | 一个只读一致事务；关闭后不可复用；KnowledgeReadError |
+| knowledge_store | embed_corpus(scope, storage_settings, embedder, *, run_context=None) → EmbeddingSummary | reader 读 Chunk，事务外调用 embedder，importer 一个事务写入全部向量；已有为 exists；KnowledgeReadError/EmbeddingError/KnowledgeStorageError |
+| knowledge_embedding | Embedder（profile_id、embed_documents、embed_query）；OpenAIEmbedder(EmbeddingSettings()) | 读 QUERYPILOT_EMBEDDING_*；查询前拼任务指令，文档原样；条数、维度不对或请求失败为 EmbeddingError |
 
 例如，准备好批准包 bundle 和语义文件 semantics.json 后：
 
