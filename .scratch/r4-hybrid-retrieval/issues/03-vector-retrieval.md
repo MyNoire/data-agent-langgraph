@@ -25,7 +25,7 @@
   - `RetrievalResult.retrieval_config_version` / `normalization_version` 是 BM25 的配置版本，vector 结果里也带着，评测运行器会把它记成来源信息。留到工单 05 处理评测输出时一起决定。
   - `embed_query` 在只读事务里调用（规格要求先查向量再嵌入），事务最长会多开约 60 s 超时。
   - embedder 返回全零查询向量时余弦为 NaN，报的是 pydantic 错误而不是 `KnowledgeRetrievalError`。真实服务返回单位向量，暂不处理。
-  - 缺少 `QUERYPILOT_EMBEDDING_*` 配置时抛 pydantic `ValidationError`，暂不转换（用户同意）。
+  - 缺少 `QUERYPILOT_EMBEDDING_*` 配置时抛 pydantic `ValidationError`，暂不转换，等真遇到再处理。
 - 测试：`pytest tests/integration --require-postgres` 97 passed；单元测试 438 passed，1 failed（`test_console_and_module_share_help`，`querypilot` 不在 PATH 上，与本工单无关）。
 - 真实试跑（2026-11-09，用户同意，共 6 次 Embedding 调用，其中 2 次因试跑脚本打印出错重跑）：4 道**非冻结**题，取自检索评测失败分析，lexical 与 vector 各取前 5，结果只在终端查看，没有写文件。
 
