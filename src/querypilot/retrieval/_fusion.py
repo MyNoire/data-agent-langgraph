@@ -1,6 +1,9 @@
 """RRF（Reciprocal Rank Fusion）：按名次融合几路已排好序的检索结果。"""
 
 RRF_K = 60
+# hybrid 融合前每一路取的候选数，与 RRF_K 一样固定不调。取 TopK 的上限，所以任何 top_k 的前 N 个
+# 都与更大 top_k 结果的前 N 个相同。
+CANDIDATES_PER_BRANCH = 50
 
 
 def reciprocal_rank_fusion(rankings: list[list[dict]]) -> list[dict]:
