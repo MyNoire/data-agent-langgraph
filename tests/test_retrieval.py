@@ -166,9 +166,9 @@ def test_relocated_parser_preserves_arguments_and_defaults(tmp_path):
     arguments = parser.parse_args([
         "--query", "  原子 cl  ", "--scope-file", str(tmp_path / "scope.json"),
         "--top-k", "5", "--knowledge-type", "column", "--knowledge-type", "table",
-        "--output", str(tmp_path / "result.json"), "--method", "vector",
+        "--output", str(tmp_path / "result.json"), "--method", "hybrid",
     ])
-    assert arguments.method == "vector"
+    assert arguments.method == "hybrid"
     assert arguments.query == "  原子 cl  "
     assert arguments.scope_file == tmp_path / "scope.json"
     assert arguments.top_k == 5

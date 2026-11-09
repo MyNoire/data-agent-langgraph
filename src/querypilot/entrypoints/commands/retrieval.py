@@ -23,7 +23,7 @@ def build_retrieval_parser() -> SafeArgumentParser:
     parser.add_argument("--database-id")
     parser.add_argument("--schema-version")
     parser.add_argument("--scope-file", type=Path)
-    parser.add_argument("--method", choices=("lexical", "vector"), default="lexical")
+    parser.add_argument("--method", choices=("lexical", "vector", "hybrid"), default="lexical")
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--knowledge-type", choices=("table", "column", "relationship"), action="append")
     parser.add_argument("--output", type=Path)

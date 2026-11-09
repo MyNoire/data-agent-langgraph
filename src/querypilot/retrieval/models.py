@@ -17,7 +17,7 @@ STOPWORDS_SHA256 = "fede53918dc355e74fe89e5070a04ce6a84dd7a1077d96455026b0d9bc7c
 
 KnowledgeType = Literal["table", "column", "relationship"]
 # lexical：BM25；vector：查询嵌入后按余弦距离精确扫描当前 Embedding Profile 的向量。
-RetrievalMethod = Literal["lexical", "vector"]
+RetrievalMethod = Literal["lexical", "vector", "hybrid"]
 TopK = Annotated[int, Field(strict=True, ge=1, le=50)]
 
 
@@ -79,7 +79,7 @@ class RetrievalHit(RetrievalModel):
     """一个 Hit：命中的 Chunk 原字段，加上本次的 rank 和分数。
 
     score 的含义随检索方法而定，不同方法的分数不能直接比较：
-    lexical 为 BM25 分（≥ 0）；vector 为余弦相似度（-1 到 1）。
+    lexical 为 BM25 分（≥ 0）；vector 为余弦相似度（-1 到 1）；hybrid 为 RRF 分 Σ 1/(60 + 名次)。
 
     三个定位字段（schema_name、table_name、column_name）随 knowledge_type 而定：
     - table：table_name 是这张表，column_name 为 None。
