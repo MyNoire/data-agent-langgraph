@@ -22,7 +22,8 @@ TopK = Annotated[int, Field(strict=True, ge=1, le=50)]
 
 
 class KnowledgeRetrievalError(ValueError):
-    """检索失败。error_type 是读取层的错误类别，或检索自己的 input_error。
+    """检索失败。error_type 是读取层的错误类别，或检索自己的 input_error、embedding_missing、
+    embedding_error。
 
     消息是固定的安全文本，不包含查询原文；底层原因通过 raise ... from 保留。
     """

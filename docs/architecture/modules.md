@@ -21,7 +21,7 @@ src/querypilot/
     knowledge_corpus/     渲染、生成身份、构建和校验 Corpus（知识语料）
     knowledge_store/      PostgreSQL 导入、复验、限定只读会话、写入向量
     knowledge_embedding/  Embedder 接口、硅基流动 Embedding 客户端
-  retrieval/         限定 Knowledge Scope 的 BM25 检索（retrieve_knowledge）
+  retrieval/         限定 Knowledge Scope 的 BM25 / 向量检索（retrieve_knowledge）
   runtime/           配置、运行目录、事件、审计、版本信息
 ~~~
 
@@ -136,7 +136,7 @@ BIRD 的 fetch/import/select/freeze/prepare 逻辑归 evaluation/datasets；命�
 
 检索评测归 `evaluation/retrieval`，按需离线运行：`prepare_retrieval_cases` 从 BIRD 题目和 Corpus 生成检索题集（`eval retrieval-cases`），`evaluate_retrieval` 逐题调用 `retrieve_knowledge` 并按 GLOSSARY「评测」的口径计分（`eval retrieval`），报告写进运行记录。SQL 报告不接收检索分数，SQL 的延迟计算也不为此改公式。
 
-检索本体的 `retrieval.api` 导出 `retrieve_knowledge`（限定 Knowledge Scope 的 BM25 检索）和它的请求、结果、Hit、错误与 ScopeFile 类型；KnowledgeScope 仍从 `knowledge.api` 取得。参数和 scope 文件解析位于 `entrypoints/commands/retrieval.py`，安全解析器在 `entrypoints/_arguments.py` 共用。统一检索命令还没有接进 CLI，不公开内部查询或会话辅助函数凑接口。
+检索本体的 `retrieval.api` 导出 `retrieve_knowledge`（限定 Knowledge Scope，按 `method` 做 BM25 或向量检索；向量检索可传入 Embedder，没传时按配置创建）和它的请求、结果、Hit、错误与 ScopeFile 类型；KnowledgeScope 仍从 `knowledge.api` 取得。参数和 scope 文件解析位于 `entrypoints/commands/retrieval.py`，安全解析器在 `entrypoints/_arguments.py` 共用。统一检索命令还没有接进 CLI，不公开内部查询或会话辅助函数凑接口。
 
 ## 一次任务的记录归谁管
 

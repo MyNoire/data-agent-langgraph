@@ -14,7 +14,7 @@ from uuid import uuid4
 from querypilot.knowledge.api import KnowledgeReadError, KnowledgeScope, ReadLimits, open_read_scope
 from querypilot.retrieval.api import KnowledgeRetrievalError, RetrievalRequest, retrieve_knowledge
 from _bm25_fixtures import live_bm25_settings, role_connection, unchanged_live_knowledge
-from _embedding_fakes import FakeEmbedder
+from _embedding_fakes import ErrorEmbedder, FakeEmbedder
 
 
 @pytest.fixture
@@ -251,7 +251,6 @@ def test_vector_without_vectors_for_profile_is_embedding_missing(retrieval_sourc
 
 def test_embedding_failure_is_embedding_error_without_bm25_fallback(vector_source):
     """输入：已有向量，但嵌入查询时 Embedding 服务失败；输出：embedding_error，不退回 BM25 返回结果。"""
-    from _embedding_fakes import ErrorEmbedder
     settings, _, scope, _ = vector_source
     embedder = ErrorEmbedder()
     with pytest.raises(KnowledgeRetrievalError) as caught:

@@ -19,7 +19,8 @@
 - 实现（2026-11-08）：fa757b5 `embed_corpus`（reader 读 Chunk → 事务外调用 embedder → importer 一个事务写入；主键冲突报 exists，乐观写法，用户确认）；ddb44b8 `OpenAIEmbedder`（每批 32 条，`encoding_format=float`，查询为 `Instruct: <QUERY_TASK>
 Query:<查询>`）；d71f109 CLI；365c8c9 openai 延迟加载。新增测试 seam：`OpenAIEmbedder` + httpx.MockTransport（用户同意）。"reader 写不了向量表"由工单 01 的测试覆盖。
 - 审查：无代码改动。已知限制：Profile 的服务商段固定为 `siliconflow`，`base_url` 换成别家时 Profile 不会跟着变。
-- 真实冒烟（2026-11-08，用户同意，1 次调用）：`OpenAIEmbedder(EmbeddingSettings()).embed_query("Which column stores the name of each member?")`，服务 api.siliconflow.cn，Profile `siliconflow:Qwen/Qwen3-Embedding-8B:4096:content-v1:query-instruct-v1`，返回 4096 维、范数 1.0000，耗时 2.6 s。查询是通用句子，不取自评测题。- 正式 Corpus 生成向量（2026-11-08，用户同意，共 4 次 API 调用）：
+- 真实冒烟（2026-11-08，用户同意，1 次调用）：`OpenAIEmbedder(EmbeddingSettings()).embed_query("Which column stores the name of each member?")`，服务 api.siliconflow.cn，Profile `siliconflow:Qwen/Qwen3-Embedding-8B:4096:content-v1:query-instruct-v1`，返回 4096 维、范数 1.0000，耗时 2.6 s。查询是通用句子，不取自评测题。
+- 正式 Corpus 生成向量（2026-11-08，用户同意，共 4 次 API 调用）：
   - 命令：`querypilot knowledge store embed --corpus-id <id> --database-id <db> --schema-version <v>`，Profile 同上。
   - toxicology（`d4792b3c…`）：embedded，20 条，4096 维；运行目录 `artifacts/runs/knowledge_embed/2026-11-08/9d8ac83bb19a4ab19b8143d62696ab14`。
   - student_club（`66f8085b…`）：embedded，64 条，4096 维；运行目录 `artifacts/runs/knowledge_embed/2026-11-08/0c5fe0b6b6fc43ad9369cbad9c260b6d`。
