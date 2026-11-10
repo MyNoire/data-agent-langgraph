@@ -219,7 +219,7 @@ resources.files = forbid_resource_lookup
 import querypilot.retrieval.models
 import querypilot.retrieval.api
 import querypilot.retrieval._text
-assert querypilot.retrieval.models.RETRIEVAL_CONFIG_VERSION == "r3-bm25-v1"
+assert querypilot.retrieval.models.RETRIEVAL_CONFIG_VERSIONS["lexical"] == "r3-bm25-v1"
 assert not blocked.intersection(sys.modules)
 assert querypilot.retrieval._text.load_text_resources.cache_info().currsize == 0
 prepared = querypilot.retrieval._text.prepare_query("ATOM_ID")

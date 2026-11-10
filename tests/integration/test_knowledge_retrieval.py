@@ -229,6 +229,7 @@ def test_vector_ranks_chunks_by_cosine_similarity(vector_source):
     result = retrieve_knowledge(RetrievalRequest(query=VECTOR_QUERY, scope=scope, method="vector", top_k=3),
                                 settings, embedder=embedder)
     assert (result.method, result.embedding_profile_id) == ("vector", "fake:3:test-v1")
+    assert result.retrieval_config_version == "r4-vector-v1"
     assert [hit.chunk_key for hit in result.hits] == [
         _key("column", db, "main", "items", "label"),
         _key("table", db, "main", "items"),
@@ -326,6 +327,7 @@ def test_hybrid_fuses_both_rankings_with_rrf(vector_source):
     result = retrieve_knowledge(RetrievalRequest(query=VECTOR_QUERY, scope=scope, method="hybrid", top_k=5),
                                 settings, embedder=embedder)
     assert (result.method, result.embedding_profile_id) == ("hybrid", "fake:3:test-v1")
+    assert result.retrieval_config_version == "r4-hybrid-v1"
     assert [hit.chunk_key for hit in result.hits] == [
         _key("table", db, "main", "items"),
         _key("table", db, "main", "events"),
