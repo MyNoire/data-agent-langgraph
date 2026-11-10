@@ -148,7 +148,7 @@ BIRD 的说明文件里有编码错误。比如 toxicology 的 `atom.element` �
 | `vector` | 先确认当前 Embedding Profile 有向量（没有报 `embedding_missing`，不调用 API），把查询嵌入一次，按余弦距离精确排序 | 余弦相似度 |
 | `hybrid` | BM25 和向量各取 50 个候选，用 RRF（k=60，两路等权，同分按 `chunk_key`）融合后取前 `top_k` 个；BM25 没有命中时就是向量的排序 | RRF 分 Σ 1/(60 + 名次) |
 
-不同方法的分数不能直接比较。嵌入查询失败报 `embedding_error`，不退回 BM25。没传 embedder 时按 `QUERYPILOT_EMBEDDING_*` 创建；批量调用时由调用方创建一个传入。k、权重和候选数用固定的默认值，不针对评测题调整（见 ADR 0001）。
+三种方法在检索题集上的对比见[检索评测](../evaluation/retrieval-evaluation.md)第 3、4 节。不同方法的分数不能直接比较。嵌入查询失败报 `embedding_error`，不退回 BM25。没传 embedder 时按 `QUERYPILOT_EMBEDDING_*` 创建；批量调用时由调用方创建一个传入。k、权重和候选数用固定的默认值，不针对评测题调整（见 ADR 0001）。
 
 BM25 这一路的细节：
 
