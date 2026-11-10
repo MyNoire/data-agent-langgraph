@@ -71,7 +71,11 @@ K 取 5 和 10。几个关键决定：
 uv run querypilot eval retrieval-cases --questions <mini_dev_sqlite.json> --frozen evals/bird_final100.json `
   --corpus-dir data/rag/toxicology/r1-4-corpus --corpus-dir data/rag/student_club/r1-4-corpus `
   --output evals/retrieval/retrieval_cases.json
-uv run querypilot eval retrieval --cases evals/retrieval/retrieval_cases.json
+uv run querypilot eval retrieval --cases evals/retrieval/retrieval_cases.json                  # 默认 lexical
+uv run querypilot eval retrieval --cases evals/retrieval/retrieval_cases.json --method vector
+uv run querypilot eval retrieval --cases evals/retrieval/retrieval_cases.json --method hybrid
 ```
 
-需要已经导入 PostgreSQL 的知识库，以及 `.env` 里的只读 DSN。计分规则的测试使用假检索器，不需要连数据库：`tests/test_retrieval_eval_scoring.py`。
+需要已经导入 PostgreSQL 的知识库，以及 `.env` 里的只读 DSN。`--method` 可选 `lexical`（BM25，默认）、`vector`、`hybrid`（RRF 融合），见[知识库](../knowledge/knowledge-base.md)第 7 节。vector 和 hybrid 还需要 `QUERYPILOT_EMBEDDING_*` 配置和已生成的向量（`knowledge store embed`），每道题调用一次 Embedding 服务，88 题约 88 次，**会产生费用**。
+
+三种方法的题集、Corpus、`top_k=20`、K=5/10 和 Column Recall@10 都相同，差异只来自检索方法。运行配置记录 `method`；报告的 `config.method` 是请求的方法，`config.retrieval` 列出结果实际用到的方法、Embedding Profile 和配置版本（`r3-bm25-v1` / `r4-vector-v1` / `r4-hybrid-v1`，含义写在 `retrieval/models.py` 的 `RETRIEVAL_CONFIG_VERSIONS` 旁）。计分规则的测试使用假检索器，不需要连数据库：`tests/test_retrieval_eval_scoring.py`。
