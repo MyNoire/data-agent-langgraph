@@ -9,7 +9,7 @@ from querypilot.knowledge.api import (
     OpenAIEmbedder, open_read_scope,
 )
 
-from . import _search, _text
+from . import _search, _text, _fusion
 from .models import (
     KnowledgeRetrievalError,
     RetrievalHit,
@@ -44,7 +44,7 @@ def retrieve_knowledge(request: RetrievalRequest, settings: KnowledgeStorageSett
     """
     started = time.perf_counter()
     try:
-        terms = _text.query_terms(request.query) if request.method == "lexical" else None
+        terms = _text.query_terms(request.query) if request.method == "lexical" or request.method == "hybrid" else None
         if request.method != "lexical" and embedder is None:
             embedder = OpenAIEmbedder(EmbeddingSettings())
         with open_read_scope(request.scope, settings) as session:
@@ -58,6 +58,17 @@ def retrieve_knowledge(request: RetrievalRequest, settings: KnowledgeStorageSett
                 except EmbeddingError as exc:
                     raise KnowledgeRetrievalError(exc.error_type, str(exc)) from exc
                 rows = _search.vector_chunks(session, request, embedder.profile_id, query_vector)
+            elif request.method == "hybrid":
+                candidates = request.model_copy(update={"top_k": _fusion.CANDIDATES_PER_BRANCH})
+                lexical_rows = _search.search_chunks(session, candidates, terms)
+                if not _search.has_vectors(session, embedder.profile_id):
+                    raise KnowledgeRetrievalError("embedding_missing", "当前 Embedding Profile 在该 Scope 下没有向量")
+                try:
+                    query_vector = embedder.embed_query(candidates.query)
+                except EmbeddingError as exc:
+                    raise KnowledgeRetrievalError(exc.error_type, str(exc)) from exc
+                vector_rows = _search.vector_chunks(session, candidates, embedder.profile_id, query_vector)
+                rows = _fusion.reciprocal_rank_fusion([lexical_rows, vector_rows])[:request.top_k]
         hits = [RetrievalHit(rank=i, **row) for i, row in enumerate(rows, start=1)]
     except KnowledgeReadError as exc:
         raise KnowledgeRetrievalError(exc.error_type, str(exc)) from exc
@@ -73,7 +84,7 @@ def retrieve_knowledge(request: RetrievalRequest, settings: KnowledgeStorageSett
         hits=hits,
         elapsed_ms=(time.perf_counter() - started) * 1000,
         method=request.method,
-        embedding_profile_id=embedder.profile_id if request.method == "vector" else None,
+        embedding_profile_id=embedder.profile_id if request.method == "vector" or request.method == "hybrid" else None,
     )
 
 

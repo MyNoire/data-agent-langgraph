@@ -305,3 +305,30 @@ def test_lexical_neither_calls_nor_builds_an_embedder(vector_source, monkeypatch
         monkeypatch.delenv(f"QUERYPILOT_EMBEDDING_{name}", raising=False)
     monkeypatch.chdir(tmp_path)                       # 不读仓库的 .env
     assert retrieve_knowledge(request, settings).method == "lexical"
+
+
+def test_hybrid_fuses_both_rankings_with_rrf(vector_source):
+    """输入：method=hybrid，top_k=5。两路各取 50 个候选（探针 Corpus 只有 8 个 Chunk）：
+
+    BM25：items 表、events 表、关系                     （"物品"命中三个块）
+    向量：label、items 表、item_ref、tenant_ref、item_id、tenant_id、关系、events 表
+    RRF： items 表 1/61+1/62，events 表 1/62+1/68，关系 1/63+1/67，label 1/61，item_ref 1/63
+
+    输出：label 在向量里第 1、融合后第 4；events 表在向量里最后、融合后第 2。
+    """
+    settings, _, scope, embedder = vector_source
+    db = scope.database_id
+    result = retrieve_knowledge(RetrievalRequest(query=VECTOR_QUERY, scope=scope, method="hybrid", top_k=5),
+                                settings, embedder=embedder)
+    assert (result.method, result.embedding_profile_id) == ("hybrid", "fake:3:test-v1")
+    assert [hit.chunk_key for hit in result.hits] == [
+        _key("table", db, "main", "items"),
+        _key("table", db, "main", "events"),
+        _key("relationship", db, "main", "events", 0),
+        _key("column", db, "main", "items", "label"),
+        _key("column", db, "main", "events", "item_ref"),
+    ]
+    assert [hit.rank for hit in result.hits] == [1, 2, 3, 4, 5]
+    assert [hit.score for hit in result.hits] == pytest.approx(
+        [0.0325225, 0.0308349, 0.0307984, 0.0163934, 0.0158730], abs=1e-7)
+    assert embedder.query_calls == 1
