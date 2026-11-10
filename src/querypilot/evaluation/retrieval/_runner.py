@@ -79,7 +79,7 @@ def evaluate_retrieval(cases_file: Path, settings: Settings, *, method: Retrieva
     retriever = retriever or _default_retriever(method)
     owned = run_context is None
     with task_run("evaluation", settings, run_context=run_context, command="retrieval",
-                  config={"mode": "retrieval", "dataset_sha256": dataset_sha256, "method": method}) as context:
+                  config=retrieval_run_config(cases_file, method)) as context:
         context.event("eval_started", total_cases=len(case_set.cases))
         records, versions = [], []
         for index, case in enumerate(case_set.cases, start=1):
