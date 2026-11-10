@@ -239,7 +239,7 @@ def test_vector_ranks_chunks_by_cosine_similarity(vector_source):
 
 
 @pytest.mark.parametrize("method", ["vector", "hybrid"])
-def test_vector_without_vectors_for_profile_is_embedding_missing(retrieval_source, method):
+def test_vector_and_hybrid_without_vectors_are_embedding_missing(retrieval_source, method):
     """输入：探针 Corpus 没有当前 Profile 的向量；输出：embedding_missing，查询不嵌入（不花钱）。
     hybrid 也不只返回 BM25 那一路。"""
     settings, _, scope = retrieval_source
@@ -337,8 +337,6 @@ def test_hybrid_fuses_both_rankings_with_rrf(vector_source):
     assert [hit.score for hit in result.hits] == pytest.approx(
         [0.0325225, 0.0308349, 0.0307984, 0.0163934, 0.0158730], abs=1e-7)
     assert embedder.query_calls == 1
-
-
 
 
 def test_hybrid_with_no_bm25_hits_returns_the_vector_ranking(vector_source):

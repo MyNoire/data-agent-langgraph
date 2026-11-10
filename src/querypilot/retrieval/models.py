@@ -16,7 +16,8 @@ STOPWORDS_VERSION = "zh-courtesy-v1"
 STOPWORDS_SHA256 = "fede53918dc355e74fe89e5070a04ce6a84dd7a1077d96455026b0d9bc7c99bd"
 
 KnowledgeType = Literal["table", "column", "relationship"]
-# lexical：BM25；vector：查询嵌入后按余弦距离精确扫描当前 Embedding Profile 的向量。
+# lexical：BM25；vector：查询嵌入后按余弦距离精确扫描当前 Embedding Profile 的向量；
+# hybrid：BM25 与向量两路用 RRF 融合。
 RetrievalMethod = Literal["lexical", "vector", "hybrid"]
 TopK = Annotated[int, Field(strict=True, ge=1, le=50)]
 
