@@ -238,23 +238,26 @@ def test_vector_ranks_chunks_by_cosine_similarity(vector_source):
     assert embedder.query_calls == 1
 
 
-def test_vector_without_vectors_for_profile_is_embedding_missing(retrieval_source):
-    """输入：探针 Corpus 没有当前 Profile 的向量；输出：embedding_missing，查询不嵌入（不花钱）。"""
+@pytest.mark.parametrize("method", ["vector", "hybrid"])
+def test_vector_without_vectors_for_profile_is_embedding_missing(retrieval_source, method):
+    """输入：探针 Corpus 没有当前 Profile 的向量；输出：embedding_missing，查询不嵌入（不花钱）。
+    hybrid 也不只返回 BM25 那一路。"""
     settings, _, scope = retrieval_source
     embedder = FakeEmbedder()
     with pytest.raises(KnowledgeRetrievalError) as caught:
-        retrieve_knowledge(RetrievalRequest(query=VECTOR_QUERY, scope=scope, method="vector"),
+        retrieve_knowledge(RetrievalRequest(query=VECTOR_QUERY, scope=scope, method=method),
                            settings, embedder=embedder)
     assert caught.value.error_type == "embedding_missing"
     assert embedder.query_calls == 0
 
 
-def test_embedding_failure_is_embedding_error_without_bm25_fallback(vector_source):
+@pytest.mark.parametrize("method", ["vector", "hybrid"])
+def test_embedding_failure_is_embedding_error_without_bm25_fallback(vector_source, method):
     """输入：已有向量，但嵌入查询时 Embedding 服务失败；输出：embedding_error，不退回 BM25 返回结果。"""
     settings, _, scope, _ = vector_source
     embedder = ErrorEmbedder()
     with pytest.raises(KnowledgeRetrievalError) as caught:
-        retrieve_knowledge(RetrievalRequest(query=VECTOR_QUERY, scope=scope, method="vector"),
+        retrieve_knowledge(RetrievalRequest(query=VECTOR_QUERY, scope=scope, method=method),
                            settings, embedder=embedder)
     assert caught.value.error_type == "embedding_error"
     assert embedder.query_calls == 1
@@ -276,14 +279,16 @@ def test_vector_without_embedder_builds_one_from_settings(retrieval_source, monk
     assert caught.value.error_type == "embedding_missing"
 
 
-def test_vector_filters_by_knowledge_types(vector_source):
-    """输入：method=vector，只要表块；输出：只返回表块，items 表（0.7071）排第一。"""
+@pytest.mark.parametrize(("method", "top_score"), [("vector", 0.7071), ("hybrid", round(2 / 61, 4))])
+def test_vector_and_hybrid_filter_by_knowledge_types(vector_source, method, top_score):
+    """输入：只要表块；输出：只返回表块，items 表排第一。vector 分数为余弦 0.7071；
+    hybrid 中 items 表在两路的表块里都排第 1，RRF 分 2/61。"""
     settings, _, scope, embedder = vector_source
-    result = retrieve_knowledge(RetrievalRequest(query=VECTOR_QUERY, scope=scope, method="vector",
+    result = retrieve_knowledge(RetrievalRequest(query=VECTOR_QUERY, scope=scope, method=method,
                                                  knowledge_types=["table"]), settings, embedder=embedder)
     assert result.hits and {hit.knowledge_type for hit in result.hits} == {"table"}
     assert result.hits[0].chunk_key == _key("table", scope.database_id, "main", "items")
-    assert round(result.hits[0].score, 4) == 0.7071
+    assert round(result.hits[0].score, 4) == top_score
 
 
 def test_vector_query_needs_no_lexical_terms(vector_source):
@@ -332,3 +337,33 @@ def test_hybrid_fuses_both_rankings_with_rrf(vector_source):
     assert [hit.score for hit in result.hits] == pytest.approx(
         [0.0325225, 0.0308349, 0.0307984, 0.0163934, 0.0158730], abs=1e-7)
     assert embedder.query_calls == 1
+
+
+
+
+def test_hybrid_with_no_bm25_hits_returns_the_vector_ranking(vector_source):
+    """输入：method=hybrid，查询有词但 BM25 一个都没命中，查询向量为 [1,0,0]；
+    输出：BM25 那一路为空，名次与 vector 相同，分数为 RRF 分 1/61、1/62、1/63。"""
+    settings, _, scope, _ = vector_source
+    db = scope.database_id
+    embedder = FakeEmbedder({"zzqxv": [1.0, 0.0, 0.0]})
+    result = retrieve_knowledge(RetrievalRequest(query="zzqxv", scope=scope, method="hybrid", top_k=3),
+                                settings, embedder=embedder)
+    assert [hit.chunk_key for hit in result.hits] == [
+        _key("column", db, "main", "items", "label"),
+        _key("table", db, "main", "items"),
+        _key("column", db, "main", "events", "item_ref"),
+    ]
+    assert [hit.score for hit in result.hits] == pytest.approx([0.0163934, 0.0161290, 0.0158730], abs=1e-7)
+
+
+def test_hybrid_without_lexical_terms_is_input_error_without_embedding(vector_source):
+    """输入：method=hybrid，查询全是标点；输出：与 lexical 一样报 input_error，不调用 Embedding 服务。
+
+    向量检索对任何输入都会返回 top_k 个结果，退化成纯向量会把明确的输入错误变成看似正常的 Hit。
+    """
+    settings, _, scope, embedder = vector_source
+    with pytest.raises(KnowledgeRetrievalError) as caught:
+        retrieve_knowledge(RetrievalRequest(query="？！……", scope=scope, method="hybrid"), settings, embedder=embedder)
+    assert caught.value.error_type == "input_error"
+    assert embedder.query_calls == 0

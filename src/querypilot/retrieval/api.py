@@ -24,23 +24,25 @@ def retrieve_knowledge(request: RetrievalRequest, settings: KnowledgeStorageSett
     """在 request.scope 指定的 Corpus 中按 request.method 做一次检索。
 
     lexical 为 BM25，不使用 embedder；vector 先确认当前 Embedding Profile 的向量存在，
-    再把查询嵌入一次，按余弦距离做精确全表扫描。
+    再把查询嵌入一次，按余弦距离做精确全表扫描；hybrid 让 BM25 和向量各取 50 个候选，
+    用 RRF 融合后取前 top_k 个，BM25 没有命中时结果就是向量那一路的排序。
 
     参数：
         request：查询原文、Knowledge Scope、检索方法、top_k 和知识类型。
         settings：知识存储的读取配置（使用只读账号）。
-        embedder：vector 使用的 Embedder，决定 Embedding Profile。没传时按 QUERYPILOT_EMBEDDING_*
+        embedder：vector 和 hybrid 使用的 Embedder，决定 Embedding Profile。没传时按 QUERYPILOT_EMBEDDING_*
             配置创建 OpenAIEmbedder；lexical 不创建也不调用。批量调用时应由调用方创建一个并传入，
             复用同一个客户端。
     返回：
         RetrievalResult，写明实际方法和 Embedding Profile（lexical 时为 None）。有 Hit 时
         outcome 为 matched，hits 按 rank 从 1 连续排列；否则为 no_match。
     异常：
-        KnowledgeRetrievalError：lexical 查询没有有效词时为 input_error；当前 Profile 没有向量时
+        KnowledgeRetrievalError：lexical 或 hybrid 查询没有有效词时为 input_error（hybrid 不调用
+        Embedding 服务）；当前 Profile 没有向量时
         为 embedding_missing；嵌入查询失败时为 embedding_error，不退回 BM25；范围不存在或不匹配、
         超出资源上限、连接或权限等读取失败时，沿用读取层的错误类别。
     副作用：
-        只读访问知识库；vector 调用一次 Embedding 服务；不记录查询原文。
+        只读访问知识库；vector 和 hybrid 调用一次 Embedding 服务；不记录查询原文。
     """
     started = time.perf_counter()
     try:

@@ -98,7 +98,8 @@ Status: ready-for-agent
   3. 在 Scope、Profile 和 `knowledge_types` 范围内按余弦距离做精确全表扫描，不建 ANN 索引。
   - `score` 为余弦相似度；距离相同时按 `chunk_key`、`chunk_id` 排序。
 - **hybrid**：BM25 和向量各取 50 个候选（`TopK` 的上限），用 RRF 融合后取前 top_k 个。
-  - BM25 查询没有有效词时，hybrid 只用向量那一路。lexical 在这种情况下仍报 `input_error`，行为不变。
+  - BM25 有词但一个都没命中时，BM25 那一路为空，结果就是向量那一路的排序（RRF 本身处理空的一路，不另写分支）。
+  - 查询没有有效词时，hybrid 与 lexical 一样报 `input_error`，不调用 Embedding 服务。向量检索对任何输入都会返回 top_k 个结果，退化成纯向量会把明确的输入错误变成看似正常的 Hit；无意义输入由上层澄清或拒答。BM25 基线 88 题中没有一道 `input_error`。
 - **RRF** 是一个纯函数：输入若干路已排好序的 Chunk 列表，每个 Chunk 的分数为 Σ 1/(60 + rank)，rank 从 1 开始；两路权重相同；分数相同时按 `chunk_key` 排序。k=60 和权重都不调整。
 - `RetrievalResult.method` 改为实际使用的方法，并增加 Embedding Profile 字段（lexical 时为空），结果版本号随之升级。Hit 结构不变，不增加"各路名次"字段。
 - 单条检索的 CLI 也增加 `--method`。
@@ -120,7 +121,7 @@ Status: ready-for-agent
 - **Seam 1：`retrieve_knowledge`，真实 PG 加原创小 Corpus**。沿用现有检索集成测试的夹具，需要 `--require-postgres`。覆盖：
   - vector 按相似度排序；
   - hybrid 的排序是两路融合的结果；
-  - hybrid 在 BM25 无命中、或查询没有有效词时只用向量；
+  - hybrid 在 BM25 无命中时只用向量；查询没有有效词时报 `input_error` 且不嵌入；
   - `knowledge_types` 过滤；
   - 结果里的 `method` 和 Profile；
   - `embedding_missing`、`embedding_error`；

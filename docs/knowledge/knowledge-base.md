@@ -138,12 +138,22 @@ BIRD 的说明文件里有编码错误。比如 toxicology 的 `atom.element` �
 - **导入**：先重新校验快照，再在一个事务里写入。如果同一个快照已经导入过，就逐字段读回核对，一致就复用（`reused`），不一致就拒绝，绝不覆盖。如果没收到 COMMIT 的确认，结果记为 `unknown`，不会猜成功或失败。
 - **读取**：`open_read_scope` 开一个 `REPEATABLE READ READ ONLY` 事务，先核对 Scope 存在，之后的查询都在同一个一致的快照视图里进行。会话只暴露有上限的读取方法，不给连接和游标。
 
-## 7. BM25 检索
+## 7. 检索：BM25、向量与混合
 
-`retrieve_knowledge(request, settings)` 在一个 Scope 内做一次 BM25 检索，返回按分数排好序的 Hit 列表。
+`retrieve_knowledge(request, settings, embedder=None)` 在一个 Scope 内做一次检索，返回按分数排好序的 Hit 列表。`request.method` 选择方法，默认 `lexical`：
+
+| method | 做什么 | `score` |
+|---|---|---|
+| `lexical` | BM25，不使用 embedder | BM25 分 |
+| `vector` | 先确认当前 Embedding Profile 有向量（没有报 `embedding_missing`，不调用 API），把查询嵌入一次，按余弦距离精确排序 | 余弦相似度 |
+| `hybrid` | BM25 和向量各取 50 个候选，用 RRF（k=60，两路等权，同分按 `chunk_key`）融合后取前 `top_k` 个；BM25 没有命中时就是向量的排序 | RRF 分 Σ 1/(60 + 名次) |
+
+不同方法的分数不能直接比较。嵌入查询失败报 `embedding_error`，不退回 BM25。没传 embedder 时按 `QUERYPILOT_EMBEDDING_*` 创建；批量调用时由调用方创建一个传入。k、权重和候选数固定不调，见 ADR 0001。
+
+BM25 这一路的细节：
 
 - **索引**：使用 pg_search 0.26.4。`title`、`content` 和展示名用 `jieba` 分词，支持中文；`table_name`、`column_name`、`schema_name` 用 `simple` 分词。
-- **查询处理**：ASCII 字母转成小写，除字母、数字、汉字以外的字符都当作分隔符；中文片段用 jieba 分词，并过滤掉表达用的词；最后保序去重。如果没有一个有效的词，返回 `input_error`。
+- **查询处理**：ASCII 字母转成小写，除字母、数字、汉字以外的字符都当作分隔符；中文片段用 jieba 分词，并过滤掉表达用的词；最后保序去重。如果没有一个有效的词，返回 `input_error`；hybrid 也一样，不会退化成只用向量（向量检索对任何输入都会给出 top_k 个结果，会把输入错误变成看似正常的 Hit）。
 - **匹配和排序**：任意一个词命中任意一个字段就算候选（OR）。先按 Scope 和知识类型过滤，再按分数降序排列；分数相同时，按 `chunk_key`、`chunk_id` 排，保证结果稳定。`top_k` 默认 10，最大 50。
 - **只读**：使用 reader 角色和只读事务；检索结果里只带查询的 sha256，不带原文。
 
