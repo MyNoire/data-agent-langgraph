@@ -13,6 +13,7 @@ from . import _fusion, _search, _text
 from .models import (
     KnowledgeRetrievalError,
     RetrievalHit,
+    RetrievalMethod,
     RetrievalRequest,
     RetrievalResult,
     ScopeFile,
@@ -99,6 +100,7 @@ def retrieve_knowledge(request: RetrievalRequest, settings: KnowledgeStorageSett
 __all__ = [
     "retrieve_knowledge",
     "RetrievalRequest",
+    "RetrievalMethod",
     "RetrievalResult",
     "RetrievalHit",
     "KnowledgeRetrievalError",

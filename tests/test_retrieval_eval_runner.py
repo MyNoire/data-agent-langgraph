@@ -39,10 +39,12 @@ def _hit(rank: int, knowledge_type: str = "column", table: str | None = "items",
 
 
 def _result(request, hits: list[RetrievalHit], elapsed_ms: float = 1.0) -> RetrievalResult:
+    """按请求的方法返回结果；vector 和 hybrid 带上假的 Embedding Profile。"""
+    profile = None if request.method == "lexical" else "fake:3:test-v1"
     return RetrievalResult(request_id=str(uuid4()), outcome="matched" if hits else "no_match", scope=request.scope,
                            query_sha256=sha256(request.query.encode()).hexdigest(), top_k=request.top_k,
                            knowledge_types=request.knowledge_types, hit_count=len(hits), hits=hits,
-                           elapsed_ms=elapsed_ms)
+                           elapsed_ms=elapsed_ms, method=request.method, embedding_profile_id=profile)
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -70,7 +72,8 @@ def test_each_case_is_retrieved_once_and_recorded_without_question_text(tmp_path
     assert report["config"] == {
         "dataset_sha256": sha256(cases_file.read_bytes()).hexdigest(),
         "scopes": {"demo": SCOPE.model_dump(mode="json")},
-        "retrieval": [{"method": "lexical", "retrieval_config_version": "r3-bm25-v1"}],
+        "method": "lexical",
+        "retrieval": [{"method": "lexical", "embedding_profile_id": None, "retrieval_config_version": "r3-bm25-v1"}],
         "top_k": 20,
         "table_ks": [5, 10],
         "column_k": 10,
@@ -82,6 +85,27 @@ def test_each_case_is_retrieved_once_and_recorded_without_question_text(tmp_path
     saved = (runs[0] / "result.json").read_text(encoding="utf-8")
     assert json.loads(saved)["records"] == report["records"]
     assert "Which secret labels?" not in saved and "secret hit text" not in saved
+
+
+def test_method_reaches_every_request_the_run_config_and_the_report(tmp_path):
+    """输入：method=hybrid；输出：每个请求都是 hybrid，运行配置和报告记下方法、Profile 和配置版本。"""
+    cases_file = _cases_file(tmp_path, [_case(1), _case(2)])
+    requests = []
+
+    def retriever(request):
+        requests.append(request)
+        return _result(request, [_hit(1)])
+
+    report = evaluate_retrieval(cases_file, _settings(tmp_path), method="hybrid", retriever=retriever)
+
+    assert [request.method for request in requests] == ["hybrid", "hybrid"]
+    assert report["config"]["method"] == "hybrid"
+    assert report["config"]["retrieval"] == [
+        {"method": "hybrid", "embedding_profile_id": "fake:3:test-v1", "retrieval_config_version": "r4-hybrid-v1"},
+    ]
+    runs = list((tmp_path / "artifacts").glob("runs/evaluation/*/*"))
+    config = json.loads((runs[0] / "config.json").read_text(encoding="utf-8"))
+    assert config["parameters"]["method"] == "hybrid"
 
 
 def test_input_error_is_recorded_on_the_case_and_the_batch_continues(tmp_path):
@@ -145,10 +169,17 @@ def test_cli_runs_one_recorded_evaluation_and_prints_locations(tmp_path, monkeyp
 
     settings = _settings(tmp_path)
     monkeypatch.setattr(cli, "get_settings", lambda: settings)
-    monkeypatch.setattr(_runner, "_default_retriever", lambda: lambda request: _result(request, [_hit(1)]))
+    built_for, requests = [], []
+
+    def default_retriever(method):
+        built_for.append(method)
+        return lambda request: requests.append(request) or _result(request, [_hit(1)])
+
+    monkeypatch.setattr(_runner, "_default_retriever", default_retriever)
     cases_file = _cases_file(tmp_path, [_case(1, question="PRIVATE RETRIEVAL QUESTION")])
 
-    assert cli.main(["eval", "retrieval", "--cases", str(cases_file)]) == 0
+    assert cli.main(["eval", "retrieval", "--cases", str(cases_file), "--method", "vector"]) == 0
+    assert built_for == ["vector"] and [request.method for request in requests] == ["vector"]
 
     captured = capsys.readouterr()
     output = json.loads(captured.out)
@@ -157,6 +188,7 @@ def test_cli_runs_one_recorded_evaluation_and_prints_locations(tmp_path, monkeyp
     record = json.loads((runs[0] / "run.json").read_text(encoding="utf-8"))
     config = json.loads((runs[0] / "config.json").read_text(encoding="utf-8"))
     assert record["status"] == "completed" and config["parameters"]["mode"] == "retrieval"
+    assert config["parameters"]["method"] == "vector"
     assert Path(output["result_file"]) == runs[0] / "result.json"
     assert output["summary"]["overall"]["cases"] == 1
     safe = captured.out + captured.err + (runs[0] / "events.jsonl").read_text(encoding="utf-8")
