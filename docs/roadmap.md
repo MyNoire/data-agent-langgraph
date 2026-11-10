@@ -26,16 +26,17 @@
 | R2 知识存储 | PostgreSQL 分角色迁移、导入、读回核对，限定 Scope 的只读会话 | [知识库](knowledge/knowledge-base.md) |
 | R3 词法检索 | pg_search BM25，`retrieve_knowledge` | [知识库](knowledge/knowledge-base.md) |
 | 检索评测 | 88 题检索题集、按 Hit 计的召回指标、BM25 基线和失败分析 | [检索评测](evaluation/retrieval-evaluation.md) |
+| R4 向量与混合检索 | Embedding 向量存在 Corpus 之外（[ADR 0002](adr/0002-embeddings-outside-corpus.md)），精确向量检索，RRF 融合；三种方法对比：hybrid 的 Complete Recall@5 从 64.8% 升到 68.2%，vector 单独用略低于 BM25 | [检索评测](evaluation/retrieval-evaluation.md)、[知识库](knowledge/knowledge-base.md) |
 | 工程基础 | 模块边界测试，运行记录与安全事件 | [模块](architecture/modules.md)、[运行记录](architecture/observability.md) |
 
 ## 下一步
 
 | 阶段 | 要回答的问题 | 内容 |
 |---|---|---|
-| **R4 向量与混合检索**（下一项） | 语义召回补上了什么？ | 接入 Embedding，做精确向量检索，用 RRF 与 BM25 融合；在同一份检索题集上和 BM25 基线对比 |
+| **R4b 重排** | 精排能把相关的表提到前面吗？ | 在 R4 的检索结果上加 Reranker 模型，做成独立开关，和 R4 的最好结果对比 |
 | 知识结构评测 | 粒度怎么切最好？ | 比较列级、表级和 small-to-big，在**相同的上下文 token 预算**下评测 |
 | R5 检索接入查询图 | 检索结果能帮模型写对 SQL 吗？ | 按表组织命中的内容，控制上下文预算；加入检索节点和上下文节点；用 SQL 评测和"完整 Schema"基线对比 |
-| R6 重排与外键扩展 | 排序和 JOIN 路径还缺什么？ | Reranker 和外键扩展分别做成独立开关，各自做消融 |
+| R6 外键扩展 | JOIN 路径还缺什么？ | 检索后按外键补上桥接表，做成独立开关并做消融 |
 | 选库、修复与多轮 | 系统能不能自己选库、自己修错、记住上下文？ | 带拒答的选库；SQL 错误分类与有限次修复；checkpoint 和长期记忆的边界 |
 | 正式评测 | 哪些机制真的有效，代价是多少？ | 固定知识快照、模型、提示词和检索配置，跑冻结的 100 题，报告配对差异和成本 |
 

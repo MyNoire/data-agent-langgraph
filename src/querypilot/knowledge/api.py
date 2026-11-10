@@ -39,6 +39,8 @@ from .knowledge_corpus.api import (
     parse_json,
 )
 
+from .knowledge_embedding.api import Embedder, EmbeddingError, EmbeddingSettings, OpenAIEmbedder
+
 from .knowledge_store.api import (
     KnowledgeStorageError,
     KnowledgeStorageSettings,
@@ -46,6 +48,7 @@ from .knowledge_store.api import (
     ImportSummary,
     ImportVerificationSummary,
     ManagementSummary,
+    EmbeddingSummary,
     KnowledgeScope,
     ReadLimits,
     ReadView,
@@ -61,6 +64,7 @@ from .knowledge_store.api import (
     manage_store,
     import_corpus,
     verify_import,
+    embed_corpus,
 )
 
 __all__ = [
@@ -103,6 +107,7 @@ __all__ = [
     "ImportSummary",
     "ImportVerificationSummary",
     "ManagementSummary",
+    "EmbeddingSummary",
     "KnowledgeScope",
     "ReadLimits",
     "ReadView",
@@ -118,4 +123,9 @@ __all__ = [
     "manage_store",
     "import_corpus",
     "verify_import",
+    "embed_corpus",
+    "Embedder",
+    "EmbeddingError",
+    "EmbeddingSettings",
+    "OpenAIEmbedder",
 ]

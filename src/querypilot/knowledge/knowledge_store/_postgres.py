@@ -10,7 +10,6 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
-from sqlglot import exp, parse, parse_one
 
 from querypilot.knowledge.knowledge_corpus.api import canonical_json, digest
 from querypilot.knowledge.knowledge_corpus.api import CorpusDocument, CorpusChunk, CorpusRelation
@@ -22,6 +21,12 @@ from .models import (
 
 SCHEMA = "querypilot_kb"
 TABLES = {"documents": "knowledge_documents", "relations": "schema_relations", "chunks": "knowledge_chunks"}
+# 只能依次追加，已发布的迁移文件不能修改；数据库里记录的版本和摘要必须与这里一一对应。
+# 版本号固定三位补零，按文本排序即执行顺序。
+MIGRATIONS = (("001", "001_corpus.sql"), ("002", "002_chunk_embeddings.sql"))
+LATEST_MIGRATION = MIGRATIONS[-1][0]
+# 除迁移表外的知识表：reader 只读，importer 只读和追加。
+KNOWLEDGE_TABLES = ("knowledge_corpora", *TABLES.values(), "chunk_embeddings")
 MODELS = {"documents": CorpusDocument, "relations": CorpusRelation, "chunks": CorpusChunk}
 CORPUS_FIELDS = (
     "corpus_id", "database_id", "schema_version", "core_digest", "manifest",
@@ -72,74 +77,14 @@ def transaction_limits(conn: psycopg.Connection, settings: KnowledgeStorageSetti
         conn.execute("SELECT set_config(%s, %s, true)", (name, str(value)))
 
 
-def migration_bytes() -> bytes:
-    """输入：无；输出：包内固定迁移字节；异常：资源 I/O 错误；只读。"""
-    return files("querypilot.knowledge.knowledge_store").joinpath("migrations/001_corpus.sql").read_bytes()
+def migration_bytes(filename: str) -> bytes:
+    """读取包内一个迁移文件的原始字节。"""
+    return files("querypilot.knowledge.knowledge_store").joinpath("migrations", filename).read_bytes()
 
 
-def _normalize_expression(node: exp.Expression) -> str:
-    """输入：可信 DDL/PG 反解析 AST；输出：语义保序表达式；无副作用。"""
-    def normalize(item: exp.Expression) -> exp.Expression:
-        """输入：一个 AST 节点；输出：去冗余包装/已知隐式 cast 的节点，保留逻辑结构。"""
-        if isinstance(item, exp.Paren):
-            return item.this
-        if (isinstance(item, exp.Cast) and isinstance(item.this, (exp.Literal, exp.Null))
-                and item.args["to"].is_type(exp.DataType.Type.TEXT)):
-            return item.this
-        # PG 将 vector_norm(...) > 0 反解析为 > 0::double precision。
-        # 只合并这个已知函数的精确零阈值，保留其他数值 cast 的语义。
-        if (isinstance(item, exp.Cast) and isinstance(item.this, exp.Literal)
-                and not item.this.is_string and item.this.this == "0"
-                and item.args["to"].is_type(exp.DataType.Type.DOUBLE)
-                and isinstance(item.parent, exp.GT) and item.parent.expression is item):
-            left = item.parent.this
-            if isinstance(left, exp.Dot) and left.this.name == "public":
-                left = left.expression
-            if isinstance(left, exp.Anonymous) and left.name.lower() == "vector_norm":
-                return item.this
-        if isinstance(item, exp.Dot) and item.this.name == "public":
-            return item.expression
-        return item
-    # 多遍只去表达层包装，保留 AND/OR 子树和复合键成员顺序。
-    while True:
-        previous = node.dump()
-        node = node.transform(normalize)
-        if node.dump() == previous:
-            break
-    for item in node.walk():
-        item.meta.clear()
-    # 比较 AST 树而非移除括号后的 SQL 文本；后者会丢失 AND/OR 分组语义。
-    return canonical_json(node.dump()).decode("utf-8")
-
-
-def _constraint_expression(definition: str) -> str:
-    """输入：PG 约束定义；输出：规范 AST；异常：解析错误；无副作用。"""
-    statement = parse_one("ALTER TABLE t ADD CONSTRAINT c " + definition, read="postgres")
-    return _normalize_expression(statement.find(exp.Constraint).expressions[0])
-
-
-def expected_structure() -> dict[str, Any]:
-    """输入：无；输出：从受控迁移生成的列/约束预期；只读，不信任数据库成功标记。"""
-    result = {}
-    for statement in parse(migration_bytes().decode("utf-8"), read="postgres"):
-        if not isinstance(statement, exp.Create) or statement.args.get("kind") != "TABLE":
-            continue
-        columns, constraints = [], {}
-        for item in statement.this.expressions:
-            if isinstance(item, exp.ColumnDef):
-                kinds = [c.kind for c in item.constraints]
-                primary = any(isinstance(k, exp.PrimaryKeyColumnConstraint) for k in kinds)
-                default = next((k.this.sql(dialect="postgres") for k in kinds if isinstance(k, exp.DefaultColumnConstraint)), None)
-                type_name = item.kind.sql(dialect="postgres").lower().replace("public.", "")
-                type_name = {"timestamptz": "timestamp with time zone", "int": "integer"}.get(type_name, type_name)
-                columns.append((item.name, type_name, primary or any(isinstance(k, exp.NotNullColumnConstraint) for k in kinds), default))
-                for constraint in item.constraints:
-                    if isinstance(constraint.kind, exp.PrimaryKeyColumnConstraint):
-                        constraints[constraint.name] = _constraint_expression(f"PRIMARY KEY ({item.name})")
-            elif isinstance(item, exp.Constraint):
-                constraints[item.name] = _normalize_expression(item.expressions[0])
-        result[statement.this.this.name] = {"columns": columns, "constraints": constraints}
-    return result
+def migration_records() -> list[dict[str, str]]:
+    """全部迁移的版本和摘要，按执行顺序排列；与 schema_migrations 的内容逐行对应。"""
+    return [{"version": version, "checksum": digest(migration_bytes(filename))} for version, filename in MIGRATIONS]
 
 
 def versions(conn: psycopg.Connection) -> tuple[str, str]:
@@ -165,7 +110,7 @@ def check_permissions(conn: psycopg.Connection, *, tables: bool = True) -> None:
         if db["c"] or db["t"] or db["owner"] or writable or memberships or owned:
             raise KnowledgeStorageError("migration_conflict", "运行角色存在额外 CREATE/TEMPORARY/所有权或成员权限")
         if tables:
-            for table in ("schema_migrations", *TABLES.values(), "knowledge_corpora"):
+            for table in ("schema_migrations", *KNOWLEDGE_TABLES):
                 name = f"{SCHEMA}.{table}"
                 for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER", "MAINTAIN"):
                     actual = conn.execute("SELECT has_table_privilege(%s,%s,%s) AS allowed", (role, name, privilege)).fetchone()["allowed"]
@@ -180,29 +125,32 @@ def check_permissions(conn: psycopg.Connection, *, tables: bool = True) -> None:
                         raise KnowledgeStorageError("migration_conflict", "知识列存在额外有效权限")
 
 
-def check_structure(conn: psycopg.Connection) -> None:
-    """输入：连接；输出：None；异常：列/约束/迁移内容漂移；只读。"""
-    expected = expected_structure()
-    tables = conn.execute("SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s AND c.relkind IN ('r','p')", (SCHEMA,)).fetchall()
-    if {r["relname"] for r in tables} != set(expected):
-        raise KnowledgeStorageError("migration_conflict", "知识 Schema 的表集合不兼容")
-    for table, wanted in expected.items():
-        columns = conn.execute("SELECT a.attname, format_type(a.atttypid,a.atttypmod) AS type, a.attnotnull, pg_get_expr(d.adbin,d.adrelid) AS def FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum WHERE n.nspname=%s AND c.relname=%s AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum", (SCHEMA, table)).fetchall()
-        if [(r["attname"], r["type"].replace("public.", ""), r["attnotnull"], r["def"]) for r in columns] != wanted["columns"]:
-            raise KnowledgeStorageError("migration_conflict", "知识表列类型/空值/默认值发生漂移")
-        constraints = conn.execute("SELECT con.conname, pg_get_constraintdef(con.oid) AS def, con.convalidated, con.condeferrable, con.condeferred, con.conenforced FROM pg_constraint con JOIN pg_class c ON c.oid=con.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s AND c.relname=%s AND con.contype IN ('p','u','f','c')", (SCHEMA, table)).fetchall()
-        actual = {r["conname"]: _constraint_expression(r["def"]) for r in constraints}
-        if actual != wanted["constraints"] or any(not r["convalidated"] or not r["conenforced"] or r["condeferrable"] or r["condeferred"] for r in constraints):
-            raise KnowledgeStorageError("migration_conflict", "知识表主外键/唯一/CHECK 约束发生漂移")
-    migration = conn.execute(f"SELECT version,checksum FROM {SCHEMA}.schema_migrations ORDER BY version").fetchall()
-    if migration != [{"version": "001", "checksum": digest(migration_bytes())}]:
-        raise KnowledgeStorageError("migration_conflict", "迁移版本或文件摘要不兼容")
+def applied_migrations(conn: psycopg.Connection) -> list[dict]:
+    """读出已执行的迁移，并确认它们与迁移文件的前若干个一致。
+
+    返回：已执行迁移的版本和摘要，按顺序排列；知识 Schema 为空时返回空列表。
+    异常：KnowledgeStorageError(migration_conflict)：版本、顺序或摘要与文件不一致，
+        或 Schema 里有对象却没有迁移表（未知或部分初始化的状态）。
+    """
+    if not conn.execute("SELECT to_regclass(%s) AS t", (f"{SCHEMA}.schema_migrations",)).fetchone()["t"]:
+        if conn.execute("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s LIMIT 1", (SCHEMA,)).fetchone():
+            raise KnowledgeStorageError("migration_conflict", "已有知识 Schema 含未知或部分初始化对象")
+        return []
+    applied = conn.execute(f"SELECT version,checksum FROM {SCHEMA}.schema_migrations ORDER BY version").fetchall()
+    if applied != migration_records()[:len(applied)]:
+        raise KnowledgeStorageError("migration_conflict", "已执行的迁移与迁移文件不一致")
+    return applied
 
 
 def check_database(conn: psycopg.Connection) -> tuple[str, str]:
-    """输入：连接；输出：实际版本；异常：不兼容；只读结构与有效权限。"""
+    """核对 PG 与 pgvector 版本、迁移已执行到最新且摘要一致、三个角色的有效权限。
+
+    返回：(PG 版本, pgvector 版本)。
+    异常：KnowledgeStorageError(migration_conflict)：任一项不符合。只读。
+    """
     result = versions(conn)
-    check_structure(conn)
+    if len(applied_migrations(conn)) != len(MIGRATIONS):
+        raise KnowledgeStorageError("migration_conflict", "迁移未执行到最新，先运行 store migrate")
     check_permissions(conn)
     return result
 
@@ -235,37 +183,39 @@ def bootstrap(settings: KnowledgeStorageSettings) -> ManagementSummary:
             conn.execute(sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(sql.Identifier(SCHEMA), sql.Identifier(name)))
         conn.execute(sql.SQL("ALTER ROLE {} IN DATABASE {} SET default_transaction_read_only=on").format(sql.Identifier(ROLE_NAMES["read"]), sql.Identifier(database)))
         check_permissions(conn, tables=False)
-        if conn.execute("SELECT to_regclass(%s) AS t", (f"{SCHEMA}.schema_migrations",)).fetchone()["t"]:
-            check_database(conn)
-        elif conn.execute("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s LIMIT 1", (SCHEMA,)).fetchone():
-            raise KnowledgeStorageError("migration_conflict", "已有知识 Schema 含未知或部分初始化对象")
+        # 只拒绝部分初始化或与文件不一致的 Schema；落后的迁移由 migrate 补跑。
+        applied_migrations(conn)
         return ManagementSummary(command="bootstrap", outcome="reused" if initial else "applied", server_version=server, vector_version=vector, migration_version=None)
 
 
 def migrate(settings: KnowledgeStorageSettings) -> ManagementSummary:
-    """输入：管理配置；输出：applied/reused；事务内应用迁移/授予最小权限，漂移拒绝。"""
+    """在一个事务里按顺序补跑缺少的迁移，并授予最小权限。
+
+    参数：settings 为管理配置。
+    返回：有迁移被执行时为 applied，已是最新时为 reused。
+    异常：KnowledgeStorageError(migration_conflict)：已执行的迁移与文件不一致、
+        Schema 处于未知的部分初始化状态，或迁移后的版本、迁移记录和权限核对不通过。
+    副作用：执行 DDL 和 GRANT；任何一步失败整个事务回滚。
+    """
     with connection(settings, "admin") as conn, conn.transaction():
         transaction_limits(conn, settings)
         conn.execute("SELECT pg_advisory_xact_lock(%s)", (650277169901,))
         server, vector = versions(conn)
         check_permissions(conn, tables=False)
-        exists = conn.execute("SELECT to_regclass(%s) AS table", (f"{SCHEMA}.schema_migrations",)).fetchone()["table"]
-        if exists:
-            check_database(conn)
-            outcome = "reused"
-        else:
-            if conn.execute("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s LIMIT 1", (SCHEMA,)).fetchone():
-                raise KnowledgeStorageError("migration_conflict", "拒绝在部分初始化的知识 Schema 上补写")
-            for statement in parse(migration_bytes().decode("utf-8"), read="postgres"):
-                conn.execute(statement.sql(dialect="postgres"))
+        applied = applied_migrations(conn)
+        pending = MIGRATIONS[len(applied):]
+        for version, filename in pending:
+            conn.execute(migration_bytes(filename).decode("utf-8"))
+            conn.execute(f"INSERT INTO {SCHEMA}.schema_migrations(version,checksum) VALUES (%s,%s)",
+                         (version, digest(migration_bytes(filename))))
+        if pending:
             for name in ROLE_NAMES.values():
                 conn.execute(sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA {} TO {}").format(sql.Identifier(SCHEMA), sql.Identifier(name)))
-            for table in ("knowledge_corpora", *TABLES.values()):
+            for table in KNOWLEDGE_TABLES:
                 conn.execute(sql.SQL("GRANT INSERT ON {}.{} TO {}").format(sql.Identifier(SCHEMA), sql.Identifier(table), sql.Identifier(ROLE_NAMES["import"])))
-            conn.execute(f"INSERT INTO {SCHEMA}.schema_migrations(version,checksum) VALUES (%s,%s)", ("001", digest(migration_bytes())))
-            check_database(conn)
-            outcome = "applied"
-        return ManagementSummary(command="migrate", outcome=outcome, server_version=server, vector_version=vector, migration_version="001")
+        check_database(conn)
+        return ManagementSummary(command="migrate", outcome="applied" if pending else "reused", server_version=server,
+                                 vector_version=vector, migration_version=LATEST_MIGRATION)
 
 
 def check(settings: KnowledgeStorageSettings) -> ManagementSummary:
@@ -273,7 +223,7 @@ def check(settings: KnowledgeStorageSettings) -> ManagementSummary:
     with connection(settings, "read") as conn, conn.transaction():
         conn.execute("SET TRANSACTION READ ONLY")
         server, vector = check_database(conn)
-        return ManagementSummary(command="check", outcome="checked", server_version=server, vector_version=vector, migration_version="001")
+        return ManagementSummary(command="check", outcome="checked", server_version=server, vector_version=vector, migration_version=LATEST_MIGRATION)
 
 
 def corpus_record(corpus: VerifiedCorpus) -> dict[str, Any]:
@@ -296,7 +246,7 @@ def _insert(conn: psycopg.Connection, table: str, payload: dict[str, Any]) -> No
 
 
 def insert_corpus(conn: psycopg.Connection, corpus: VerifiedCorpus) -> None:
-    """输入：写事务/已验证对象；输出：None；先登记再文档/关系/块，默认向量全 NULL。"""
+    """输入：写事务/已验证对象；输出：None；先登记再文档/关系/块。"""
     _insert(conn, "knowledge_corpora", corpus_record(corpus))
     for group, table in TABLES.items():
         for row in getattr(corpus, group):
@@ -349,6 +299,4 @@ def verify_rows(corpus: VerifiedCorpus, record: dict | None, rows: dict[str, lis
         expected = sorted((row.model_dump(mode="json") for row in getattr(corpus, group)), key=lambda row: row[key])
         if canonical_json(actual) != canonical_json(expected):
             raise KnowledgeStorageError("target_conflict", "数据库原字段或对象集合与源不一致")
-    if any(row[k] is not None for row in rows["chunks"] for k in ("embedding", "embedding_profile_id", "embedding_dimensions")):
-        raise KnowledgeStorageError("target_conflict", "R2 语料含未验收向量")
     return verification_digests(record, rows)

@@ -13,8 +13,7 @@ from test_knowledge_corpus import _inputs
 from querypilot.knowledge.knowledge_corpus.api import load_corpus as load_verified_corpus, CorpusError
 from querypilot.knowledge.knowledge_corpus._corpus import build_knowledge_corpus
 from querypilot.knowledge.knowledge_store._postgres import (
-    TABLES, corpus_record, verify_rows, verification_digests, expected_structure,
-    _constraint_expression,
+    TABLES, corpus_record, verify_rows, verification_digests,
 )
 from querypilot.knowledge.knowledge_store.api import KnowledgeStorageSettings, KnowledgeStorageError
 
@@ -317,8 +316,6 @@ def stored_sample(tmp_path):
                 if field.endswith("_id") and field != "database_id" and field != "corpus_id" and row[field]:
                     row[field] = UUID(row[field])
             row["created_at"] = moment
-            if group == "chunks":
-                row.update(embedding=None, embedding_profile_id=None, embedding_dimensions=None)
             rows[group].append(row)
     return corpus, record, rows, root
 
@@ -347,7 +344,7 @@ def test_digests_preserve_ordered_keys_and_ignore_session_representation(stored_
     assert verify_rows(corpus, record, other) == first
 
 
-@pytest.mark.parametrize("mutation", ["content", "metadata", "pair", "time", "missing", "extra", "embedding", "registry"])
+@pytest.mark.parametrize("mutation", ["content", "metadata", "pair", "time", "missing", "extra", "registry"])
 def test_projection_changes_or_target_conflicts_are_not_hidden(stored_sample, mutation):
     """输入：不同污染类别；输出：指纹分离正确且复验拒绝污染；无数据库副作用。"""
     corpus, record, rows, _ = stored_sample
@@ -363,13 +360,12 @@ def test_projection_changes_or_target_conflicts_are_not_hidden(stored_sample, mu
     elif mutation == "pair": rows["relations"][0]["source_columns"].reverse()
     elif mutation == "missing": rows["chunks"].pop()
     elif mutation == "extra": rows["chunks"].append(deepcopy(rows["chunks"][0]))
-    elif mutation == "embedding": rows["chunks"][0]["embedding"] = "[1,2]"
     elif mutation == "registry": record["manifest"]["counts"]["chunks"] += 1
     if mutation in {"content", "metadata", "pair", "registry"}:
         after = verification_digests(record, rows)
         assert after.projection_digest != before.projection_digest
         assert after.timestamps_digest == before.timestamps_digest
-    with pytest.raises(KnowledgeStorageError, match="不一致|未验收"):
+    with pytest.raises(KnowledgeStorageError, match="不一致"):
         verify_rows(corpus, record, rows)
 
 
@@ -385,17 +381,6 @@ def test_config_is_optional_and_private_and_roles_are_explicit():
     with pytest.raises(KnowledgeStorageError) as caught:
         settings.connection_info("read")
     assert "private-password" not in str(caught.value)
-
-
-def test_structure_checker_compares_expression_semantics():
-    """输入：可信迁移与 PG 常见反解析表达；输出：忽略冗余 cast，但区分逻辑改变。"""
-    expected = expected_structure()
-    assert set(expected) == {"schema_migrations", "knowledge_corpora", *TABLES.values()}
-    assert _constraint_expression("CHECK ((status = 'stored'::text))") == _constraint_expression("CHECK (status = 'stored')")
-    assert _constraint_expression("CHECK (a AND (b OR c))") != _constraint_expression("CHECK ((a AND b) OR c)")
-    assert _constraint_expression("CHECK (public.vector_norm(embedding) > 0::double precision)") == _constraint_expression("CHECK (public.vector_norm(embedding) > 0)")
-    assert _constraint_expression("CHECK (public.vector_norm(embedding) > 1::double precision)") != _constraint_expression("CHECK (public.vector_norm(embedding) > 0)")
-    assert _constraint_expression("CHECK (amount > 0::double precision)") != _constraint_expression("CHECK (amount > 0)")
 
 
 def test_cli_bad_source_and_existing_receipt_never_call_database(tmp_path, monkeypatch, capsys):
@@ -522,3 +507,33 @@ def test_commit_confirmation_loss_is_unknown_and_private(stored_sample, monkeypa
     assert caught.value.error_type == "commit_outcome_unknown"
     assert isinstance(caught.value.__cause__, psycopg.OperationalError)
     assert "private-password" not in str(caught.value)
+
+
+def test_cli_embed_passes_scope_and_real_embedder_without_printing_secrets(monkeypatch, capsys, tmp_path):
+    """输入：三元组范围和 Embedding 配置；输出：调用 embed_corpus，回执只有摘要，没有密钥。"""
+    import json
+    from querypilot.entrypoints.cli import main
+    from querypilot.entrypoints.commands import knowledge
+    from querypilot.knowledge.api import EmbeddingSummary, OpenAIEmbedder
+    monkeypatch.setenv("QUERYPILOT_EMBEDDING_BASE_URL", "https://embedding.test/v1")
+    monkeypatch.setenv("QUERYPILOT_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-8B")
+    monkeypatch.setenv("QUERYPILOT_EMBEDDING_API_KEY", "sk-private-cli-key")
+    calls = []
+
+    def fake_embed(scope, settings, embedder, *, run_context=None):
+        calls.append((scope, embedder))
+        return EmbeddingSummary(outcome="embedded", corpus_id=scope.corpus_id, database_id=scope.database_id,
+                                schema_version=scope.schema_version, embedding_profile_id=embedder.profile_id,
+                                dimensions=4096, embedded_chunks=20)
+    monkeypatch.setattr(knowledge, "embed_corpus", fake_embed)
+    assert main(["--artifacts-dir", str(tmp_path), "knowledge", "store", "embed", "--corpus-id", "a" * 64,
+                 "--database-id", "toxicology", "--schema-version", "b" * 64]) == 0
+    (scope, embedder), = calls
+    assert (scope.corpus_id, scope.database_id, scope.schema_version) == ("a" * 64, "toxicology", "b" * 64)
+    assert isinstance(embedder, OpenAIEmbedder)
+    captured = capsys.readouterr()
+    summary = json.loads(captured.out)
+    assert (summary["outcome"], summary["embedded_chunks"], summary["dimensions"]) == ("embedded", 20, 4096)
+    assert summary["embedding_profile_id"] == "siliconflow:Qwen/Qwen3-Embedding-8B:4096:content-v1:query-instruct-v1"
+    assert "sk-private-cli-key" not in captured.out + captured.err
+    assert not any("sk-private-cli-key" in path.read_text(encoding="utf-8") for path in tmp_path.rglob("*.json*"))

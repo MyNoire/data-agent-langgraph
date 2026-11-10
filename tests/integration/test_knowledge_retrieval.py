@@ -4,6 +4,8 @@
 当前可立即执行的设施组在 test_bm25_search_setup.py。
 """
 
+import json
+
 import pytest
 from hashlib import sha256
 from math import isfinite
@@ -12,6 +14,7 @@ from uuid import uuid4
 from querypilot.knowledge.api import KnowledgeReadError, KnowledgeScope, ReadLimits, open_read_scope
 from querypilot.retrieval.api import KnowledgeRetrievalError, RetrievalRequest, retrieve_knowledge
 from _bm25_fixtures import live_bm25_settings, role_connection, unchanged_live_knowledge
+from _embedding_fakes import ErrorEmbedder, FakeEmbedder
 
 
 @pytest.fixture
@@ -34,6 +37,9 @@ def retrieval_source(live_bm25_settings, r3_corpus_factory, unchanged_live_knowl
     finally:
         # 先证明是本次生成且此前不存在的身份，再逐表按完整 scope 和记录 ID 清理。
         with role_connection(live_bm25_settings, "admin") as conn, conn.transaction():
+            # 向量表对 Chunk 的外键是 RESTRICT，先删本次 Chunk 的向量。
+            conn.execute("DELETE FROM querypilot_kb.chunk_embeddings WHERE chunk_id=ANY(%s::uuid[])",
+                         ([str(chunk.chunk_id) for chunk in source.chunks],))
             for table, key, records in (
                 ("knowledge_chunks", "chunk_id", source.chunks),
                 ("schema_relations", "relation_id", source.relations),
@@ -183,3 +189,181 @@ def test_complete_scores_and_order_equal_raw_plugin_bm25(retrieval_source):
     assert expected
     assert [(str(hit.chunk_id), hit.chunk_key, hit.score) for hit in result.hits] == [
         (row["chunk_id"], row["chunk_key"], row["score"]) for row in expected]
+
+
+# ---- 向量检索（工单 03）：Seam 1，retrieve_knowledge + 真实 PG + 假 embedder ----
+
+VECTOR_QUERY = "哪一列是物品的名称？"
+
+
+def _key(*parts):
+    """Chunk 的 chunk_key：紧凑 JSON 数组。"""
+    return json.dumps(list(parts), ensure_ascii=False, separators=(",", ":"))
+
+
+@pytest.fixture
+def vector_source(retrieval_source):
+    """给探针 Corpus 写入假 Profile 的向量。查询向量 [1,0,0]：
+
+    items.label  → [1,0,0]  余弦 1.0
+    items 表     → [1,1,0]  余弦 0.7071
+    其余 6 个 Chunk → [0,0,1]  余弦 0，并列时按 chunk_key 排
+    """
+    from querypilot.knowledge.api import embed_corpus
+    settings, source, scope = retrieval_source
+    db = scope.database_id
+    content = {chunk.chunk_key: chunk.content for chunk in source.chunks}
+    embedder = FakeEmbedder({
+        content[_key("column", db, "main", "items", "label")]: [1.0, 0.0, 0.0],
+        content[_key("table", db, "main", "items")]: [1.0, 1.0, 0.0],
+        VECTOR_QUERY: [1.0, 0.0, 0.0],
+    }, default=(0.0, 0.0, 1.0))
+    embed_corpus(scope, settings, embedder)
+    return settings, source, scope, embedder
+
+
+def test_vector_ranks_chunks_by_cosine_similarity(vector_source):
+    """输入：method=vector，top_k=3；输出：按余弦相似度排序，并列按 chunk_key；查询只嵌入一次。"""
+    settings, _, scope, embedder = vector_source
+    db = scope.database_id
+    result = retrieve_knowledge(RetrievalRequest(query=VECTOR_QUERY, scope=scope, method="vector", top_k=3),
+                                settings, embedder=embedder)
+    assert (result.method, result.embedding_profile_id) == ("vector", "fake:3:test-v1")
+    assert result.retrieval_config_version == "r4-vector-v1"
+    assert [hit.chunk_key for hit in result.hits] == [
+        _key("column", db, "main", "items", "label"),
+        _key("table", db, "main", "items"),
+        _key("column", db, "main", "events", "item_ref"),
+    ]
+    assert [round(hit.score, 4) for hit in result.hits] == [1.0, 0.7071, 0.0]
+    assert embedder.query_calls == 1
+
+
+@pytest.mark.parametrize("method", ["vector", "hybrid"])
+def test_vector_and_hybrid_without_vectors_are_embedding_missing(retrieval_source, method):
+    """输入：探针 Corpus 没有当前 Profile 的向量；输出：embedding_missing，查询不嵌入（不花钱）。
+    hybrid 也不只返回 BM25 那一路。"""
+    settings, _, scope = retrieval_source
+    embedder = FakeEmbedder()
+    with pytest.raises(KnowledgeRetrievalError) as caught:
+        retrieve_knowledge(RetrievalRequest(query=VECTOR_QUERY, scope=scope, method=method),
+                           settings, embedder=embedder)
+    assert caught.value.error_type == "embedding_missing"
+    assert embedder.query_calls == 0
+
+
+@pytest.mark.parametrize("method", ["vector", "hybrid"])
+def test_embedding_failure_is_embedding_error_without_bm25_fallback(vector_source, method):
+    """输入：已有向量，但嵌入查询时 Embedding 服务失败；输出：embedding_error，不退回 BM25 返回结果。"""
+    settings, _, scope, _ = vector_source
+    embedder = ErrorEmbedder()
+    with pytest.raises(KnowledgeRetrievalError) as caught:
+        retrieve_knowledge(RetrievalRequest(query=VECTOR_QUERY, scope=scope, method=method),
+                           settings, embedder=embedder)
+    assert caught.value.error_type == "embedding_error"
+    assert embedder.query_calls == 1
+    assert VECTOR_QUERY not in str(caught.value)
+
+
+def test_vector_without_embedder_builds_one_from_settings(retrieval_source, monkeypatch):
+    """输入：vector 检索没传 embedder；输出：按 QUERYPILOT_EMBEDDING_* 配置创建，用真实 Profile 检查向量。
+
+    探针 Corpus 没有真实 Profile 的向量，所以在调用服务前就报 embedding_missing。base_url 指向本机
+    不监听的端口，万一调用了服务也只会失败，不会产生费用。
+    """
+    settings, _, scope = retrieval_source
+    monkeypatch.setenv("QUERYPILOT_EMBEDDING_BASE_URL", "http://127.0.0.1:9/v1")
+    monkeypatch.setenv("QUERYPILOT_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-8B")
+    monkeypatch.setenv("QUERYPILOT_EMBEDDING_API_KEY", "sk-not-a-real-key")
+    with pytest.raises(KnowledgeRetrievalError) as caught:
+        retrieve_knowledge(RetrievalRequest(query=VECTOR_QUERY, scope=scope, method="vector"), settings)
+    assert caught.value.error_type == "embedding_missing"
+
+
+@pytest.mark.parametrize(("method", "top_score"), [("vector", 0.7071), ("hybrid", round(2 / 61, 4))])
+def test_vector_and_hybrid_filter_by_knowledge_types(vector_source, method, top_score):
+    """输入：只要表块；输出：只返回表块，items 表排第一。vector 分数为余弦 0.7071；
+    hybrid 中 items 表在两路的表块里都排第 1，RRF 分 2/61。"""
+    settings, _, scope, embedder = vector_source
+    result = retrieve_knowledge(RetrievalRequest(query=VECTOR_QUERY, scope=scope, method=method,
+                                                 knowledge_types=["table"]), settings, embedder=embedder)
+    assert result.hits and {hit.knowledge_type for hit in result.hits} == {"table"}
+    assert result.hits[0].chunk_key == _key("table", scope.database_id, "main", "items")
+    assert round(result.hits[0].score, 4) == top_score
+
+
+def test_vector_query_needs_no_lexical_terms(vector_source):
+    """输入：method=vector，查询全是标点（BM25 会报 input_error）；输出：照常嵌入并返回结果。"""
+    settings, _, scope, embedder = vector_source
+    result = retrieve_knowledge(RetrievalRequest(query="？！……", scope=scope, method="vector"),
+                                settings, embedder=embedder)
+    assert result.outcome == "matched" and embedder.query_calls == 1
+
+
+def test_lexical_neither_calls_nor_builds_an_embedder(vector_source, monkeypatch, tmp_path):
+    """输入：method=lexical。传了 embedder 也不调用；没传且没有 Embedding 配置也照常检索。"""
+    settings, _, scope, embedder = vector_source
+    request = RetrievalRequest(query="items label", scope=scope)
+    result = retrieve_knowledge(request, settings, embedder=embedder)
+    assert (result.method, result.embedding_profile_id) == ("lexical", None)
+    assert embedder.query_calls == 0
+    for name in ("BASE_URL", "MODEL", "API_KEY"):
+        monkeypatch.delenv(f"QUERYPILOT_EMBEDDING_{name}", raising=False)
+    monkeypatch.chdir(tmp_path)                       # 不读仓库的 .env
+    assert retrieve_knowledge(request, settings).method == "lexical"
+
+
+def test_hybrid_fuses_both_rankings_with_rrf(vector_source):
+    """输入：method=hybrid，top_k=5。两路各取 50 个候选（探针 Corpus 只有 8 个 Chunk）：
+
+    BM25：items 表、events 表、关系                     （"物品"命中三个块）
+    向量：label、items 表、item_ref、tenant_ref、item_id、tenant_id、关系、events 表
+    RRF： items 表 1/61+1/62，events 表 1/62+1/68，关系 1/63+1/67，label 1/61，item_ref 1/63
+
+    输出：label 在向量里第 1、融合后第 4；events 表在向量里最后、融合后第 2。
+    """
+    settings, _, scope, embedder = vector_source
+    db = scope.database_id
+    result = retrieve_knowledge(RetrievalRequest(query=VECTOR_QUERY, scope=scope, method="hybrid", top_k=5),
+                                settings, embedder=embedder)
+    assert (result.method, result.embedding_profile_id) == ("hybrid", "fake:3:test-v1")
+    assert result.retrieval_config_version == "r4-hybrid-v1"
+    assert [hit.chunk_key for hit in result.hits] == [
+        _key("table", db, "main", "items"),
+        _key("table", db, "main", "events"),
+        _key("relationship", db, "main", "events", 0),
+        _key("column", db, "main", "items", "label"),
+        _key("column", db, "main", "events", "item_ref"),
+    ]
+    assert [hit.rank for hit in result.hits] == [1, 2, 3, 4, 5]
+    assert [hit.score for hit in result.hits] == pytest.approx(
+        [0.0325225, 0.0308349, 0.0307984, 0.0163934, 0.0158730], abs=1e-7)
+    assert embedder.query_calls == 1
+
+
+def test_hybrid_with_no_bm25_hits_returns_the_vector_ranking(vector_source):
+    """输入：method=hybrid，查询有词但 BM25 一个都没命中，查询向量为 [1,0,0]；
+    输出：BM25 那一路为空，名次与 vector 相同，分数为 RRF 分 1/61、1/62、1/63。"""
+    settings, _, scope, _ = vector_source
+    db = scope.database_id
+    embedder = FakeEmbedder({"zzqxv": [1.0, 0.0, 0.0]})
+    result = retrieve_knowledge(RetrievalRequest(query="zzqxv", scope=scope, method="hybrid", top_k=3),
+                                settings, embedder=embedder)
+    assert [hit.chunk_key for hit in result.hits] == [
+        _key("column", db, "main", "items", "label"),
+        _key("table", db, "main", "items"),
+        _key("column", db, "main", "events", "item_ref"),
+    ]
+    assert [hit.score for hit in result.hits] == pytest.approx([0.0163934, 0.0161290, 0.0158730], abs=1e-7)
+
+
+def test_hybrid_without_lexical_terms_is_input_error_without_embedding(vector_source):
+    """输入：method=hybrid，查询全是标点；输出：与 lexical 一样报 input_error，不调用 Embedding 服务。
+
+    向量检索对任何输入都会返回 top_k 个结果，退化成纯向量会把明确的输入错误变成看似正常的 Hit。
+    """
+    settings, _, scope, embedder = vector_source
+    with pytest.raises(KnowledgeRetrievalError) as caught:
+        retrieve_knowledge(RetrievalRequest(query="？！……", scope=scope, method="hybrid"), settings, embedder=embedder)
+    assert caught.value.error_type == "input_error"
+    assert embedder.query_calls == 0

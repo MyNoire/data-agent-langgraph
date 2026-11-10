@@ -12,8 +12,11 @@ from querypilot.knowledge.api import (
     BuildConfig, Catalog, KnowledgeStorageError, KnowledgeStorageSettings,
     extract_catalog, enrich_catalog, curate_catalog, render_knowledge, build_corpus,
     verify_corpus, manage_store, import_corpus, verify_import, prepare_search, check_search,
+    embed_corpus, EmbeddingSettings, OpenAIEmbedder,
 )
 from querypilot.runtime.api import publish_json, task_run
+
+from .retrieval import resolve_scope
 
 
 def _write_draft(draft, output_dir) -> None:
@@ -43,12 +46,21 @@ def run(args, settings) -> int:
             raise KnowledgeStorageError("configuration_error", "知识库配置不合法") from exc
         secrets = tuple(value.get_secret_value() for value in
                         (storage.admin_dsn, storage.import_dsn, storage.read_dsn) if value is not None)
+    embedder = None
+    if group == "store" and action == "embed":
+        try:
+            embedding = EmbeddingSettings()
+        except ValidationError as exc:
+            raise KnowledgeStorageError("configuration_error", "Embedding 配置缺失或不合法") from exc
+        secrets += (embedding.api_key.get_secret_value(),)
+        embedder = OpenAIEmbedder(embedding)
     if group == "catalog":
         operation, private = "knowledge_catalog", action in {"extract", "enrich"}
     elif group == "corpus":
         operation, private = "knowledge_corpus", action == "render"
     else:
-        operation = "knowledge_import" if action == "import" else "knowledge_verify" if action == "verify" else "knowledge_manage"
+        operation = {"import": "knowledge_import", "verify": "knowledge_verify",
+                     "embed": "knowledge_embed"}.get(action, "knowledge_manage")
         private = False
     hashes = []
     for name in ("catalog", "base", "plan", "semantic_file"):
@@ -117,6 +129,11 @@ def run(args, settings) -> int:
         elif action == "verify":
             result = verify_import(args.corpus_dir, storage, run_context=context)
             summary = result.model_dump(mode="json")
+        elif action == "embed":
+            scope = resolve_scope(corpus_id=args.corpus_id, database_id=args.database_id,
+                                  schema_version=args.schema_version, scope_file=args.scope_file)
+            result = embed_corpus(scope, storage, embedder, run_context=context)
+            summary = result.model_dump(mode="json")
         elif action in {"prepare-search", "check-search"}:
             result = (prepare_search if action == "prepare-search" else check_search)(storage, run_context=context)
             summary = result.model_dump(mode="json")
@@ -124,6 +141,7 @@ def run(args, settings) -> int:
             result = manage_store(action, storage, run_context=context)
             summary = result.model_dump(mode="json")
         outcome = summary.get("outcome", summary.get("status", "succeeded"))
+        outcome = "reused" if outcome == "exists" else outcome
         outcome = outcome if outcome in {"imported", "reused", "verified"} else "succeeded"
         context.complete(result, outcome=outcome)
     print(json.dumps(summary, ensure_ascii=True, indent=2), flush=True)

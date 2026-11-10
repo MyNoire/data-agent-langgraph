@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 
-KNOWLEDGE_PARTS = ("knowledge_catalog", "knowledge_corpus", "knowledge_store")
+KNOWLEDGE_PARTS = ("knowledge_catalog", "knowledge_corpus", "knowledge_store", "knowledge_embedding")
 EVALUATION_PARTS = ("sql", "retrieval", "datasets")
 # datasets 沿用既有实现；例外只属于根 API 的这六个导入，不开放整个子能力。
 DATASET_REEXPORTS = {
@@ -32,7 +32,8 @@ ALLOWED_DEPENDENCIES = {
     "knowledge": {*(f"knowledge.{part}" for part in KNOWLEDGE_PARTS), "runtime"},
     "knowledge.knowledge_catalog": {"runtime"},
     "knowledge.knowledge_corpus": {"knowledge.knowledge_catalog", "runtime"},
-    "knowledge.knowledge_store": {"knowledge.knowledge_corpus", "runtime"},
+    "knowledge.knowledge_store": {"knowledge.knowledge_corpus", "knowledge.knowledge_embedding", "runtime"},
+    "knowledge.knowledge_embedding": {"runtime"},
     "retrieval": {"knowledge", "runtime"},
     "runtime": set(),
 }

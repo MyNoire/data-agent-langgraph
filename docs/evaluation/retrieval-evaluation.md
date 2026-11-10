@@ -30,7 +30,7 @@ K 取 5 和 10。几个关键决定：
 - **表和列分开报告，不合成一个总分。** 一道题通常只用 2 张表，却可能涉及 5 个列，混在一起分数会被列主导。
 - **0 和空不一样。** 检索报错（查询里没有有效词）的题，有该拿的表却一张都没拿到，表级指标记 0，计入分母；Hits to Cover 拿不全时没有一个可以算的数，记为空，单独报题数；没有相关列的题，Column Recall 是 0/0，记为空，不参与平均。
 - **冻结题一起计分**，在逐题结果里标出来；但失败分析和修改只针对非冻结题，见 [ADR 0001](../adr/0001-frozen-set-for-component-eval.md)。
-- MRR 和 nDCG 留到混合检索对比时再加。
+- 不报 MRR 和 nDCG：要回答的是"表有没有拿全"，名次由 Hits to Cover 衡量；MRR 只看第一个相关项，暂不加，nDCG 不用。
 
 报告写进运行目录，记录题集 sha256、各库的 Knowledge Scope、检索方法和配置版本、top_k 和 K；不包含问题原文、SQL 和 Hit 正文。
 
@@ -51,6 +51,32 @@ K 取 5 和 10。几个关键决定：
 
 从 K=5 放宽到 K=10，完整召回从 65% 升到 84%，说明很多题不是"找不到"，而是"排得不够靠前"。
 
+### 三种方法对比（R4，2026-11-10）
+
+同一份题集（sha256 `6014f798…`）、同一份 Corpus（toxicology `d4792b3c…`、student_club `66f8085b…`）、top_k=20、同样的指标，只换检索方法。lexical 用上面的 BM25 基线运行；vector 和 hybrid 的 Embedding Profile 为 `siliconflow:Qwen/Qwen3-Embedding-8B:4096:content-v1:query-instruct-v1`，配置版本 `r4-vector-v1` / `r4-hybrid-v1`（RRF k=60、两路等权、每路 50 个候选，均为未调过的默认值）。
+
+| 整体（88 题） | lexical | vector | hybrid |
+|---|---|---|---|
+| **Table Complete Recall@5** | 64.8% | 62.5% | **68.2%** |
+| **Table Complete Recall@10** | 84.1% | 80.7% | **85.2%** |
+| Table Recall@5 / @10 | 83.5% / 92.8% | 82.3% / 91.3% | 85.8% / 93.5% |
+| Hits to Cover 中位数 / 平均数 | 3 / 4.9 | 3 / 5.6 | 3 / 4.9 |
+| 20 个 Hit 内拿不全的题 | 3 | 3 | 2 |
+| Column Recall@10 | 67.5% | 66.8% | **73.6%** |
+| 检索耗时 P50 / P95 | 276 / 334 ms | 445 / 1744 ms | 489 / 2373 ms |
+
+| Complete Recall@5 / @10 | lexical | vector | hybrid |
+|---|---|---|---|
+| toxicology（40） | 72.5% / 92.5% | **77.5% / 97.5%** | 72.5% / 92.5% |
+| student_club（48） | 58.3% / 77.1% | 50.0% / 66.7% | **64.6% / 79.2%** |
+
+- **hybrid 整体最好，但提升不大**：Complete Recall@5 多 3.4 个百分点（3 道题），@10 多 1.1 个百分点，Column Recall@10 多 6.1 个百分点。
+- **vector 单独用不如 BM25**：整体略低，在 student_club 上低 8 个百分点；但在 toxicology 上是三种方法里最好的。
+- **代价是延迟**：每次检索都要调用一次 Embedding 服务，P50 多约 200 ms，P95 从 0.3 s 涨到 1.7–2.4 s，主要是网络调用的波动。
+- 88 题里一道题就是 1.1 个百分点，上面的差距只有几道题；每种方法只跑了一次，查询向量每次会有约 0.001 的余弦抖动，名次接近的 Hit 可能互换。这些数字说明方向，不足以下"显著更好"的结论。
+
+运行目录（本地，Git 忽略）：vector `artifacts/runs/evaluation/2026-11-10/5b1da09ba55d47c08f33e259d68ed35c/`，hybrid `artifacts/runs/evaluation/2026-11-10/fe098b1338194d0faaa39cd5ce185cec/`；lexical 为下面第 5 节命令在 2026-11-06 的运行 `3c83f0af…`。三份报告里都没有问题原文。
+
 ## 4. 失败分析（只看非冻结题）
 
 非冻结题共 72 道，其中 24 道在 K=5 时没拿全相关表；这 24 道里有 13 道到 K=10 就能拿全。主要有五类原因：
@@ -65,13 +91,34 @@ K 取 5 和 10。几个关键决定：
 
 混合检索能解决词形和误配两类问题，对数据值类也有部分帮助；挤占和桥接表要靠检索之后的上下文组装来解决。下一步的计划见[路线图](../roadmap.md)。每加一项改进，都用同一份题集和这份基线对比，单独量出它的贡献。
 
+### R4：向量和混合检索救回了什么、弄丢了什么
+
+只看 72 道非冻结题。按 ADR 0001，这里只做分析，没有据此改知识、参数或代码。
+
+| K=5 没拿全的题 | lexical | vector | hybrid |
+|---|---|---|---|
+| K=5 | 24 | 25 | **20** |
+| K=10 | 11 | 11 | **7** |
+
+和 BM25 逐题比：vector 在 K=5 救回 11 道、弄丢 12 道；hybrid 救回 7 道、弄丢 3 道，到 K=10 弄丢的为 0。两路几乎是互补的：
+
+- **向量补上了语义和词形**。"What **elements** are in a double type bond?"：atom 表在 BM25 里没出现，向量排第 5（词形问题）；"Which department was the **President** of the club in?"：member 表从第 11 升到第 1，向量把 President 和"成员职位"联系起来了（数据值类问题里的一部分）；"…how many of them are **meetings**?"：event 表从第 13 升到第 1。
+- **向量丢掉了字面的结构词**。问题里直接出现表名或列名，同时又带着具体的值时，BM25 靠字面命中排在前面，向量却被具体的值带偏："What is the total **cost** of the pizzas…"：expense 表从第 1 掉到第 15；"…expenses … approved for 'October Meeting' **event**"：event 表从第 1 掉到第 16；"…total cost that **member id** "rec4BLdZHS2Blfp4v" incurred?"：member 表从第 1 掉到第 8。student_club 的题大多带活动名、人名这类具体值，所以 vector 在这个库上最差；toxicology 的题多是化学词汇，语义和词形更重要，vector 在那里最好（这是推测，没有单独验证）。
+- **hybrid 变差的 3 道都在边界上**：相关表从第 3 掉到第 6、从第 1 掉到第 6、从第 5 掉到第 6。另一路没找到它，而别的 Chunk 两路都找到了、分数加在一起，就把它挤出了前 5。
+- **hybrid 也会冲淡单路的发现**。只有一路找到的 Chunk 只拿一份 RRF 分，会排在两路都找到的 Chunk 后面："elements"那题 atom 表在向量里排第 5，hybrid 里排第 9；"List all the names of events…"那题 event 表在向量里排第 1、BM25 没有，hybrid 里排第 8。这是等权 RRF 的特点，权重和 k 都没调过。
+- **没解决的**：Vice President（member 表 17 → 10 → 14）、一张表挤占前排（carbon 那题 atom 表 7 → 6 → 10）、桥接表。这三类本来就不指望靠检索方法解决，要靠取值知识、单表名额或外键扩展。
+
 ## 5. 怎么跑
 
 ```powershell
 uv run querypilot eval retrieval-cases --questions <mini_dev_sqlite.json> --frozen evals/bird_final100.json `
   --corpus-dir data/rag/toxicology/r1-4-corpus --corpus-dir data/rag/student_club/r1-4-corpus `
   --output evals/retrieval/retrieval_cases.json
-uv run querypilot eval retrieval --cases evals/retrieval/retrieval_cases.json
+uv run querypilot eval retrieval --cases evals/retrieval/retrieval_cases.json                  # 默认 lexical
+uv run querypilot eval retrieval --cases evals/retrieval/retrieval_cases.json --method vector
+uv run querypilot eval retrieval --cases evals/retrieval/retrieval_cases.json --method hybrid
 ```
 
-需要已经导入 PostgreSQL 的知识库，以及 `.env` 里的只读 DSN。计分规则的测试使用假检索器，不需要连数据库：`tests/test_retrieval_eval_scoring.py`。
+需要已经导入 PostgreSQL 的知识库，以及 `.env` 里的只读 DSN。`--method` 可选 `lexical`（BM25，默认）、`vector`、`hybrid`（RRF 融合），见[知识库](../knowledge/knowledge-base.md)第 7 节。vector 和 hybrid 还需要 `QUERYPILOT_EMBEDDING_*` 配置和已生成的向量（`knowledge store embed`），每道题调用一次 Embedding 服务，88 题约 88 次，**会产生费用**。
+
+三种方法的题集、Corpus、`top_k=20`、K=5/10 和 Column Recall@10 都相同，差异只来自检索方法。运行配置记录 `method`；报告的 `config.method` 是请求的方法，`config.retrieval` 列出结果实际用到的方法、Embedding Profile 和配置版本（`r3-bm25-v1` / `r4-vector-v1` / `r4-hybrid-v1`，含义写在 `retrieval/models.py` 的 `RETRIEVAL_CONFIG_VERSIONS` 旁）。计分规则的测试使用假检索器，不需要连数据库：`tests/test_retrieval_eval_scoring.py`。

@@ -2,13 +2,18 @@
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from querypilot.knowledge.api import Hash, KnowledgeScope, ObjectID
 
+# 每种检索方法的配置版本，写进检索结果，评测报告据此追溯。任一部分改变时升对应的版本号：
+# r3-bm25-v1：下面的查询词配置 + pg_search BM25；
+# r4-vector-v1：按 Embedding Profile 对查询嵌入一次，余弦距离精确全表扫描；
+# r4-hybrid-v1：r3-bm25-v1 与 r4-vector-v1 各取 50 个候选，RRF k=60、两路等权、同分按 chunk_key。
+RETRIEVAL_CONFIG_VERSIONS = {"lexical": "r3-bm25-v1", "vector": "r4-vector-v1", "hybrid": "r4-hybrid-v1"}
+
 # 查询词准备的固定配置。分词器加载时会逐项核对，不一致就报 configuration_error，
 # 保证同一句查询每次切出相同的词。
-RETRIEVAL_CONFIG_VERSION = "r3-bm25-v1"
 NORMALIZATION_VERSION = "ascii-han-boundaries-v1"
 TOKENIZER_VERSION = "0.42.1"
 TOKENIZER_DICTIONARY_SHA256 = "7197c3211ddd98962b036cdf40324d1ea2bfaa12bd028e68faa70111a88e12a8"
@@ -16,11 +21,15 @@ STOPWORDS_VERSION = "zh-courtesy-v1"
 STOPWORDS_SHA256 = "fede53918dc355e74fe89e5070a04ce6a84dd7a1077d96455026b0d9bc7c99bd"
 
 KnowledgeType = Literal["table", "column", "relationship"]
+# lexical：BM25；vector：查询嵌入后按余弦距离精确扫描当前 Embedding Profile 的向量；
+# hybrid：BM25 与向量两路用 RRF 融合。
+RetrievalMethod = Literal["lexical", "vector", "hybrid"]
 TopK = Annotated[int, Field(strict=True, ge=1, le=50)]
 
 
 class KnowledgeRetrievalError(ValueError):
-    """检索失败。error_type 是读取层的错误类别，或检索自己的 input_error。
+    """检索失败。error_type 是读取层的错误类别，或检索自己的 input_error、embedding_missing、
+    embedding_error。
 
     消息是固定的安全文本，不包含查询原文；底层原因通过 raise ... from 保留。
     """
@@ -44,10 +53,11 @@ class ScopeFile(RetrievalModel):
 
 
 class RetrievalRequest(RetrievalModel):
-    """一次检索请求：查询原文、Knowledge Scope、top_k 和要找的知识类型。"""
+    """一次检索请求：查询原文、Knowledge Scope、检索方法、top_k 和要找的知识类型。"""
 
     query: Annotated[str, Field(min_length=1, max_length=2000)]
     scope: KnowledgeScope
+    method: RetrievalMethod = "lexical"
     top_k: TopK = 10
     knowledge_types: Annotated[list[KnowledgeType], Field(min_length=1, max_length=3)] = Field(
         default_factory=lambda: ["table", "column", "relationship"]
@@ -72,7 +82,10 @@ class RetrievalRequest(RetrievalModel):
 
 
 class RetrievalHit(RetrievalModel):
-    """一个 Hit：命中的 Chunk 原字段，加上本次的 rank 和 BM25 分数。
+    """一个 Hit：命中的 Chunk 原字段，加上本次的 rank 和分数。
+
+    score 的含义随检索方法而定，不同方法的分数不能直接比较：
+    lexical 为 BM25 分（≥ 0）；vector 为余弦相似度（-1 到 1）；hybrid 为 RRF 分 Σ 1/(60 + 名次)。
 
     三个定位字段（schema_name、table_name、column_name）随 knowledge_type 而定：
     - table：table_name 是这张表，column_name 为 None。
@@ -81,7 +94,7 @@ class RetrievalHit(RetrievalModel):
     """
 
     rank: Annotated[int, Field(ge=1)]
-    score: Annotated[float, Field(ge=0, allow_inf_nan=False)]
+    score: Annotated[float, Field(allow_inf_nan=False)]
     chunk_id: ObjectID
     chunk_key: str
     knowledge_type: KnowledgeType
@@ -94,14 +107,17 @@ class RetrievalHit(RetrievalModel):
 
 
 class RetrievalResult(RetrievalModel):
-    """一次检索的结果。hits 按 rank 排列；没有 Hit 时 outcome 为 no_match。"""
+    """一次检索的结果。hits 按 rank 排列；没有 Hit 时 outcome 为 no_match。
 
-    result_version: Literal["querypilot-retrieval-result-v1"] = "querypilot-retrieval-result-v1"
+    method 是实际使用的检索方法；embedding_profile_id 是向量所属的 Embedding Profile，lexical 时为 None。
+    """
+
+    result_version: Literal["querypilot-retrieval-result-v2"] = "querypilot-retrieval-result-v2"
     request_id: str
     outcome: Literal["matched", "no_match"]
     scope: KnowledgeScope
-    method: Literal["lexical"] = "lexical"
-    retrieval_config_version: str = RETRIEVAL_CONFIG_VERSION
+    method: RetrievalMethod = "lexical"
+    embedding_profile_id: str | None = None
     normalization_version: str = NORMALIZATION_VERSION
     query_sha256: Hash
     top_k: TopK
@@ -109,3 +125,9 @@ class RetrievalResult(RetrievalModel):
     hit_count: int
     hits: list[RetrievalHit]
     elapsed_ms: Annotated[float, Field(ge=0)]
+
+    @computed_field
+    @property
+    def retrieval_config_version(self) -> str:
+        """本次检索方法的配置版本，由 method 决定，含义见 RETRIEVAL_CONFIG_VERSIONS。"""
+        return RETRIEVAL_CONFIG_VERSIONS[self.method]

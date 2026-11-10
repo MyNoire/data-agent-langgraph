@@ -17,7 +17,7 @@ def _artifacts(parser):
 
 
 def create_parser() -> argparse.ArgumentParser:
-    """构造18个明确命令的参数树，返回解析器；不读取配置、不产生业务副作用。"""
+    """构造明确命令的参数树，返回解析器；不读取配置、不产生业务副作用。"""
     parser = _artifacts(SafeArgumentParser(prog="querypilot", description="QueryPilot 查询、知识准备与评测"))
     groups = parser.add_subparsers(dest="group", required=True)
     query = _artifacts(groups.add_parser("query", help="自然语言单图查询"))
@@ -37,6 +37,8 @@ def create_parser() -> argparse.ArgumentParser:
         command.set_defaults(command=f"eval.{name}")
     retrieval = _artifacts(eval_actions.add_parser("retrieval", help="对检索题集跑一次检索评测"))
     retrieval.add_argument("--cases", type=Path, required=True)
+    retrieval.add_argument("--method", choices=("lexical", "vector", "hybrid"), default="lexical",
+                           help="检索方法；vector 和 hybrid 会调用 Embedding 服务，产生费用")
     retrieval.set_defaults(command="eval.retrieval")
     cases = _artifacts(eval_actions.add_parser("retrieval-cases", help="从 BIRD 题目和 Corpus 生成检索题集"))
     cases.add_argument("--questions", type=Path, required=True)
@@ -81,10 +83,15 @@ def create_parser() -> argparse.ArgumentParser:
     verify.set_defaults(command="knowledge.corpus.verify")
     store = _artifacts(knowledge_groups.add_parser("store"))
     store_actions = store.add_subparsers(dest="action", required=True)
-    for name in ("import", "verify", "bootstrap", "migrate", "check", "prepare-search", "check-search"):
+    for name in ("import", "verify", "bootstrap", "migrate", "check", "prepare-search", "check-search", "embed"):
         command = _artifacts(store_actions.add_parser(name))
         if name in ("import", "verify"):
             command.add_argument("--corpus-dir", type=Path, required=True)
+        if name == "embed":
+            # 范围用三元组或 Scope 文件二选一，与单条检索命令相同。
+            for option in ("--corpus-id", "--database-id", "--schema-version"):
+                command.add_argument(option)
+            command.add_argument("--scope-file", type=Path)
         command.set_defaults(command=f"knowledge.store.{name}")
 
     data = _artifacts(groups.add_parser("data", help="BIRD数据准备；不自动下载或重冻结"))

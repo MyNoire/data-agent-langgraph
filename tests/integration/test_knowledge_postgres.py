@@ -54,22 +54,76 @@ def test_committed_import_survives_receipt_publish_failure(pg_database, r2_corpu
     assert verified.counts.documents == 2
 
 
-def test_migration_reuse_and_meaningful_constraint_drift(pg_database):
-    """输入：专用库；输出：复用不改迁移时间，修改 CHECK 语义被拒绝；事务回滚漂移。"""
+def test_all_migrations_are_applied_and_reused(pg_database):
+    """输入：专用库；输出：迁移补齐到 002，再次迁移复用；只读核对版本。"""
+    pg, _, _ = _api()
+    assert pg.migrate(pg_database).outcome == "reused"
+    assert pg.check(pg_database).migration_version == "002"
+
+
+def test_database_at_001_upgrades_to_002(pg_database, r2_corpus):
+    """输入：已导入 Corpus、降回 001 结构的专用库；输出：migrate 补跑 002 后核对通过，Corpus 仍能复验。"""
+    pg, api, load = _api(); source = load(r2_corpus)
+    imported = api.import_verified_corpus(source, pg_database)
+    with pg.connection(pg_database, "admin") as conn, conn.transaction():
+        conn.execute("DROP TABLE querypilot_kb.chunk_embeddings")
+        conn.execute("ALTER TABLE querypilot_kb.knowledge_chunks ADD COLUMN embedding public.vector, "
+                     "ADD COLUMN embedding_profile_id TEXT, ADD COLUMN embedding_dimensions INTEGER")
+        conn.execute("""ALTER TABLE querypilot_kb.knowledge_chunks ADD CONSTRAINT chunks_embedding CHECK (
+            (embedding IS NULL AND embedding_profile_id IS NULL AND embedding_dimensions IS NULL)
+            OR (embedding IS NOT NULL AND embedding_profile_id IS NOT NULL AND length(embedding_profile_id) > 0
+             AND embedding_dimensions IS NOT NULL AND embedding_dimensions > 0
+             AND public.vector_dims(embedding) = embedding_dimensions AND public.vector_norm(embedding) > 0))""")
+        conn.execute("DELETE FROM querypilot_kb.schema_migrations WHERE version='002'")
+    assert pg.bootstrap(pg_database).outcome == "reused"
+    assert pg.migrate(pg_database).outcome == "applied"
+    assert pg.check(pg_database).migration_version == "002"
+    verified = api.verify_corpus_import(source, pg_database)
+    assert verified.projection_digest == imported.projection_digest
+
+
+@pytest.mark.parametrize("statement", [
+    "UPDATE querypilot_kb.schema_migrations SET checksum=repeat('0',64) WHERE version='001'",
+    "INSERT INTO querypilot_kb.schema_migrations(version,checksum) VALUES ('999',repeat('0',64))",
+])
+def test_migration_records_must_match_files(pg_database, statement):
+    """输入：迁移记录被改或多出陌生版本；输出：migrate 与 check 都报 migration_conflict。"""
+    pg, _, _ = _api()
+    with pg.connection(pg_database, "admin") as conn, conn.transaction():
+        conn.execute(statement)
+    try:
+        for command in (pg.migrate, pg.check):
+            with pytest.raises(KnowledgeStorageError) as caught:
+                command(pg_database)
+            assert caught.value.error_type == "migration_conflict"
+    finally:
+        with pg.connection(pg_database, "admin") as conn, conn.transaction():
+            conn.execute("DELETE FROM querypilot_kb.schema_migrations")
+            for record in pg.migration_records():
+                conn.execute("INSERT INTO querypilot_kb.schema_migrations(version,checksum) VALUES (%(version)s,%(checksum)s)", record)
+
+
+def test_check_rejects_unmigrated_schema(pg_database):
+    """输入：空的知识 Schema；输出：核对报 migration_conflict，提示先迁移；事务回滚。"""
+    pg, _, _ = _api()
+    with pg.connection(pg_database, "admin") as conn:
+        with pytest.raises(RuntimeError, match="restore"):
+            with conn.transaction():
+                conn.execute("ALTER SCHEMA querypilot_kb RENAME TO querypilot_kb_aside")
+                conn.execute("CREATE SCHEMA querypilot_kb")
+                with pytest.raises(KnowledgeStorageError) as caught: pg.check_database(conn)
+                assert caught.value.error_type == "migration_conflict"
+                raise RuntimeError("restore")
+
+
+def test_migration_reuse_keeps_records(pg_database):
+    """输入：已迁移到最新的专用库；输出：再次 migrate 返回 reused，迁移记录和执行时间不变。"""
     pg, _, _ = _api()
     with pg.connection(pg_database, "admin") as conn:
         before = conn.execute("SELECT * FROM querypilot_kb.schema_migrations").fetchall()
     assert pg.migrate(pg_database).outcome == "reused"
     with pg.connection(pg_database, "admin") as conn:
         assert conn.execute("SELECT * FROM querypilot_kb.schema_migrations").fetchall() == before
-        with pytest.raises(RuntimeError, match="restore"):
-            with conn.transaction():
-                conn.execute("ALTER TABLE querypilot_kb.knowledge_corpora DROP CONSTRAINT corpora_state")
-                conn.execute("ALTER TABLE querypilot_kb.knowledge_corpora ADD CONSTRAINT corpora_state CHECK (status='different')")
-                with pytest.raises(KnowledgeStorageError) as caught: pg.check_structure(conn)
-                assert caught.value.error_type == "migration_conflict"
-                raise RuntimeError("restore")
-    assert pg.check(pg_database).outcome == "checked"
 
 
 def test_import_reuse_verification_and_composite_order(pg_database, r2_corpus):
@@ -86,7 +140,6 @@ def test_import_reuse_verification_and_composite_order(pg_database, r2_corpus):
         _, groups = pg.read_corpus(conn, source.manifest.corpus_id)
     assert groups["relations"][0]["source_columns"] == ["tenant_ref", "item_ref"]
     assert groups["relations"][0]["target_columns"] == ["tenant_id", "item_id"]
-    assert all(row["embedding"] is None for row in groups["chunks"])
 
 
 @pytest.mark.parametrize("kind", ["content", "missing", "extra", "registration"])
@@ -187,6 +240,30 @@ def test_cross_scope_or_wrong_parent_is_rejected(pg_database, r2_corpus, field, 
         assert caught.value.sqlstate == "23503"
 
 
+@pytest.mark.parametrize("chunk,dimensions,vector,sqlstate", [
+    ("existing", 3, "[1,0,0]", None),
+    ("unknown", 3, "[1,0,0]", "23503"),
+    ("existing", 3, "[0,0,0]", "23514"),
+    ("existing", 2, "[1,0,0]", "23514"),
+])
+def test_importer_appends_vectors_only_for_known_chunks(pg_database, r2_corpus, chunk, dimensions, vector, sqlstate):
+    """输入：importer 写一条向量；输出：已存在的 Chunk、非零向量、维度一致才写入，否则约束拒绝。"""
+    pg, api, load = _api(); source = load(r2_corpus)
+    api.import_verified_corpus(source, pg_database)
+    chunk_id = source.chunks[0].chunk_id if chunk == "existing" else str(uuid5(NAMESPACE_URL, str(uuid4())))
+    statement = ("INSERT INTO querypilot_kb.chunk_embeddings(chunk_id,embedding_profile_id,embedding_dimensions,embedding) "
+                 "VALUES (%s,'fake:3:test-v1',%s,%s::public.vector)")
+    import psycopg
+    with pg.connection(pg_database, "import") as conn:
+        if sqlstate is None:
+            with conn.transaction(): conn.execute(statement, (chunk_id, dimensions, vector))
+            assert conn.execute("SELECT count(*) AS n FROM querypilot_kb.chunk_embeddings").fetchone()["n"] == 1
+        else:
+            with pytest.raises(psycopg.IntegrityError) as caught:
+                with conn.transaction(): conn.execute(statement, (chunk_id, dimensions, vector))
+            assert caught.value.sqlstate == sqlstate
+
+
 @pytest.mark.parametrize("role", ["read", "import"])
 def test_runtime_roles_cannot_create_temp_or_persistent_objects(pg_database, role):
     """输入：两运行角色；输出：READ WRITE 下临时/持久建表均报 42501；无残留表。"""
@@ -210,6 +287,9 @@ def test_runtime_roles_cannot_create_temp_or_persistent_objects(pg_database, rol
     ("import", "UPDATE querypilot_kb.knowledge_corpora SET status=status"),
     ("import", "DELETE FROM querypilot_kb.knowledge_corpora"),
     ("import", "TRUNCATE querypilot_kb.knowledge_chunks"),
+    ("read", "INSERT INTO querypilot_kb.chunk_embeddings SELECT * FROM querypilot_kb.chunk_embeddings"),
+    ("import", "UPDATE querypilot_kb.chunk_embeddings SET embedding_profile_id=embedding_profile_id"),
+    ("import", "DELETE FROM querypilot_kb.chunk_embeddings"),
 ])
 def test_roles_cannot_modify_existing_knowledge(pg_database, role, statement):
     """输入：越界写入/DDL；输出：实际权限拒绝，不借默认只读掩盖授权错误。"""
