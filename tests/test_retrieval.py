@@ -199,3 +199,17 @@ def test_shared_parser_preserves_unified_cli_safe_syntax_error(capsys):
     output = capsys.readouterr()
     assert output.out == ""
     assert output.err == "querypilot: 参数不合法，请查看对应命令 --help\n"
+
+
+def test_rerank_is_off_by_default_and_caps_top_k_at_the_candidate_count():
+    """输入：是否重排与 top_k 的组合；输出：rerank 默认关闭；开启时 top_k 最大 20（候选数），21 被拒绝且
+    不回显查询；不开时上限仍是 50。"""
+    scope = KnowledgeScope(**scope_values())
+    assert RetrievalRequest(query="q", scope=scope).rerank is False
+    assert RetrievalRequest(query="q", scope=scope, rerank=True, top_k=20).top_k == 20
+    assert RetrievalRequest(query="q", scope=scope, top_k=50).top_k == 50
+    with pytest.raises(ValidationError) as caught:
+        RetrievalRequest(query="private question", scope=scope, rerank=True, top_k=21)
+    assert "private question" not in str(caught.value)
+    with pytest.raises(ValidationError):
+        RetrievalRequest.model_validate({"query": "q", "scope": scope_values(), "rerank": "yes"})
