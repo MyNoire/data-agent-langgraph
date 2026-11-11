@@ -124,6 +124,6 @@ uv run querypilot eval retrieval --cases evals/retrieval/retrieval_cases.json --
 
 三种方法的题集、Corpus、`top_k=20`、K=5/10 和 Column Recall@10 都相同，差异只来自检索方法。运行配置记录 `method`；报告的 `config.method` 是请求的方法，`config.retrieval` 列出结果实际用到的方法、Embedding Profile 和配置版本（`r3-bm25-v1` / `r4-vector-v1` / `r4-hybrid-v1`，含义写在 `retrieval/models.py` 的 `RETRIEVAL_CONFIG_VERSIONS` 旁）。计分规则的测试使用假检索器，不需要连数据库：`tests/test_retrieval_eval_scoring.py`。
 
-`--rerank` 在检索之后加一步重排，默认关闭，可以和任何 `--method` 组合（见[知识库](../knowledge/knowledge-base.md)第 7 节）。它需要 `QUERYPILOT_RERANK_*` 配置，每道题调用一次 Reranker 服务（最多 20 个候选），88 题约 88 次，**会产生费用**；和 vector、hybrid 组合时 Embedding 的调用照旧。一次运行只创建一个 Reranker，所有题共用。评测的 `top_k=20` 等于重排的候选数，所以重排只改变这 20 个 Hit 的顺序，题集、Corpus 和指标都不变。某一题重排失败（`rerank_error`）会中止整批运行，和 Embedding 失败时一样，不能从断点续跑。
+`--rerank` 在检索之后加一步重排，默认关闭，可以和任何 `--method` 组合（见[知识库](../knowledge/knowledge-base.md)第 7 节）。它需要 `QUERYPILOT_RERANK_*` 配置，每道题至多调用一次 Reranker 服务（最多 20 个候选；没有候选或查询没有有效词的题不调用），88 题最多 88 次，**会产生费用**；和 vector、hybrid 组合时 Embedding 的调用照旧。一次运行只创建一个 Reranker，所有题共用。评测的 `top_k=20` 等于重排的候选数，所以重排只改变这 20 个 Hit 的顺序，题集、Corpus 和指标都不变。某一题重排失败（`rerank_error`）会中止整批运行，和 Embedding 失败时一样，不能从断点续跑。
 
-开启重排后，运行配置记录 `rerank`；报告的 `config.rerank` 是请求的开关，`config.retrieval` 的每一项多一个 `rerank_profile_id`（没有重排时为空），配置版本在方法的版本后面拼上 `r4b-rerank-v1`（如 `r4-hybrid-v1+r4b-rerank-v1`）。2026-11-12 之前生成的报告没有这两个字段。
+不管开不开重排，运行配置都记录 `rerank`（真或假）；报告的 `config.rerank` 是请求的开关，`config.retrieval` 的每一项有 `rerank_profile_id`（没有重排时为空）。开启重排时，配置版本在方法的版本后面拼上 `r4b-rerank-v1`（如 `r4-hybrid-v1+r4b-rerank-v1`）。2026-11-12 之前生成的运行没有 `rerank`、`config.rerank` 和 `rerank_profile_id` 这三个字段，它们都没有重排。

@@ -6,6 +6,7 @@ from pathlib import Path
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import pytest
+from pydantic import ValidationError
 
 from querypilot.evaluation.api import RetrievalCase, RetrievalCaseSet, evaluate_retrieval
 from querypilot.knowledge.api import KnowledgeScope
@@ -141,7 +142,6 @@ def test_default_retriever_needs_reranker_settings_only_when_rerank_is_on(tmp_pa
 
     输出：不开重排时照常跑完；开启重排时在第一题之前就因为缺配置失败，说明 Reranker 在运行开始时创建。
     """
-    from pydantic import ValidationError
     for name in ("BASE_URL", "MODEL", "API_KEY"):
         monkeypatch.delenv(f"QUERYPILOT_RERANK_{name}", raising=False)
     monkeypatch.chdir(tmp_path)                       # 不读仓库的 .env
@@ -149,6 +149,27 @@ def test_default_retriever_needs_reranker_settings_only_when_rerank_is_on(tmp_pa
     assert evaluate_retrieval(cases_file, _settings(tmp_path))["summary"]["overall"]["cases"] == 0
     with pytest.raises(ValidationError, match="RerankSettings"):
         evaluate_retrieval(cases_file, _settings(tmp_path), rerank=True)
+
+
+def test_default_retriever_shares_one_reranker_across_cases(tmp_path, monkeypatch):
+    """输入：默认检索器，开启重排，两道题；retrieve_knowledge 换成假的，不连数据库也不联网。
+
+    输出：两次检索收到的是同一个按 QUERYPILOT_RERANK_* 创建的 Reranker。
+    """
+    from querypilot.evaluation.retrieval import _runner
+    monkeypatch.setenv("QUERYPILOT_RERANK_BASE_URL", "http://127.0.0.1:9/v1")
+    monkeypatch.setenv("QUERYPILOT_RERANK_MODEL", "Qwen/Qwen3-Reranker-8B")
+    monkeypatch.setenv("QUERYPILOT_RERANK_API_KEY", "sk-not-a-real-key")
+    rerankers = []
+
+    def fake_retrieve(request, settings, embedder=None, reranker=None):
+        rerankers.append(reranker)
+        return _result(request, [_hit(1)])
+
+    monkeypatch.setattr(_runner, "retrieve_knowledge", fake_retrieve)
+    evaluate_retrieval(_cases_file(tmp_path, [_case(1), _case(2)]), _settings(tmp_path), rerank=True)
+    assert len(rerankers) == 2 and rerankers[0] is rerankers[1]
+    assert rerankers[0].profile_id.startswith("siliconflow:Qwen/Qwen3-Reranker-8B:")
 
 
 def test_input_error_is_recorded_on_the_case_and_the_batch_continues(tmp_path):
