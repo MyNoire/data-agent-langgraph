@@ -39,12 +39,14 @@ def _hit(rank: int, knowledge_type: str = "column", table: str | None = "items",
 
 
 def _result(request, hits: list[RetrievalHit], elapsed_ms: float = 1.0) -> RetrievalResult:
-    """按请求的方法返回结果；vector 和 hybrid 带上假的 Embedding Profile。"""
+    """按请求的方法返回结果；vector 和 hybrid 带上假的 Embedding Profile，开启重排时带上假的 Rerank Profile。"""
     profile = None if request.method == "lexical" else "fake:3:test-v1"
+    rerank_profile = "fake-rerank:test-v1" if request.rerank else None
     return RetrievalResult(request_id=str(uuid4()), outcome="matched" if hits else "no_match", scope=request.scope,
                            query_sha256=sha256(request.query.encode()).hexdigest(), top_k=request.top_k,
                            knowledge_types=request.knowledge_types, hit_count=len(hits), hits=hits,
-                           elapsed_ms=elapsed_ms, method=request.method, embedding_profile_id=profile)
+                           elapsed_ms=elapsed_ms, method=request.method, embedding_profile_id=profile,
+                           rerank_profile_id=rerank_profile)
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -73,7 +75,9 @@ def test_each_case_is_retrieved_once_and_recorded_without_question_text(tmp_path
         "dataset_sha256": sha256(cases_file.read_bytes()).hexdigest(),
         "scopes": {"demo": SCOPE.model_dump(mode="json")},
         "method": "lexical",
-        "retrieval": [{"method": "lexical", "embedding_profile_id": None, "retrieval_config_version": "r3-bm25-v1"}],
+        "rerank": False,
+        "retrieval": [{"method": "lexical", "embedding_profile_id": None, "rerank_profile_id": None,
+                       "retrieval_config_version": "r3-bm25-v1"}],
         "top_k": 20,
         "table_ks": [5, 10],
         "column_k": 10,
@@ -101,11 +105,50 @@ def test_method_reaches_every_request_the_run_config_and_the_report(tmp_path):
     assert [request.method for request in requests] == ["hybrid", "hybrid"]
     assert report["config"]["method"] == "hybrid"
     assert report["config"]["retrieval"] == [
-        {"method": "hybrid", "embedding_profile_id": "fake:3:test-v1", "retrieval_config_version": "r4-hybrid-v1"},
+        {"method": "hybrid", "embedding_profile_id": "fake:3:test-v1", "rerank_profile_id": None,
+         "retrieval_config_version": "r4-hybrid-v1"},
     ]
     runs = list((tmp_path / "artifacts").glob("runs/evaluation/*/*"))
     config = json.loads((runs[0] / "config.json").read_text(encoding="utf-8"))
     assert config["parameters"]["method"] == "hybrid"
+
+
+def test_rerank_reaches_every_request_the_run_config_and_the_report(tmp_path):
+    """输入：method=hybrid，rerank=True；输出：每个请求都开启重排，top_k 仍是 20；运行配置记下开启了重排，
+    报告记下请求的开关，以及结果实际用到的 Rerank Profile 和带重排的配置版本。"""
+    cases_file = _cases_file(tmp_path, [_case(1), _case(2)])
+    requests = []
+
+    def retriever(request):
+        requests.append(request)
+        return _result(request, [_hit(1)])
+
+    report = evaluate_retrieval(cases_file, _settings(tmp_path), method="hybrid", rerank=True, retriever=retriever)
+
+    assert [(request.method, request.rerank, request.top_k) for request in requests] == [("hybrid", True, 20)] * 2
+    assert (report["config"]["method"], report["config"]["rerank"]) == ("hybrid", True)
+    assert report["config"]["retrieval"] == [
+        {"method": "hybrid", "embedding_profile_id": "fake:3:test-v1", "rerank_profile_id": "fake-rerank:test-v1",
+         "retrieval_config_version": "r4-hybrid-v1+r4b-rerank-v1"},
+    ]
+    runs = list((tmp_path / "artifacts").glob("runs/evaluation/*/*"))
+    config = json.loads((runs[0] / "config.json").read_text(encoding="utf-8"))
+    assert (config["parameters"]["method"], config["parameters"]["rerank"]) == ("hybrid", True)
+
+
+def test_default_retriever_needs_reranker_settings_only_when_rerank_is_on(tmp_path, monkeypatch):
+    """输入：默认检索器，没有 QUERYPILOT_RERANK_* 配置，题集为空（不会发生检索，不连数据库）。
+
+    输出：不开重排时照常跑完；开启重排时在第一题之前就因为缺配置失败，说明 Reranker 在运行开始时创建。
+    """
+    from pydantic import ValidationError
+    for name in ("BASE_URL", "MODEL", "API_KEY"):
+        monkeypatch.delenv(f"QUERYPILOT_RERANK_{name}", raising=False)
+    monkeypatch.chdir(tmp_path)                       # 不读仓库的 .env
+    cases_file = _cases_file(tmp_path, [])
+    assert evaluate_retrieval(cases_file, _settings(tmp_path))["summary"]["overall"]["cases"] == 0
+    with pytest.raises(ValidationError, match="RerankSettings"):
+        evaluate_retrieval(cases_file, _settings(tmp_path), rerank=True)
 
 
 def test_input_error_is_recorded_on_the_case_and_the_batch_continues(tmp_path):
@@ -120,7 +163,8 @@ def test_input_error_is_recorded_on_the_case_and_the_batch_continues(tmp_path):
     assert [(r["question_id"], r["outcome"]) for r in report["records"]] == [(1, "input_error"), (2, "ok")]
 
 
-@pytest.mark.parametrize("error", [KnowledgeRetrievalError("connection_failed"), RuntimeError("boom")])
+@pytest.mark.parametrize("error", [KnowledgeRetrievalError("connection_failed"),
+                                   KnowledgeRetrievalError("rerank_error"), RuntimeError("boom")])
 def test_other_retrieval_errors_abort_the_batch(tmp_path, error):
     cases_file = _cases_file(tmp_path, [_case(1), _case(2)])
     calls = []
@@ -171,15 +215,16 @@ def test_cli_runs_one_recorded_evaluation_and_prints_locations(tmp_path, monkeyp
     monkeypatch.setattr(cli, "get_settings", lambda: settings)
     built_for, requests = [], []
 
-    def default_retriever(method):
-        built_for.append(method)
+    def default_retriever(method, rerank):
+        built_for.append((method, rerank))
         return lambda request: requests.append(request) or _result(request, [_hit(1)])
 
     monkeypatch.setattr(_runner, "_default_retriever", default_retriever)
     cases_file = _cases_file(tmp_path, [_case(1, question="PRIVATE RETRIEVAL QUESTION")])
 
     assert cli.main(["eval", "retrieval", "--cases", str(cases_file), "--method", "vector"]) == 0
-    assert built_for == ["vector"] and [request.method for request in requests] == ["vector"]
+    assert built_for == [("vector", False)]
+    assert [(request.method, request.rerank) for request in requests] == [("vector", False)]
 
     captured = capsys.readouterr()
     output = json.loads(captured.out)
@@ -188,8 +233,40 @@ def test_cli_runs_one_recorded_evaluation_and_prints_locations(tmp_path, monkeyp
     record = json.loads((runs[0] / "run.json").read_text(encoding="utf-8"))
     config = json.loads((runs[0] / "config.json").read_text(encoding="utf-8"))
     assert record["status"] == "completed" and config["parameters"]["mode"] == "retrieval"
-    assert config["parameters"]["method"] == "vector"
+    assert (config["parameters"]["method"], config["parameters"]["rerank"]) == ("vector", False)
     assert Path(output["result_file"]) == runs[0] / "result.json"
     assert output["summary"]["overall"]["cases"] == 1
     safe = captured.out + captured.err + (runs[0] / "events.jsonl").read_text(encoding="utf-8")
     assert "PRIVATE RETRIEVAL QUESTION" not in safe
+
+
+def test_cli_rerank_flag_turns_reranking_on_for_the_whole_run(tmp_path, monkeypatch, capsys):
+    """输入：eval retrieval --rerank（方法用默认的 lexical）；输出：默认检索器按"开启重排"创建一次，
+    每个请求都开启重排，运行配置和结果文件都记下。"""
+    from querypilot.entrypoints import cli
+    from querypilot.evaluation.retrieval import _runner
+
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+    built_for, requests = [], []
+
+    def default_retriever(method, rerank):
+        built_for.append((method, rerank))
+        return lambda request: requests.append(request) or _result(request, [_hit(1)])
+
+    monkeypatch.setattr(_runner, "_default_retriever", default_retriever)
+    cases_file = _cases_file(tmp_path, [_case(1), _case(2)])
+
+    assert cli.main(["eval", "retrieval", "--cases", str(cases_file), "--rerank"]) == 0
+    assert built_for == [("lexical", True)]
+    assert [(request.method, request.rerank) for request in requests] == [("lexical", True)] * 2
+
+    output = json.loads(capsys.readouterr().out)
+    runs = list(settings.artifacts_dir.glob("runs/evaluation/*/*"))
+    config = json.loads((runs[0] / "config.json").read_text(encoding="utf-8"))
+    assert (config["parameters"]["method"], config["parameters"]["rerank"]) == ("lexical", True)
+    report = json.loads(Path(output["result_file"]).read_text(encoding="utf-8"))
+    assert report["config"]["retrieval"] == [
+        {"method": "lexical", "embedding_profile_id": None, "rerank_profile_id": "fake-rerank:test-v1",
+         "retrieval_config_version": "r3-bm25-v1+r4b-rerank-v1"},
+    ]

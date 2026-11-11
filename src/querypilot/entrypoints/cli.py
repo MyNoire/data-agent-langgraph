@@ -39,6 +39,8 @@ def create_parser() -> argparse.ArgumentParser:
     retrieval.add_argument("--cases", type=Path, required=True)
     retrieval.add_argument("--method", choices=("lexical", "vector", "hybrid"), default="lexical",
                            help="检索方法；vector 和 hybrid 会调用 Embedding 服务，产生费用")
+    retrieval.add_argument("--rerank", action="store_true",
+                           help="检索后用 Reranker 重排，可与任何 --method 组合；会调用 Reranker 服务，产生费用")
     retrieval.set_defaults(command="eval.retrieval")
     cases = _artifacts(eval_actions.add_parser("retrieval-cases", help="从 BIRD 题目和 Corpus 生成检索题集"))
     cases.add_argument("--questions", type=Path, required=True)

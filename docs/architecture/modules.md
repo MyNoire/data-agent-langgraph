@@ -134,7 +134,7 @@ read_report(source) 显式读取旧 JSON 或完整的新评测运行目录，不
 
 BIRD 的 fetch/import/select/freeze/prepare 逻辑归 evaluation/datasets；命令层只适配参数。搬迁没有重新下载、选题或冻结正式数据。
 
-检索评测归 `evaluation/retrieval`，按需离线运行：`prepare_retrieval_cases` 从 BIRD 题目和 Corpus 生成检索题集（`eval retrieval-cases`），`evaluate_retrieval` 按 `method`（lexical / vector / hybrid）逐题调用 `retrieve_knowledge` 并按 GLOSSARY「评测」的口径计分（`eval retrieval --method`），vector 和 hybrid 整次运行共用一个 Embedder，报告写进运行记录。SQL 报告不接收检索分数，SQL 的延迟计算也不为此改公式。
+检索评测归 `evaluation/retrieval`，按需离线运行：`prepare_retrieval_cases` 从 BIRD 题目和 Corpus 生成检索题集（`eval retrieval-cases`），`evaluate_retrieval` 按 `method`（lexical / vector / hybrid）和 `rerank`（是否重排，默认关闭）逐题调用 `retrieve_knowledge` 并按 GLOSSARY「评测」的口径计分（`eval retrieval --method ... [--rerank]`），vector 和 hybrid 整次运行共用一个 Embedder，开启重排时整次运行共用一个 Reranker，报告写进运行记录。SQL 报告不接收检索分数，SQL 的延迟计算也不为此改公式。
 
 检索本体的 `retrieval.api` 导出 `retrieve_knowledge`（限定 Knowledge Scope，按 `method` 做 BM25、向量或 RRF 混合检索；向量和混合检索可传入 Embedder，没传时按配置创建；请求开启 `rerank` 时用 Reranker 对候选重排，没传时按 `QUERYPILOT_RERANK_*` 创建）和它的请求、结果、Hit、错误与 ScopeFile 类型，以及 `Reranker` 接口、`RerankError`、硅基流动的 `SiliconFlowReranker` 和它的配置 `RerankSettings`；KnowledgeScope 仍从 `knowledge.api` 取得。参数和 scope 文件解析位于 `entrypoints/commands/retrieval.py`，安全解析器在 `entrypoints/_arguments.py` 共用。统一检索命令还没有接进 CLI，不公开内部查询或会话辅助函数凑接口。
 

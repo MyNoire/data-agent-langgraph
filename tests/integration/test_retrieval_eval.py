@@ -28,7 +28,8 @@ def test_real_retriever_runs_through_evaluation(retrieval_source, tmp_path):  # 
         (1, "ok"), (2, "input_error"), (3, "ok"),
     ]
     assert report["config"]["retrieval"] == [
-        {"method": "lexical", "embedding_profile_id": None, "retrieval_config_version": "r3-bm25-v1"},
+        {"method": "lexical", "embedding_profile_id": None, "rerank_profile_id": None,
+         "retrieval_config_version": "r3-bm25-v1"},
     ]
     assert report["summary"]["overall"]["cases"] == 3
     assert report["summary"]["overall"]["input_error_cases"] == 1
