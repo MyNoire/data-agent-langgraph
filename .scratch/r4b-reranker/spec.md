@@ -52,7 +52,8 @@ R4 的三种检索方法里 hybrid 最好，但 88 题中 Table Complete Recall@
 - 一个小接口，放在 retrieval 模块（它不读写知识存储，和 Embedder 不同）：
   - `profile_id`：这套重排配置的身份（Rerank Profile）；
   - `rerank(query, documents)`：按输入顺序返回每个文档的相关性分数，条数与输入相同。
-- 真实实现调用硅基流动的 `POST {base_url}/rerank`，请求带 `model`、`query`、`documents`（字符串列表），不要求返回文档原文；响应的 `results` 里每项有 `index` 和 `relevance_score`。这不是 OpenAI 兼容接口，用 httpx 直接调用，httpx 升为运行时依赖（它已经随 openai 安装）。
+- 真实实现调用硅基流动的 `POST {base_url}/rerank`，请求带 `model`、`query`、`documents`（字符串列表），不要求返回文档原文；响应的 `results` 里每项有 `index` 和 `relevance_score`。OpenAI 的 SDK 没有封装重排接口，用 SDK 客户端的通用 `post` 向 `/rerank` 发请求，其余写法和 Embedding 客户端相同（同样的鉴权、60 秒超时、测试时可注入 HTTP 传输），不新增运行时依赖。
+- 重试用 SDK 的默认行为，不另写：连接失败、超时、限流和服务端错误自动重试 2 次，仍失败才算重排失败。
 - 配置为 `QUERYPILOT_RERANK_BASE_URL`、`QUERYPILOT_RERANK_MODEL`、`QUERYPILOT_RERANK_API_KEY`，与 Embedding 和对话模型分开。
 - 真实客户端检查：返回的条数与文档数相同，`index` 恰好覆盖每个文档一次，分数是有限数。不满足、请求失败或超时，都当作重排失败。
 - 重排失败统一为 `rerank_error`，错误消息是固定的安全文本，不含查询、Chunk 正文和密钥；底层原因通过异常链保留。
@@ -104,7 +105,7 @@ R4 的三种检索方法里 hybrid 最好，但 88 题中 Table Complete Recall@
   - 查询没有有效词时报 `input_error`，Reranker 没被调用；
   - 不开重排时既不调用也不创建 Reranker；没传 Reranker 时按配置创建。
 - **Seam 2：`RetrievalRequest`**，单元测试，沿用现有请求校验测试。覆盖：`rerank` 默认关闭；开启重排时 `top_k` 为 20 可以、21 被拒绝；不开重排时 `top_k` 上限仍是 50。
-- **Seam 3：真实 Reranker 客户端**，用假的 HTTP 传输代替网络（做法同 Embedding 客户端的测试）。覆盖：请求的地址、模型、查询、文档和指令；分数按 `index` 还原成输入顺序；HTTP 错误、条数不对、`index` 重复或越界、超时都报重排错误；错误消息里没有密钥；Profile 字符串。
+- **Seam 3：真实 Reranker 客户端**，用假的 HTTP 传输代替网络（做法同 Embedding 客户端的测试）。覆盖：请求的地址、模型、查询、文档和指令；分数按 `index` 还原成输入顺序；HTTP 错误、条数不对、`index` 重复或越界、超时都报重排错误；临时的服务端错误会重试，重试后成功就正常返回；错误消息里没有密钥；Profile 字符串。
 - **Seam 4：评测运行器**，沿用现有的假检索器测试。覆盖：`rerank` 传进每个检索请求，并写进运行配置和报告。
 - 模块边界测试继续守住 retrieval 只依赖 knowledge 和 runtime。
 
@@ -114,7 +115,7 @@ R4 的三种检索方法里 hybrid 最好，但 88 题中 Table Complete Recall@
 - 比较不同的 Reranker 模型、不同的指令写法、不同的候选数；调整 RRF。
 - 记录 token 用量和费用；新增对比命令；MRR 和 nDCG。
 - 修改 `rerank` 或 `method` 的默认值，以及把检索接入查询图（R5）。Reranker 失败时要不要降级，留给 R5 的查询图决定。
-- Reranker 调用失败后的重试：本次失败就报 `rerank_error`，评测中途失败会中止整批。重试逻辑在 R4b 完成之后再加（用户决定，2026-11-11）。
+- 自己写重试逻辑、调整重试次数和超时：只用 SDK 默认的重试。SDK 重试用尽后报 `rerank_error`，评测中途遇到会中止整批；评测从断点续跑不做。
 - 给单条检索的 CLI 加 `--rerank`：这个命令只有参数解析，没有接到 `retrieve_knowledge`。
 
 ## 补充说明

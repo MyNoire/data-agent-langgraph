@@ -1,6 +1,6 @@
 # 02: 硅基流动 Reranker 客户端与指令验证
 
-**What to build:** 写出向硅基流动发重排请求的代码：用 `QUERYPILOT_RERANK_BASE_URL / MODEL / API_KEY` 调用重排接口，把返回的分数对回每个候选，并检查返回是否正常。`retrieve_knowledge` 在开启重排而没有传入 Reranker 时，按这份配置创建它。另外用一次真实调用确认 `instruction` 参数是否生效，据此确定 Rerank Profile 的指令版本。
+**What to build:** 写出向硅基流动发重排请求的代码：通过 OpenAI SDK，用 `QUERYPILOT_RERANK_BASE_URL / MODEL / API_KEY` 调用重排接口，把返回的分数对回每个候选，并检查返回是否正常。`retrieve_knowledge` 在开启重排而没有传入 Reranker 时，按这份配置创建它。另外用一次真实调用确认 `instruction` 参数是否生效，据此确定 Rerank Profile 的指令版本。
 
 **Blocked by:** 01
 
@@ -9,7 +9,8 @@
 规格：`.scratch/r4b-reranker/spec.md`。真实调用要用户明确同意后才做。
 
 - [ ] 配置 `QUERYPILOT_RERANK_BASE_URL`、`QUERYPILOT_RERANK_MODEL`、`QUERYPILOT_RERANK_API_KEY`，与 Embedding 和对话模型分开；地址停在 `/v1`，由代码拼上 `/rerank`；密钥不出现在任何输出和错误消息里
-- [ ] httpx 升为运行时依赖
+- [ ] 用 OpenAI SDK 客户端的通用 `post` 向 `/rerank` 发请求，写法与 Embedding 客户端一致（鉴权、60 秒超时、可注入 HTTP 传输）；不新增运行时依赖
+- [ ] 重试用 SDK 默认行为（连接失败、超时、限流、服务端错误自动重试 2 次），不另写；测试覆盖"第一次返回服务端错误、重试后成功"和"一直失败则报重排错误"
 - [ ] 请求带模型、查询和文档列表，不要求返回文档原文；分数按返回的 `index` 还原成输入顺序
 - [ ] 返回条数与文档数不同、`index` 重复或越界、分数不是有限数、HTTP 错误、超时，都报重排错误；底层原因保留在异常链里
 - [ ] Rerank Profile 为 `siliconflow:<模型>:content-v1:<指令版本>`
