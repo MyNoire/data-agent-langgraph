@@ -562,3 +562,28 @@ def test_without_rerank_the_reranker_is_not_called_and_results_are_unchanged(ret
     assert reranker.calls == []
     assert result.hits == plain.hits and len(result.hits) == 3
     assert (result.rerank_profile_id, result.retrieval_config_version) == (None, "r3-bm25-v1")
+
+
+def test_rerank_without_reranker_builds_one_from_settings(retrieval_source, monkeypatch):
+    """输入：开启重排但没传 reranker；输出：按 QUERYPILOT_RERANK_* 配置创建，结果写明它的 Rerank Profile。
+
+    查询在 BM25 里没有命中，所以不会调用服务。base_url 指向本机不监听的端口，万一调用了也只会失败，
+    不会产生费用。
+    """
+    settings, _, scope = retrieval_source
+    monkeypatch.setenv("QUERYPILOT_RERANK_BASE_URL", "http://127.0.0.1:9/v1")
+    monkeypatch.setenv("QUERYPILOT_RERANK_MODEL", "Qwen/Qwen3-Reranker-8B")
+    monkeypatch.setenv("QUERYPILOT_RERANK_API_KEY", "sk-not-a-real-key")
+    result = retrieve_knowledge(RetrievalRequest(query="qpnomatch9f8e7d6c", scope=scope, rerank=True), settings)
+    assert result.outcome == "no_match"
+    assert result.rerank_profile_id.startswith("siliconflow:Qwen/Qwen3-Reranker-8B:content-v1:")
+
+
+def test_without_rerank_no_reranker_is_built(retrieval_source, monkeypatch, tmp_path):
+    """输入：不开重排，没传 reranker，也没有 Reranker 配置；输出：照常检索。"""
+    settings, _, scope = retrieval_source
+    for name in ("BASE_URL", "MODEL", "API_KEY"):
+        monkeypatch.delenv(f"QUERYPILOT_RERANK_{name}", raising=False)
+    monkeypatch.chdir(tmp_path)                       # 不读仓库的 .env
+    result = retrieve_knowledge(RetrievalRequest(query="items label", scope=scope), settings)
+    assert (result.outcome, result.rerank_profile_id) == ("matched", None)

@@ -11,6 +11,7 @@ from querypilot.knowledge.api import (
 
 from . import _fusion, _rerank, _search, _text
 from ._rerank import RerankError, Reranker
+from ._siliconflow import RerankSettings, SiliconFlowReranker
 from .models import (
     KnowledgeRetrievalError,
     RetrievalHit,
@@ -53,7 +54,9 @@ def retrieve_knowledge(request: RetrievalRequest, settings: KnowledgeStorageSett
         embedder：vector 和 hybrid 使用的 Embedder，决定 Embedding Profile。没传时按
             QUERYPILOT_EMBEDDING_* 配置创建 OpenAIEmbedder；lexical 不创建也不调用。批量调用时
             应由调用方创建一个并传入，复用同一个客户端。
-        reranker：request.rerank 为真时使用的 Reranker，决定 Rerank Profile；不开重排时不调用。
+        reranker：request.rerank 为真时使用的 Reranker，决定 Rerank Profile。没传时按
+            QUERYPILOT_RERANK_* 配置创建 SiliconFlowReranker；不开重排时不创建也不调用。批量调用时
+            应由调用方创建一个并传入。
     返回：
         RetrievalResult，写明实际方法、Embedding Profile（lexical 时为 None）和 Rerank Profile
         （请求没有开启重排时为 None；开启了但没有候选时仍写明，表示这次请求按哪套配置执行）。有 Hit 时 outcome 为 matched，hits 按 rank 从 1 连续排列；否则为 no_match。
@@ -74,6 +77,8 @@ def retrieve_knowledge(request: RetrievalRequest, settings: KnowledgeStorageSett
         terms = _text.query_terms(request.query) if uses_terms else None
         if uses_vectors and embedder is None:
             embedder = OpenAIEmbedder(EmbeddingSettings())
+        if request.rerank and reranker is None:
+            reranker = SiliconFlowReranker(RerankSettings())
         # 开启重排时先取固定数量的候选，重排后再截到 top_k。
         limit = _rerank.RERANK_CANDIDATES if request.rerank else request.top_k
         with open_read_scope(request.scope, settings) as session:
@@ -118,5 +123,7 @@ __all__ = [
     "KnowledgeRetrievalError",
     "Reranker",
     "RerankError",
+    "RerankSettings",
+    "SiliconFlowReranker",
     "ScopeFile",
 ]

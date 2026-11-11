@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 DIMENSIONS = 4096
 BATCH_SIZE = 32
 # Qwen3-Embedding 的非对称用法：查询前加任务指令，文档原样嵌入。指令只描述任务，不参考任何题目。
+# 重排（Qwen3-Reranker）的任务指令也用这一句。
 QUERY_TASK = ("Given a question about data in a relational database, retrieve the descriptions of the "
               "tables, columns and relationships needed to write a SQL query that answers it")
 
