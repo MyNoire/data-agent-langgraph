@@ -77,6 +77,41 @@ K 取 5 和 10。几个关键决定：
 
 运行目录（本地，Git 忽略）：vector `artifacts/runs/evaluation/2026-11-10/5b1da09ba55d47c08f33e259d68ed35c/`，hybrid `artifacts/runs/evaluation/2026-11-10/fe098b1338194d0faaa39cd5ce185cec/`；lexical 为下面第 5 节命令在 2026-11-06 的运行 `3c83f0af…`。三份报告里都没有问题原文。
 
+### 重排（R4b，2026-11-12）
+
+在 lexical 和 hybrid 之后各加一步重排（`--rerank`）：取前 20 个候选，交给 Reranker 重新排序。题集、Corpus、top_k=20 和指标都和上面相同。Rerank Profile 为 `siliconflow:Qwen/Qwen3-Reranker-8B:content-v1:task-instruct-v1`，配置版本 `r3-bm25-v1+r4b-rerank-v1` / `r4-hybrid-v1+r4b-rerank-v1`。候选数、模型和指令都是事先定好的，没有调过。lexical 和 hybrid 两列是上面的旧运行，没有重跑。
+
+| 整体（88 题） | lexical | hybrid | lexical + 重排 | hybrid + 重排 |
+|---|---|---|---|---|
+| **Table Complete Recall@5** | 64.8% | 68.2% | **75.0%** | 67.0% |
+| **Table Complete Recall@10** | 84.1% | 85.2% | 85.2% | **89.8%** |
+| Table Recall@5 / @10 | 83.5% / 92.8% | 85.8% / 93.5% | 88.2% / 93.5% | 84.0% / 95.6% |
+| Hits to Cover 中位数 / 平均数 | 3 / 4.9 | 3 / 4.9 | 3 / 4.6 | 4 / 5.0 |
+| 20 个 Hit 内拿不全的题 | 3 | 2 | 3 | 2 |
+| Column Recall@10 | 67.5% | 73.6% | 74.4% | **78.2%** |
+| 检索耗时 P50 / P95 | 0.28 / 0.33 s | 0.49 / 2.4 s | 0.97 / 15.5 s | 10.6 / 39.9 s |
+
+| Complete Recall@5 / @10 | lexical | hybrid | lexical + 重排 | hybrid + 重排 |
+|---|---|---|---|---|
+| toxicology（40） | 72.5% / 92.5% | 72.5% / 92.5% | **82.5%** / 95.0% | 72.5% / **100%** |
+| student_club（48） | 58.3% / 77.1% | 64.6% / 79.2% | **68.8%** / 77.1% | 62.5% / **81.3%** |
+
+- **重排有用，但效果取决于候选从哪来。**
+  - 在 BM25 的候选上重排：Complete Recall@5 从 64.8% 升到 75.0%（多 9 道题），是目前前 5 最好的配置。BM25 是确定的，两次运行的候选完全相同，所以这 9 道题都是重排的贡献。
+  - 在 hybrid 的候选上重排：@5 从 68.2% 变成 67.0%（少 1 道题，在噪声范围内），@10 从 85.2% 升到 89.8%（多 4 道题），Column Recall@10 多 4.5 个百分点。
+- **重排只改变顺序，找不出候选里没有的表。** "20 个 Hit 内拿不全"的题数，重排前后一样（lexical 3 道，hybrid 2 道）。
+- **两组重排的差别来自候选，不是来自 Reranker。** Reranker 给每个候选单独打分，同一个 Chunk 在两组里的分数基本相同（这是按模型的工作方式推断的，报告里不保存 Hit 列表，没有逐个核对）。
+  - toxicology 整个 Corpus 只有 20 个 Chunk。hybrid 把它们全部交给 Reranker，所以这个库上的"hybrid + 重排"就是 Reranker 自己给整个 Corpus 排序，第一阶段检索不起作用。它的 @5 是 72.5%，和 BM25 一样。
+  - BM25 在这个库上有 35 道题的候选不到 20 个（最少 6 个），只留下和问题有共同词的 Chunk。在这批候选上重排，@5 是 82.5%。也就是说，BM25 在这里起了过滤的作用，去掉了一些和问题没有共同词、Reranker 却打分不低的 Chunk。
+  - 反过来，候选多对 @10 有利：hybrid + 重排在 toxicology 上 @10 是 100%，lexical + 重排是 95.0%，因为有的表 BM25 根本没找到。
+- **有了重排，还要不要向量这一路？在这份题集上没有单一的答案。** 只看前 5，lexical + 重排更好（75.0% 对 67.0%，差 7 道题）。看前 10 和"能不能找全"，hybrid + 重排更好（89.8% 对 85.2%，拿不全的题 2 道对 3 道）。哪个更合适，取决于 R5 里放进提示词的 Hit 有多少。
+- **代价是延迟，而且波动很大。** 两组运行前后相接（hybrid + 重排用了 18.9 分钟，lexical + 重排用了 4.9 分钟）。
+  - 有 50 道题两组都交给 Reranker 20 个候选，这些题的耗时中位数在 lexical + 重排里是 1.0 秒，在 hybrid + 重排里是 11.3 秒。hybrid 只多一次 Embedding 调用，解释不了这个差距，所以它主要是服务本身在两个时段的波动，不能说明 lexical + 重排更快。
+  - hybrid + 重排有 17 道题超过 20 秒，最慢的一道 51.5 秒；lexical + 重排有 2 道，最慢 30.9 秒。客户端的超时是 60 秒。耗时里包含 SDK 的自动重试，报告分不出是服务慢还是重试了。
+- **这些数字的可靠程度**：每种配置只跑了一次；88 题里一道题就是 1.1 个百分点，1–2 道题的差别属于噪声；同一个候选的重排分数两次调用之间会差 0.02 左右，名次接近的 Hit 可能互换；hybrid + 重排和 hybrid 基线各自嵌入查询，student_club 上的候选可能略有出入。只有两个库，不能推广到别的数据。
+
+运行目录（本地，Git 忽略；目录按 UTC 日期命名）：hybrid + 重排 `artifacts/runs/evaluation/2026-11-11/3af18ae175bf488cb150592438006648/`，lexical + 重排 `artifacts/runs/evaluation/2026-11-11/913415bbac814780b01e4662753461f4/`。两份报告里都没有问题原文。
+
 ## 4. 失败分析（只看非冻结题）
 
 非冻结题共 72 道，其中 24 道在 K=5 时没拿全相关表；这 24 道里有 13 道到 K=10 就能拿全。主要有五类原因：
@@ -107,6 +142,39 @@ K 取 5 和 10。几个关键决定：
 - **hybrid 变差的 3 道都在边界上**：相关表从第 3 掉到第 6、从第 1 掉到第 6、从第 5 掉到第 6。另一路没找到它，而别的 Chunk 两路都找到了、分数加在一起，就把它挤出了前 5。
 - **hybrid 也会冲淡单路的发现**。只有一路找到的 Chunk 只拿一份 RRF 分，会排在两路都找到的 Chunk 后面："elements"那题 atom 表在向量里排第 5，hybrid 里排第 9；"List all the names of events…"那题 event 表在向量里排第 1、BM25 没有，hybrid 里排第 8。这是等权 RRF 的特点，权重和 k 都没调过。
 - **没解决的**：Vice President（member 表 17 → 10 → 14）、一张表挤占前排（carbon 那题 atom 表 7 → 6 → 10）、桥接表。这三类本来就不指望靠检索方法解决，要靠取值知识、单表名额或外键扩展。
+
+### R4b：重排救回了什么、弄丢了什么
+
+只看 72 道非冻结题。按 ADR 0001，这里只做分析，没有据此改知识、参数或代码。下面的名次都是"相关表第一次出现在第几个 Hit"。
+
+| 没拿全的题 | lexical | hybrid | lexical + 重排 | hybrid + 重排 |
+|---|---|---|---|---|
+| K=5 | 24 | 20 | **16** | 23 |
+| K=10 | 11 | 7 | 9 | **5** |
+
+K=5 时：在 BM25 的候选上重排，救回 12 道、弄丢 4 道；在 hybrid 的候选上重排，救回 8 道、弄丢 11 道。K=10 时两组都是救回 3 道、弄丢 1 道。
+
+- **重排擅长把"意思相关、字面不突出"的第二张表提上来。**
+  - "What is the percentage of **carbon** in double-bond molecules?"：atom 表在 BM25 里排第 7，重排后第 3；在 hybrid 里排第 10，重排后第 4。
+  - "What **elements** are in the TR004_8_9 bond atoms?"：atom 表从第 7（BM25）、第 9（hybrid）都升到第 2。
+  - "Which department was the **President** of the club in?"：member 表在 BM25 里排第 11，重排后第 2。
+- **重排会把问题里直接点名的表挤出前 5。** 两组重排的方向一致，说明这是 Reranker 的偏好，和候选从哪来无关。
+  - "Name the **event** with the highest amount spent on advertisement."：event 表原来排第 1，重排后是第 7（lexical）和第 8（hybrid）；budget 表从第 2 升到第 1。
+  - "Calculate the amount budgeted for 'April Speaker' **event**…"：event 表从第 3、第 4 掉到第 8、第 9。
+  - "What is the total cost of the pizzas for all the events?"：expense 表从第 1、第 2 掉到第 5、第 6。
+  - 推测是同一张表的好几个列块一起排到了前面，把另一张表挤了出去，也就是上面"一张表挤占前排"那一类问题。报告不保存 Hit 列表，这一点没有验证。
+- **同样是被挤，hybrid 的候选里掉得更深。**
+  - "…molecules that have single bonds … and are not carcinogenic…"：molecule 表在 lexical + 重排里排第 4，在 hybrid + 重排里排第 8。
+  - "List the name of students that have attended more than 7 events."：member 表分别是第 5 和第 9。
+  - hybrid 的 20 个候选里有只靠向量找到的 Chunk，Reranker 给其中一些打了高分，相关表就多掉了几名。K=5 时 hybrid + 重排比 lexical + 重排多丢 8 道非冻结题，大多是这种情况。
+- **hybrid 的候选更全，好处体现在 K=10。**
+  - "List all the names of events that had an attendance of over 20 students but were not fundraisers."：BM25 的候选里没有 event 表，重排也无能为力；hybrid 里它排第 8，重排后第 2。
+  - "What is the amount of the funds that the **Vice President** received?"：member 表在 hybrid 里排第 14，重排后第 6；在 lexical + 重排里仍是第 16。
+  - "What **elements** are in a double type bond?"：atom 表不在 BM25 的候选里；在 hybrid 里排第 9，重排后还是第 9。
+- **没解决的**：有 4 道题四种配置到 K=10 都拿不全，都是桥接表或数据值类问题。
+  - "Which student has been entrusted to manage the budget for the Yearly Kickoff?"：event 和 member 表排在第 11–20，或者不在候选里。
+  - "State what kind of expenses that **Sacha Harrison** incurred?"：人名是 member 表里的取值，member 表排在第 12–19。
+  - 这两类要靠取值知识和外键扩展，重排解决不了。
 
 ## 5. 怎么跑
 

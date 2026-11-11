@@ -27,13 +27,13 @@
 | R3 词法检索 | pg_search BM25，`retrieve_knowledge` | [知识库](knowledge/knowledge-base.md) |
 | 检索评测 | 88 题检索题集、按 Hit 计的召回指标、BM25 基线和失败分析 | [检索评测](evaluation/retrieval-evaluation.md) |
 | R4 向量与混合检索 | Embedding 向量存在 Corpus 之外（[ADR 0002](adr/0002-embeddings-outside-corpus.md)），精确向量检索，RRF 融合；三种方法对比：hybrid 的 Complete Recall@5 从 64.8% 升到 68.2%，vector 单独用略低于 BM25 | [检索评测](evaluation/retrieval-evaluation.md)、[知识库](knowledge/knowledge-base.md) |
+| R4b 重排 | 检索之后可选的一步重排（硅基流动 `Qwen/Qwen3-Reranker-8B`，前 20 个候选，默认关闭）。BM25 + 重排的 Complete Recall@5 为 75.0%（BM25 为 64.8%），是前 5 最好的配置；hybrid + 重排的 @5 没有变化（67.0%），@10 从 85.2% 升到 89.8%。代价是延迟：单次检索的中位数在 1–11 秒之间波动 | [检索评测](evaluation/retrieval-evaluation.md)、[知识库](knowledge/knowledge-base.md) |
 | 工程基础 | 模块边界测试，运行记录与安全事件 | [模块](architecture/modules.md)、[运行记录](architecture/observability.md) |
 
 ## 下一步
 
 | 阶段 | 要回答的问题 | 内容 |
 |---|---|---|
-| **R4b 重排** | 精排能把相关的表提到前面吗？ | 在 R4 的检索结果上加一步重排：取前 20 个候选交给 Reranker 模型（硅基流动 `Qwen/Qwen3-Reranker-8B`）重新排序，做成独立开关，默认关闭。和 hybrid 对比；另跑一组"BM25 + 重排"，看有了重排还需不需要向量这一路 |
 | 知识结构评测 | 粒度怎么切最好？ | 比较列级、表级和 small-to-big，在**相同的上下文 token 预算**下评测 |
 | R5 检索接入查询图 | 检索结果能帮模型写对 SQL 吗？ | 按表组织命中的内容，控制上下文预算；加入检索节点和上下文节点；用 SQL 评测和"完整 Schema"基线对比 |
 | R6 外键扩展 | JOIN 路径还缺什么？ | 检索后按外键补上桥接表，做成独立开关并做消融 |
