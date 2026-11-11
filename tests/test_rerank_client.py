@@ -3,6 +3,7 @@
 import json
 
 import httpx
+import openai
 import pytest
 from pydantic import SecretStr
 
@@ -55,7 +56,6 @@ def test_request_goes_to_the_rerank_endpoint_and_scores_follow_input_order():
     assert json.loads(request.content) == {"model": "Qwen/Qwen3-Reranker-8B", "query": QUERY,
                                            "documents": DOCUMENTS, "instruction": QUERY_TASK,
                                            "return_documents": False}
-    assert QUERY_TASK.startswith("Given a question about data in a relational database")
     assert request.headers["authorization"] == f"Bearer {SECRET}"
 
 
@@ -74,10 +74,12 @@ def _raw(text: str) -> httpx.Response:
     lambda body: _raw('{"results": [{"index": 0, "relevance_score": null}, {"index": 1, "relevance_score": 0.4},'
                       ' {"index": 2, "relevance_score": 0.1}]}'),        # 分数不是数
     lambda body: _raw('{"code": 20012, "message": "Model does not exist"}'),   # 没有 results
+    lambda body: _raw('{"results": [{"index": 0, "relev'),                     # 200 但 JSON 不完整
+    lambda body: httpx.Response(200, text="<html>gateway</html>"),             # 200 但不是 JSON
     lambda body: httpx.Response(400, json={"code": 20015, "message": "bad request"}),   # 请求被拒绝
 ])
 def test_bad_responses_are_rerank_errors_without_private_text(respond):
-    """条数不对、index 没有恰好覆盖每段文本、分数不是有限数、请求被拒绝，都报 rerank_error；
+    """条数不对、index 没有恰好覆盖每段文本、分数不是有限数、响应不是预期的 JSON、请求被拒绝，都报 rerank_error；
     消息里没有查询原文、文本原文和密钥。"""
     reranker, _ = _reranker(respond)
     with pytest.raises(RerankError) as caught:
@@ -115,4 +117,4 @@ def test_a_timeout_is_a_rerank_error():
     reranker, _ = _reranker(timeout)
     with pytest.raises(RerankError) as caught:
         reranker.rerank(QUERY, DOCUMENTS)
-    assert type(caught.value.__cause__).__name__ == "APITimeoutError"
+    assert isinstance(caught.value.__cause__, openai.APITimeoutError)
