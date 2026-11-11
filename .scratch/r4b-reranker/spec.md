@@ -114,6 +114,7 @@ R4 的三种检索方法里 hybrid 最好，但 88 题中 Table Complete Recall@
 - 比较不同的 Reranker 模型、不同的指令写法、不同的候选数；调整 RRF。
 - 记录 token 用量和费用；新增对比命令；MRR 和 nDCG。
 - 修改 `rerank` 或 `method` 的默认值，以及把检索接入查询图（R5）。Reranker 失败时要不要降级，留给 R5 的查询图决定。
+- Reranker 调用失败后的重试：本次失败就报 `rerank_error`，评测中途失败会中止整批。重试逻辑在 R4b 完成之后再加（用户决定，2026-11-11）。
 - 给单条检索的 CLI 加 `--rerank`：这个命令只有参数解析，没有接到 `retrieve_knowledge`。
 
 ## 补充说明
