@@ -370,7 +370,7 @@ def test_hybrid_without_lexical_terms_is_input_error_without_embedding(vector_so
     assert embedder.query_calls == 0
 
 
-# ---- 重排（R4b 工单 01）：Seam 1，retrieve_knowledge + 真实 PG + 假 Reranker ----
+# ---- 重排：retrieve_knowledge + 真实 PG + 假 Reranker ----
 
 def _contents(source):
     """chunk_key → content。"""
@@ -426,6 +426,25 @@ def test_rerank_without_candidates_is_no_match_without_calling_reranker(retrieva
                                 settings, reranker=reranker)
     assert (result.outcome, result.hits) == ("no_match", [])
     assert reranker.calls == []
+    # 结果仍写明这次请求按哪套配置执行；有没有实际打分看 hits 是否为空。
+    assert (result.rerank_profile_id, result.retrieval_config_version) == (
+        "fake-rerank:test-v1", "r3-bm25-v1+r4b-rerank-v1")
+
+
+def test_lexical_rerank_candidates_do_not_depend_on_top_k(retrieval_source):
+    """输入：lexical + rerank，top_k=1。BM25 命中 3 个，顺序是 items 表、events 表、关系；假 Reranker 只给
+    排在最后的关系 0.9。
+
+    输出：3 个候选都交给 Reranker（不是只取 top_k 个），关系被提到第 1 并作为唯一的结果返回。
+    """
+    settings, source, scope = retrieval_source
+    db, content = scope.database_id, _contents(source)
+    relation = _key("relationship", db, "main", "events", 0)
+    reranker = FakeReranker({content[relation]: 0.9})
+    result = retrieve_knowledge(RetrievalRequest(query=VECTOR_QUERY, scope=scope, rerank=True, top_k=1),
+                                settings, reranker=reranker)
+    assert len(reranker.calls[0][1]) == 3
+    assert [(hit.rank, hit.chunk_key, hit.score) for hit in result.hits] == [(1, relation, 0.9)]
 
 
 def test_rerank_failure_is_rerank_error_without_unreranked_hits(retrieval_source):
@@ -466,37 +485,44 @@ def test_rerank_keeps_candidate_order_for_equal_scores(vector_source):
     assert [hit.score for hit in result.hits] == [0.7] + [0.0] * 7
 
 
-def test_rerank_takes_a_fixed_number_of_candidates(vector_source, monkeypatch):
-    """输入：vector + rerank，top_k=1；候选数常量临时改成 3（探针 Corpus 只有 8 个 Chunk，够不到真实的 20）。
+def _fused_order(db):
+    """vector_source 下 VECTOR_QUERY 的 RRF 融合顺序：items 表、events 表、关系在两路都出现；label、item_ref、
+    tenant_ref、item_id、tenant_id 只在向量那一路，RRF 分依次为 1/61、1/63、1/64、1/65、1/66。"""
+    return [
+        _key("table", db, "main", "items"), _key("table", db, "main", "events"),
+        _key("relationship", db, "main", "events", 0), _key("column", db, "main", "items", "label"),
+        _key("column", db, "main", "events", "item_ref"), _key("column", db, "main", "events", "tenant_ref"),
+        _key("column", db, "main", "items", "item_id"), _key("column", db, "main", "items", "tenant_id"),
+    ]
 
-    输出：只有向量顺序的前 3 个交给 Reranker，其中分数最高的作为结果；排在第 3 之后的 Chunk 分数再高也不会出现。
+
+@pytest.mark.parametrize(("method", "ordering"), [("vector", _vector_order), ("hybrid", _fused_order)])
+def test_rerank_takes_a_fixed_number_of_candidates(vector_source, monkeypatch, method, ordering):
+    """输入：vector 或 hybrid + rerank，top_k=1；候选数常量临时改成 3（探针 Corpus 只有 8 个 Chunk，够不到
+    真实的 20）。假 Reranker 给该方法顺序里的第 3 个 0.6、最后一个 0.9。
+
+    输出：只有该方法顺序的前 3 个交给 Reranker，其中分数最高的作为结果；排在第 3 之后的 Chunk 分数再高也不会出现。
     """
     from querypilot.retrieval import _rerank
     monkeypatch.setattr(_rerank, "RERANK_CANDIDATES", 3)
     settings, source, scope, embedder = vector_source
-    order, content = _vector_order(scope.database_id), _contents(source)
+    order, content = ordering(scope.database_id), _contents(source)
     reranker = FakeReranker({content[order[2]]: 0.6, content[order[7]]: 0.9})
-    result = retrieve_knowledge(RetrievalRequest(query=VECTOR_QUERY, scope=scope, method="vector", rerank=True,
+    result = retrieve_knowledge(RetrievalRequest(query=VECTOR_QUERY, scope=scope, method=method, rerank=True,
                                                  top_k=1), settings, embedder=embedder, reranker=reranker)
     assert reranker.calls == [(VECTOR_QUERY, [content[key] for key in order[:3]])]
     assert [(hit.chunk_key, hit.score) for hit in result.hits] == [(order[2], 0.6)]
 
 
 def test_hybrid_rerank_reorders_the_fused_candidates(vector_source):
-    """输入：hybrid + rerank。RRF 融合后的顺序是 items 表、events 表、关系、label、item_ref、tenant_ref、
-    item_id、tenant_id（后三个只在向量那一路，RRF 分 1/64、1/65、1/66）；假 Reranker 只给 tenant_id 0.8。
+    """输入：hybrid + rerank，top_k=3；假 Reranker 只给融合顺序里最后一名的 tenant_id 0.8。
 
     输出：Reranker 收到的是融合后的顺序；tenant_id 从融合后的最后一名提到第 1；结果同时写明
     Embedding Profile 和 Rerank Profile，配置版本是 hybrid 的版本加重排的版本；查询只嵌入一次。
     """
     settings, source, scope, embedder = vector_source
     db, content = scope.database_id, _contents(source)
-    fused = [
-        _key("table", db, "main", "items"), _key("table", db, "main", "events"),
-        _key("relationship", db, "main", "events", 0), _key("column", db, "main", "items", "label"),
-        _key("column", db, "main", "events", "item_ref"), _key("column", db, "main", "events", "tenant_ref"),
-        _key("column", db, "main", "items", "item_id"), _key("column", db, "main", "items", "tenant_id"),
-    ]
+    fused = _fused_order(db)
     reranker = FakeReranker({content[fused[7]]: 0.8})
     result = retrieve_knowledge(RetrievalRequest(query=VECTOR_QUERY, scope=scope, method="hybrid", rerank=True,
                                                  top_k=3), settings, embedder=embedder, reranker=reranker)

@@ -156,7 +156,7 @@ BIRD 的说明文件里有编码错误。比如 toxicology 的 `atom.element` �
 2. 只读会话关闭之后，把查询原文和每个候选的 `content` 原文交给 Reranker 打分。
 3. 每个 Hit 的 `score` 换成相关性分数，按分数从高到低排，同分保持重排前的先后顺序，再取前 `top_k` 个。
 
-开启重排时 `top_k` 最大为 20，超过在构造请求时就被拒绝。没有候选时不调用 Reranker，直接返回 `no_match`。重排失败报 `rerank_error`，不退回未重排的结果。结果里的 `rerank_profile_id` 是这次用的 Rerank Profile，配置版本在方法的版本后面拼上 `r4b-rerank-v1`（如 `r4-hybrid-v1+r4b-rerank-v1`）。重排只改变候选的顺序，候选里没有的 Chunk 它找不出来。目前 Reranker 需要由调用方传入（接口为 `profile_id` 加 `rerank(query, documents)`），仓库里只有测试用的假实现。
+开启重排时 `top_k` 最大为 20，超过在构造请求时就被拒绝。没有候选时不调用 Reranker，直接返回 `no_match`。重排失败报 `rerank_error`，不退回未重排的结果。结果里的 `rerank_profile_id` 是这次请求用的 Rerank Profile，请求没有开启重排时为空；配置版本在方法的版本后面拼上 `r4b-rerank-v1`（如 `r4-hybrid-v1+r4b-rerank-v1`）。这两项表示请求按哪套配置执行，所以开启了重排但没有候选时也会写明；有没有实际打分，看 Hit 列表是否为空。重排只改变候选的顺序，候选里没有的 Chunk 它找不出来。目前 Reranker 需要由调用方传入（接口为 `profile_id` 加 `rerank(query, documents)`），仓库里只有测试用的假实现。
 
 BM25 这一路的细节：
 

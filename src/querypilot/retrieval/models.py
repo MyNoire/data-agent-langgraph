@@ -12,7 +12,7 @@ from . import _rerank
 # r3-bm25-v1：下面的查询词配置 + pg_search BM25；
 # r4-vector-v1：按 Embedding Profile 对查询嵌入一次，余弦距离精确全表扫描；
 # r4-hybrid-v1：r3-bm25-v1 与 r4-vector-v1 各取 50 个候选，RRF k=60、两路等权、同分按 chunk_key。
-# 重排过的结果在方法的版本后面拼上重排的版本，见 _rerank.RERANK_CONFIG_VERSION。
+# 重排过的结果在方法的版本后面拼上重排的版本，见 _rerank.RERANK_STEP_VERSION。
 RETRIEVAL_CONFIG_VERSIONS = {"lexical": "r3-bm25-v1", "vector": "r4-vector-v1", "hybrid": "r4-hybrid-v1"}
 
 # 查询词准备的固定配置。分词器加载时会逐项核对，不一致就报 configuration_error，
@@ -125,7 +125,8 @@ class RetrievalResult(RetrievalModel):
     """一次检索的结果。hits 按 rank 排列；没有 Hit 时 outcome 为 no_match。
 
     method 是实际使用的检索方法；embedding_profile_id 是向量所属的 Embedding Profile，lexical 时为 None；
-    rerank_profile_id 是重排所用的 Rerank Profile，请求没有开启重排时为 None。
+    rerank_profile_id 是重排所用的 Rerank Profile，请求没有开启重排时为 None；开启了但没有候选（没有调用
+    Reranker）时仍写明，表示这次请求按哪套配置执行。
     """
 
     result_version: Literal["querypilot-retrieval-result-v3"] = "querypilot-retrieval-result-v3"
@@ -148,4 +149,4 @@ class RetrievalResult(RetrievalModel):
     def retrieval_config_version(self) -> str:
         """本次检索的配置版本：方法的版本（见 RETRIEVAL_CONFIG_VERSIONS），重排过的结果再拼上重排的版本。"""
         version = RETRIEVAL_CONFIG_VERSIONS[self.method]
-        return f"{version}+{_rerank.RERANK_CONFIG_VERSION}" if self.rerank_profile_id else version
+        return f"{version}+{_rerank.RERANK_STEP_VERSION}" if self.rerank_profile_id else version

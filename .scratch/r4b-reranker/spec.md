@@ -75,7 +75,7 @@ R4 的三种检索方法里 hybrid 最好，但 88 题中 Table Complete Recall@
 - 调用 Reranker 发生在只读会话关闭之后：候选行已经取出，不需要让数据库事务等外部服务。
 - 查询词检查、Embedding 相关的错误都发生在重排之前，行为和不开重排时相同。重排失败报 `rerank_error`，不退回未重排的结果。
 - 候选数 20 是固定常量，不调整。
-- `RetrievalResult` 增加 `rerank_profile_id`（没重排时为空），结果版本号升级。重排过的结果，配置版本为"方法的版本 + 重排的版本"，例如 `r4-hybrid-v1+r4b-rerank-v1`；`r4b-rerank-v1` 的含义（前 20 个候选、按 Rerank Profile 打分、同分保持原序）写在版本常量旁。
+- `RetrievalResult` 增加 `rerank_profile_id`（请求没有开启重排时为空），结果版本号升级。这两项表示请求按哪套配置执行：开启了重排但没有候选、没有调用 Reranker 时也照常写明，这样一次评测运行里所有题的配置一致。开启重排的结果，配置版本为"方法的版本 + 重排的版本"，例如 `r4-hybrid-v1+r4b-rerank-v1`；`r4b-rerank-v1` 的含义（前 20 个候选、按 Rerank Profile 打分、同分保持原序）写在版本常量旁。
 - `RetrievalHit` 结构不变，不保留重排前的分数和名次；`score` 的说明里补上重排后的含义。`elapsed_ms` 包含重排的耗时。
 
 ### 评测

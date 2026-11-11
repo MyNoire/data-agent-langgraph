@@ -21,8 +21,8 @@ from .models import (
 )
 
 
-def _vector_rows(session: ReadSession, request: RetrievalRequest, embedder: Embedder) -> list[dict]:
-    """向量这一路：确认当前 Profile 有向量，把查询嵌入一次，按余弦距离取前 request.top_k 行。
+def _vector_rows(session: ReadSession, request: RetrievalRequest, embedder: Embedder, limit: int) -> list[dict]:
+    """向量这一路：确认当前 Profile 有向量，把查询嵌入一次，按余弦距离取前 limit 行。
 
     没有向量时报 embedding_missing，不调用 Embedding 服务；嵌入失败时报 embedding_error。
     """
@@ -32,7 +32,7 @@ def _vector_rows(session: ReadSession, request: RetrievalRequest, embedder: Embe
         query_vector = embedder.embed_query(request.query)
     except EmbeddingError as exc:
         raise KnowledgeRetrievalError(exc.error_type, str(exc)) from exc
-    return _search.vector_chunks(session, request, embedder.profile_id, query_vector)
+    return _search.vector_chunks(session, request, embedder.profile_id, query_vector, limit)
 
 
 def retrieve_knowledge(request: RetrievalRequest, settings: KnowledgeStorageSettings,
@@ -56,7 +56,7 @@ def retrieve_knowledge(request: RetrievalRequest, settings: KnowledgeStorageSett
         reranker：request.rerank 为真时使用的 Reranker，决定 Rerank Profile；不开重排时不调用。
     返回：
         RetrievalResult，写明实际方法、Embedding Profile（lexical 时为 None）和 Rerank Profile
-        （不开重排时为 None）。有 Hit 时 outcome 为 matched，hits 按 rank 从 1 连续排列；否则为 no_match。
+        （请求没有开启重排时为 None；开启了但没有候选时仍写明，表示这次请求按哪套配置执行）。有 Hit 时 outcome 为 matched，hits 按 rank 从 1 连续排列；否则为 no_match。
     异常：
         KnowledgeRetrievalError：lexical 或 hybrid 查询没有有效词时为 input_error（hybrid 不调用
         Embedding 服务）；当前 Profile 没有向量时为 embedding_missing；嵌入查询失败时为
@@ -76,17 +76,15 @@ def retrieve_knowledge(request: RetrievalRequest, settings: KnowledgeStorageSett
             embedder = OpenAIEmbedder(EmbeddingSettings())
         # 开启重排时先取固定数量的候选，重排后再截到 top_k。
         limit = _rerank.RERANK_CANDIDATES if request.rerank else request.top_k
-        fetch = request.model_copy(update={"top_k": limit})
         with open_read_scope(request.scope, settings) as session:
             if request.method == "lexical":
-                rows = _search.search_chunks(session, fetch, terms)
+                rows = _search.search_chunks(session, request, terms, limit)
             elif request.method == "vector":
-                rows = _vector_rows(session, fetch, embedder)
+                rows = _vector_rows(session, request, embedder, limit)
             else:  # hybrid
-                branch = request.model_copy(update={"top_k": _fusion.CANDIDATES_PER_BRANCH})
                 rows = _fusion.reciprocal_rank_fusion([
-                    _search.search_chunks(session, branch, terms),
-                    _vector_rows(session, branch, embedder),
+                    _search.search_chunks(session, request, terms, _fusion.CANDIDATES_PER_BRANCH),
+                    _vector_rows(session, request, embedder, _fusion.CANDIDATES_PER_BRANCH),
                 ])[:limit]
         # 只读会话已经关闭：候选行都取出来了，不让数据库事务等 Reranker 服务。
         if request.rerank and rows:

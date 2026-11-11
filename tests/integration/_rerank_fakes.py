@@ -4,7 +4,7 @@ from querypilot.retrieval.api import RerankError
 
 
 class FakeReranker:
-    """从"文档文本 → 分数"字典取分数，没登记的文本用默认分；记录每次收到的查询和文档，不联网。"""
+    """从"候选文本 → 分数"字典取分数，没登记的文本用默认分；记录每次收到的查询和候选文本，不联网。"""
 
     profile_id = "fake-rerank:test-v1"
 
