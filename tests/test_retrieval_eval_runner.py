@@ -472,3 +472,23 @@ def test_cli_workers_flag_reaches_the_runner_and_the_run_config(tmp_path, monkey
     config = json.loads((runs[0] / "config.json").read_text(encoding="utf-8"))
     report = json.loads(Path(output["result_file"]).read_text(encoding="utf-8"))
     assert (config["parameters"]["workers"], report["config"]["workers"]) == (4, 4)
+
+
+@pytest.mark.parametrize("workers", ["0", "-3", "two"])
+def test_cli_rejects_workers_below_one_before_any_run_is_recorded(tmp_path, monkeypatch, workers):
+    """输入：eval retrieval --workers 取 0、负数或不是整数；输出：按参数错误退出（退出码 2），
+    没有建运行记录，也没有创建检索器。"""
+    from querypilot.entrypoints import cli
+    from querypilot.evaluation.retrieval import _runner
+
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+    built = []
+    monkeypatch.setattr(_runner, "_default_retriever", lambda method, rerank: built.append(method))
+    cases_file = _cases_file(tmp_path, [_case(1)])
+
+    with pytest.raises(SystemExit) as caught:
+        cli.main(["eval", "retrieval", "--cases", str(cases_file), "--workers", workers])
+
+    assert caught.value.code == 2
+    assert built == [] and not list(settings.artifacts_dir.glob("runs/evaluation/*/*"))
