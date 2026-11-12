@@ -3,15 +3,18 @@
 from hashlib import sha256
 import json
 from pathlib import Path
+import threading
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import pytest
 from pydantic import ValidationError
 
-from querypilot.evaluation.api import RetrievalCase, RetrievalCaseSet, evaluate_retrieval
+from querypilot.evaluation.api import (
+    RetrievalCase, RetrievalCaseSet, evaluate_retrieval, retrieval_run_config,
+)
 from querypilot.knowledge.api import KnowledgeScope
 from querypilot.retrieval.api import KnowledgeRetrievalError, RetrievalHit, RetrievalResult
-from querypilot.runtime.api import Settings
+from querypilot.runtime.api import Settings, task_run
 
 SCOPE = KnowledgeScope(corpus_id="a" * 64, database_id="demo", schema_version="b" * 64)
 
@@ -185,6 +188,149 @@ def test_default_retriever_shares_one_reranker_across_cases(tmp_path, monkeypatc
     evaluate_retrieval(_cases_file(tmp_path, [_case(1), _case(2)]), _settings(tmp_path), rerank=True)
     assert len(rerankers) == 2 and rerankers[0] is rerankers[1]
     assert rerankers[0].profile_id.startswith("siliconflow:Qwen/Qwen3-Reranker-8B:")
+
+
+def test_workers_cases_are_in_retrieval_at_the_same_time(tmp_path):
+    """输入：3 道题，workers=3；假检索器里有一道关卡，要 3 个线程都到了才一起放行。
+
+    输出：3 道题都检索完成。一题一题串行跑时，第 1 题永远等不到另外两题，会在关卡上超时，整批失败。
+    """
+    barrier = threading.Barrier(3, timeout=2)
+
+    def retriever(request):
+        barrier.wait()
+        return _result(request, [_hit(1)])
+
+    report = evaluate_retrieval(_cases_file(tmp_path, [_case(1), _case(2), _case(3)]), _settings(tmp_path),
+                                workers=3, retriever=retriever)
+
+    assert [r["outcome"] for r in report["records"]] == ["ok", "ok", "ok"]
+
+
+class _EventWatcher:
+    """接在运行上的进度流：记下写出的每条事件；看到指定题目的完成事件时点亮一个信号。"""
+
+    def __init__(self, question_id: int, reported: threading.Event):
+        self.events, self._question_id, self._reported = [], question_id, reported
+
+    def write(self, text: str) -> None:
+        event = json.loads(text)
+        self.events.append(event)
+        if event["event"] == "eval_case_finished" and event["question_id"] == self._question_id:
+            self._reported.set()
+
+    def flush(self) -> None:
+        pass
+
+
+def test_report_keeps_case_order_while_events_follow_completion_order(tmp_path):
+    """输入：两道题，workers=2；第 1 题要等主线程写出第 2 题的完成事件之后才返回，所以第 2 题一定先完成。
+
+    输出：报告的 records 和 config.retrieval 仍按题集顺序；eval_case_finished 按完成顺序写出，
+    completed_cases 从 1 递增，case_index 是这题在题集里的位置。
+    """
+    second_reported = threading.Event()
+    watcher = _EventWatcher(2, second_reported)
+
+    def retriever(request):
+        if request.query == "first":
+            assert second_reported.wait(5)
+            return _result(request, [_hit(1)], elapsed_ms=10.0).model_copy(update={"embedding_profile_id": "fake:a"})
+        return _result(request, [_hit(1)], elapsed_ms=20.0).model_copy(update={"embedding_profile_id": "fake:b"})
+
+    cases_file = _cases_file(tmp_path, [_case(1, question="first"), _case(2, question="second")])
+    settings = _settings(tmp_path)
+    with task_run("evaluation", settings, command="retrieval",
+                  config=retrieval_run_config(cases_file, "vector", False, 2)) as context:
+        context.attach_stream(watcher)
+        report = evaluate_retrieval(cases_file, settings, method="vector", workers=2, retriever=retriever,
+                                    run_context=context)
+        context.complete(report)
+
+    assert [(r["question_id"], r["elapsed_ms"]) for r in report["records"]] == [(1, 10.0), (2, 20.0)]
+    assert [v["embedding_profile_id"] for v in report["config"]["retrieval"]] == ["fake:a", "fake:b"]
+    finished = [e for e in watcher.events if e["event"] == "eval_case_finished"]
+    assert [(e["question_id"], e["case_index"], e["completed_cases"]) for e in finished] == [(2, 2, 1), (1, 1, 2)]
+    assert "first" not in json.dumps(watcher.events)
+
+
+def test_input_error_only_affects_its_own_case_when_cases_run_concurrently(tmp_path):
+    """输入：3 道题同时在检索中（关卡保证），其中第 2 题没有有效词。
+
+    输出：第 2 题记为 input_error，另外两题照常完成，整批不中止。
+    """
+    barrier = threading.Barrier(3, timeout=5)
+
+    def retriever(request):
+        barrier.wait()
+        if request.query == "??":
+            raise KnowledgeRetrievalError("input_error")
+        return _result(request, [_hit(1)])
+
+    cases = [_case(1), _case(2, question="??"), _case(3)]
+    report = evaluate_retrieval(_cases_file(tmp_path, cases), _settings(tmp_path), workers=3, retriever=retriever)
+
+    assert [(r["question_id"], r["outcome"]) for r in report["records"]] == [
+        (1, "ok"), (2, "input_error"), (3, "ok")]
+
+
+def test_fatal_error_lets_the_in_flight_case_finish_then_raises_the_original_error(tmp_path):
+    """输入：两道题同时在检索中（关卡保证），workers=2；第 1 题重排失败，第 2 题在它失败之后才返回。
+
+    输出：第 2 题跑完了，但结果被丢弃；抛出的是第 1 题的原始错误，运行记为 failed，没有 result.json。
+    """
+    barrier = threading.Barrier(2, timeout=5)
+    first_failing = threading.Event()
+    returned = []
+
+    def retriever(request):
+        barrier.wait()
+        if request.query == "bad":
+            first_failing.set()
+            raise KnowledgeRetrievalError("rerank_error")
+        assert first_failing.wait(5)
+        returned.append(request.query)
+        return _result(request, [_hit(1)])
+
+    cases = [_case(1, question="bad"), _case(2, question="good")]
+    with pytest.raises(KnowledgeRetrievalError) as caught:
+        evaluate_retrieval(_cases_file(tmp_path, cases), _settings(tmp_path), workers=2, retriever=retriever)
+
+    assert caught.value.error_type == "rerank_error" and returned == ["good"]
+    runs = list((tmp_path / "artifacts").glob("runs/evaluation/*/*"))
+    record = json.loads((runs[0] / "run.json").read_text(encoding="utf-8"))
+    assert (record["status"], record["error_type"]) == ("failed", "rerank_error")
+    assert not (runs[0] / "result.json").exists()
+
+
+def test_main_thread_failure_keeps_queued_cases_from_starting(tmp_path):
+    """输入：workers=1，5 道题；主线程在写第 1 题的完成事件时出错。
+
+    这时第 2 题可能已经在检索中。测试没有办法知道停止标志是哪一刻置位的，所以让第 2 题之后的检索
+    各停留最多 0.5 秒，给主线程留出置位的时间；这是本文件里唯一依赖时间的地方。
+    输出：抛出主线程的错误；第 3–5 题没有被调用。
+    """
+    calls = []
+
+    def retriever(request):
+        calls.append(request.query)
+        if request.query != "q1":
+            threading.Event().wait(0.5)
+        return _result(request, [_hit(1)])
+
+    def broken_event(event, **fields):
+        if event == "eval_case_finished":
+            raise RuntimeError("main thread failed")
+
+    cases_file = _cases_file(tmp_path, [_case(i, question=f"q{i}") for i in range(1, 6)])
+    settings = _settings(tmp_path)
+    with pytest.raises(RuntimeError, match="main thread failed"):
+        with task_run("evaluation", settings, command="retrieval",
+                      config=retrieval_run_config(cases_file)) as context:
+            context.event = broken_event
+            evaluate_retrieval(cases_file, settings, retriever=retriever, run_context=context)
+
+    assert calls in (["q1"], ["q1", "q2"])
 
 
 def test_input_error_is_recorded_on_the_case_and_the_batch_continues(tmp_path):
