@@ -105,10 +105,11 @@ def evaluate_retrieval(cases_file: Path, settings: Settings, *, method: Retrieva
     异常：
         查询没有有效词（input_error）只记在那一题上。其他错误中止整批并原样抛出：出错之后不再开始
         新题，正在检索中的题跑完后结果丢弃，不写 result.json。调用方的线程中途退出（包括 Ctrl+C）
-        时同样不再开始新题。
+        时置停止标志，但刚空出来的工作线程可能已经开始了下一题。
     副作用：
         每题至多调用一次检索器；每题检索完成时写一条 eval_case_finished 事件（按完成顺序，
-        completed_cases 为已完成题数，case_index 为题集里的位置）；写出运行记录和 result.json。
+        completed_cases 为已完成题数，case_index 为题集里的位置；在开始收集之前就已完成的题，
+        事件之间的顺序不定）；写出运行记录和 result.json。
     """
     raw = cases_file.read_bytes()
     case_set = RetrievalCaseSet.model_validate_json(raw)

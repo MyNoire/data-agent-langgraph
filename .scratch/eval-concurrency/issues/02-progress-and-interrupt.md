@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
 规格：`.scratch/eval-concurrency/spec.md`。结对工单（乒乓 TDD）：分工同工单 01，这次的概念是 `as_completed` 和并发里的 `try / finally`。本工单不做真实运行。
 
@@ -25,3 +25,4 @@
   - 多道在途的题都失败时抛哪一个：由 `as_completed` 的顺序决定，是"主线程最先取到的那个"。两个都失败时哪个先被取到取决于线程调度，没有确定的断言可写。
   - 真实的 Ctrl+C：没有模拟键盘中断。Claude 另外用一个独立脚本（不在仓库里）模拟了主线程等在 `as_completed` 里时收到中断：在 Windows 上，主线程要到下一个任务完成时才收到 `KeyboardInterrupt`，之后还要等在途的请求结束。也就是说按下 Ctrl+C 后的等待时间比规格写的多一层：先等到下一道题完成，再等其余在途的题。
 - 测试结果：见工单 01。
+- 审查（2026-11-12）：结果记在工单 01 的 Comments 里；其中两条实质问题（主线程退出时停止标志置得太晚、已完成的 Future 顺序不定）都落在本工单的范围内，等用户决定怎么改。

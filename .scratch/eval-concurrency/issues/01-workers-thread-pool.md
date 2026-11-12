@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
 规格：`.scratch/eval-concurrency/spec.md`。结对工单（乒乓 TDD）：用户写 `evaluate_retrieval` 里的并发主体，Claude 一次写一个失败的测试，每个测试之前先用几行小例子讲一个概念（线程池与 `submit`、`Future.result()`、`threading.Event`）。`--workers` 参数和配置记录由 Claude 直接写。本工单不做收费的真实运行。
 
@@ -40,3 +40,17 @@
   - 两份报告的 `records` 除 `elapsed_ms` 外完全相同，题目顺序、汇总指标和 `config.retrieval` 也相同。8 个线程同时访问知识库没有出错。
   - 单题耗时在并发下变长了（P50 192 → 315 ms），印证了"耗时只在 `workers=1` 的运行之间比较"。
 - 测试结果：`pytest tests --ignore=tests/integration` 470 passed，1 skipped，1 failed（`test_console_and_module_share_help`，`querypilot` 不在 PATH 上，与本工单无关）；`pytest tests/integration/test_retrieval_eval.py --require-postgres` 1 passed；`tests/test_retrieval_eval_runner.py` 单独跑 19 passed。本工单没有调用收费服务。
+- 审查（2026-11-12，`/code-review`，范围是本功能的全部提交）。成立且还没有处理的，等用户决定怎么改：
+  - **主线程退出时停止标志置得太晚**。全部题目一开始就提交进了线程池，主线程只有在某题完成时才被唤醒，而这正是空出来的线程去取下一题的时刻，它看到的标志还没有置位。审查用探针测得：`workers=1`、主线程在第一条完成事件上出错时，30 次里 30 次都开始了第 2 题；`workers=4` 时多开始 1–4 题。hybrid + 重排下每多一题就是一次付费调用。规格和文档里"主线程退出时不再开始新题"的说法因此不成立。工作线程自己出错的那条路径不受影响。
+  - **`as_completed` 对"调用它之前就已完成"的 Future 不保证顺序**。Claude 复现了：400 道题、检索瞬间返回、`workers=1`，5 次运行里事件的 `case_index` 没有一次是递增的（30 道题时 5 次都递增）。88 题的真实运行没有遇到，但"默认 `workers=1` 时行为和原来一样"在这种情况下不成立。
+  - 审查建议的根治办法：改成由主线程派发，同时在途的题不超过 `workers` 个，处理完一个完成的结果才提交下一个。这样没有排队的题，不需要停止标志和 `skipped`；出错或中断之后不会再有新题开始，而且是确定的，可以不靠时间来测；`workers=1` 时事件天然有序。它替换的是规格里定下的停止标志做法，属于结对核心段，由用户决定改不改、谁来写。
+  - 计分从"每题检索后立刻算"挪到了"全部检索完再算"：计分出错要等所有付费检索做完才暴露。改成主线程收到结果时就计分即可，可以和上一条一起做。
+  - `zip(cases, finished)` 的解包依赖"有题被跳过就一定有异常抛出"这个没写明的前提；按上面的办法改完后不再有跳过的题。
+  - "致命错误时在途的题跑完"的测试里，第 2 题可能在第 1 题的失败被记录之前就返回，断言两种情况都能过，没有钉住 docstring 说的先后顺序；`workers>1` 时"排队的题不被调用"没有测试；主线程失败的测试依赖 0.5 秒。按上面的办法改完后这三项都可以写成确定的测试。
+- 审查后已经改掉的：
+  - 文档说过头的地方：`--workers`"不改变调用次数和费用"改成只在运行正常完成时成立；Ctrl+C 和事件顺序两处写成了已知问题；"两份报告除单题耗时外完全相同"改成"逐题结果除 `elapsed_ms` 外完全相同"（`config.workers` 和汇总的耗时本来就不同）。`evaluate_retrieval` 的 docstring 同步修正。
+  - `docs/architecture/modules.md` 补上了 `workers` 和"客户端被多个线程同时使用"。
+  - 工单 01、02 是结对工单，标签应为 `ready-for-human`，当初写成了 `ready-for-agent`，已改。
+- 审查意见里没有改的：
+  - `--workers 0` 或负数：现在的表现是线程池报 `ValueError`，留下一条失败的运行记录，看不出是 `--workers` 的问题。规格定的是不单独校验；审查建议在参数解析时就报用法错误。等用户决定。
+  - 中文分词资源的首次加载没有防并发：多个线程同时第一次分词时会各建一份分词器，浪费但不出错。当前题集是英文，没有触发；不在这次的改动里，先不处理。
