@@ -131,7 +131,7 @@ BIRD 的说明文件里有编码错误。比如 toxicology 的 `atom.element` �
 | `chunk_embeddings` | 每个 (Chunk, Embedding Profile) 一条向量；是从 Corpus 派生的索引，不属于 Corpus（[ADR 0002](../adr/0002-embeddings-outside-corpus.md)） |
 | `schema_migrations` | 迁移版本 |
 
-**迁移**：结构变化写成按编号执行的迁移文件。`001` 建知识表；`002` 建向量表，并删掉 `knowledge_chunks` 上预留的三个向量列（`embedding`、`embedding_profile_id`、`embedding_dimensions`）和对应的 CHECK。`store migrate` 在一个事务里按顺序补跑缺少的迁移，已执行的迁移版本和摘要必须与文件一致，否则拒绝。`store check` 核对 PostgreSQL 与 pgvector 版本、迁移已执行到最新且摘要一致，以及三个角色的实际权限；不逐列比对表结构，迁移文件不被改动由摘要保证，数据是否完整由 `store verify` 逐字段核对。
+**迁移**：结构变化写成按编号执行的迁移文件。`001` 建知识表；`002` 建向量表，并删掉 `knowledge_chunks` 上预留的三个向量列（`embedding`、`embedding_profile_id`、`embedding_dimensions`）和对应的 CHECK。`store migrate` 在一个事务里按顺序补跑缺少的迁移，已执行的迁移版本和摘要必须与文件一致，否则拒绝。`store check` 核对 PostgreSQL 与 pgvector 版本、迁移已执行到最新且摘要一致，以及 importer 和 reader 两个角色的实际权限（admin 是知识表的所有者，不在核对范围内）；不逐列比对表结构，迁移文件不被改动由摘要保证，数据是否完整由 `store verify` 逐字段核对。
 
 **三个角色，权限最小化**：admin 只负责建库和迁移；importer 只能 SELECT 和 INSERT（包括向量表），没有 UPDATE 和 DELETE，所以导入和写向量都只能新增、不能改写已有知识；reader 只能 SELECT。
 

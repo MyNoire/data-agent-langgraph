@@ -143,7 +143,7 @@ def applied_migrations(conn: psycopg.Connection) -> list[dict]:
 
 
 def check_database(conn: psycopg.Connection) -> tuple[str, str]:
-    """核对 PG 与 pgvector 版本、迁移已执行到最新且摘要一致、三个角色的有效权限。
+    """核对 PG 与 pgvector 版本、迁移已执行到最新且摘要一致、importer 和 reader 两个角色的有效权限。
 
     返回：(PG 版本, pgvector 版本)。
     异常：KnowledgeStorageError(migration_conflict)：任一项不符合。只读。
