@@ -23,6 +23,7 @@ CONFIG_FIELDS = frozenset({
     "max_response_bytes", "evidence_mode", "dataset_sha256", "input_sha256", "source_sha256",
     "semantic_sha256", "corpus_id", "database_id", "schema_version", "scope", "profile_version",
     "renderer_version", "config_sha256", "input_hashes", "dataset_hash", "dataset_version", "method", "rerank",
+    "workers",
 })
 
 

@@ -77,6 +77,7 @@ def test_each_case_is_retrieved_once_and_recorded_without_question_text(tmp_path
         "scopes": {"demo": SCOPE.model_dump(mode="json")},
         "method": "lexical",
         "rerank": False,
+        "workers": 1,
         "retrieval": [{"method": "lexical", "embedding_profile_id": None, "rerank_profile_id": None,
                        "retrieval_config_version": "r3-bm25-v1"}],
         "top_k": 20,
@@ -135,6 +136,20 @@ def test_rerank_reaches_every_request_the_run_config_and_the_report(tmp_path):
     runs = list((tmp_path / "artifacts").glob("runs/evaluation/*/*"))
     config = json.loads((runs[0] / "config.json").read_text(encoding="utf-8"))
     assert (config["parameters"]["method"], config["parameters"]["rerank"]) == ("hybrid", True)
+
+
+def test_workers_is_recorded_in_the_run_config_and_the_report_and_defaults_to_one(tmp_path):
+    """输入：同一份题集跑两次，一次不传 workers，一次 workers=3；输出：运行配置和报告的 config 分别记下 1 和 3。"""
+    cases_file = _cases_file(tmp_path, [_case(1), _case(2), _case(3)])
+    recorded = []
+    for name, kwargs in (("default", {}), ("three", {"workers": 3})):
+        settings = Settings(_env_file=None, artifacts_dir=tmp_path / name)
+        report = evaluate_retrieval(cases_file, settings, retriever=lambda request: _result(request, [_hit(1)]),
+                                    **kwargs)
+        runs = list((tmp_path / name).glob("runs/evaluation/*/*"))
+        config = json.loads((runs[0] / "config.json").read_text(encoding="utf-8"))
+        recorded.append((report["config"]["workers"], config["parameters"]["workers"]))
+    assert recorded == [(1, 1), (3, 3)]
 
 
 def test_default_retriever_needs_reranker_settings_only_when_rerank_is_on(tmp_path, monkeypatch):
@@ -291,3 +306,23 @@ def test_cli_rerank_flag_turns_reranking_on_for_the_whole_run(tmp_path, monkeypa
         {"method": "lexical", "embedding_profile_id": None, "rerank_profile_id": "fake-rerank:test-v1",
          "retrieval_config_version": "r3-bm25-v1+r4b-rerank-v1"},
     ]
+
+
+def test_cli_workers_flag_reaches_the_runner_and_the_run_config(tmp_path, monkeypatch, capsys):
+    """输入：eval retrieval --workers 4；输出：运行配置和结果文件的 config 都记下 4。"""
+    from querypilot.entrypoints import cli
+    from querypilot.evaluation.retrieval import _runner
+
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+    monkeypatch.setattr(_runner, "_default_retriever",
+                        lambda method, rerank: lambda request: _result(request, [_hit(1)]))
+    cases_file = _cases_file(tmp_path, [_case(1), _case(2)])
+
+    assert cli.main(["eval", "retrieval", "--cases", str(cases_file), "--workers", "4"]) == 0
+
+    output = json.loads(capsys.readouterr().out)
+    runs = list(settings.artifacts_dir.glob("runs/evaluation/*/*"))
+    config = json.loads((runs[0] / "config.json").read_text(encoding="utf-8"))
+    report = json.loads(Path(output["result_file"]).read_text(encoding="utf-8"))
+    assert (config["parameters"]["workers"], report["config"]["workers"]) == (4, 4)
