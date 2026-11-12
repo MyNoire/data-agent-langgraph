@@ -28,6 +28,7 @@
 | 检索评测 | 88 题检索题集、按 Hit 计的召回指标、BM25 基线和失败分析 | [检索评测](evaluation/retrieval-evaluation.md) |
 | R4 向量与混合检索 | Embedding 向量存在 Corpus 之外（[ADR 0002](adr/0002-embeddings-outside-corpus.md)），精确向量检索，RRF 融合；三种方法对比：hybrid 的 Complete Recall@5 从 64.8% 升到 68.2%，vector 单独用略低于 BM25 | [检索评测](evaluation/retrieval-evaluation.md)、[知识库](knowledge/knowledge-base.md) |
 | R4b 重排 | 检索之后可选的一步重排（硅基流动 `Qwen/Qwen3-Reranker-8B`，前 20 个候选，默认关闭）。BM25 + 重排的 Complete Recall@5 为 75.0%（BM25 为 64.8%），是前 5 最好的配置；hybrid + 重排的 @5 没有变化（67.0%），@10 从 85.2% 升到 89.8%。代价是延迟：单次检索的中位数在 1–11 秒之间波动 | [检索评测](evaluation/retrieval-evaluation.md)、[知识库](knowledge/knowledge-base.md) |
+| 检索评测并发 | `eval retrieval --workers N`：线程池同时检索多道题，线程里只做检索，计分和记录留在主线程，报告顺序不变；出错或中断时不再开始新题。hybrid + 重排的 88 题评测从 18.9 分钟降到 45 秒（8 个线程贡献约 8 倍，其余是服务当时更快），指标不变 | [检索评测](evaluation/retrieval-evaluation.md) |
 | 工程基础 | 模块边界测试，运行记录与安全事件 | [模块](architecture/modules.md)、[运行记录](architecture/observability.md) |
 
 ## 下一步

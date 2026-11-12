@@ -112,6 +112,27 @@ K 取 5 和 10。几个关键决定：
 
 运行目录（本地，Git 忽略；目录按 UTC 日期命名）：hybrid + 重排 `artifacts/runs/evaluation/2026-11-11/3af18ae175bf488cb150592438006648/`，lexical + 重排 `artifacts/runs/evaluation/2026-11-11/913415bbac814780b01e4662753461f4/`。两份报告里都没有问题原文。
 
+### 并发运行（2026-11-12）
+
+`--workers N` 用 N 个线程同时检索。它只改变评测跑多快，不改变检索本身。用 hybrid + 重排、`--workers 8` 重跑了一次，题集、Corpus、Embedding Profile、Rerank Profile 和配置版本都和上面串行的 hybrid + 重排相同。
+
+| 整体（88 题） | 串行（workers=1，2026-11-11） | 并发（workers=8，2026-11-12） |
+|---|---|---|
+| **评测总时长** | **18.9 分钟** | **45 秒** |
+| 各题检索耗时之和 | 18.9 分钟 | 5.9 分钟 |
+| Table Complete Recall@5 / @10 | 67.0% / 89.8% | 67.0% / 89.8% |
+| Table Recall@5 / @10 | 84.0% / 95.6% | 84.0% / 95.6% |
+| Hits to Cover 中位数 / 平均数 | 4 / 5.0 | 4 / 4.9 |
+| 20 个 Hit 内拿不全的题 | 2 | 2 |
+| Column Recall@10 | 78.2% | 78.4% |
+
+- **指标没有变。** 两个库各自的 Complete Recall@5 / @10 也都相同；72 道非冻结题里，K=5 和 K=10 的"拿全 / 没拿全"没有一道发生变化；88 题里有 83 题各相关表的首次命中名次完全相同，其余 5 题是名次接近的 Hit 互换（查询向量和重排分数每次调用都有微小抖动）。
+- **总时长从 18.9 分钟降到 45 秒，其中并发贡献约 8 倍，其余来自服务这次本身更快。** 并发那次各题检索耗时加起来是 5.9 分钟，8 个线程把它压到 45 秒（约 7.8 倍）。而 5.9 分钟本身只有串行那次的三分之一：那次有 17 道题超过 20 秒，这次最慢的一道是 13.1 秒，没有超过 20 秒的。两次运行隔了一天，服务的快慢不是同一个水平，所以"快了 25 倍"不能全算在并发头上。
+- **并发运行里的单题耗时不能和串行的比。** 这次的 P50 / P95 是 3.4 / 10.3 秒，比串行那次的 10.6 / 39.9 秒还低，原因是服务的波动，不是并发让检索变快。反过来，lexical 不调用模型服务，同一天用 1 个和 8 个线程各跑一次（总时长 17.8 秒和 3.7 秒），单题 P50 从 192 ms 升到 315 ms：同时进行的请求会互相拖慢。所以**检索耗时 P50 / P95 只在 `workers=1` 的运行之间比较**，上面各表里的耗时都来自 `workers=1`。
+- 8 个线程共用同一个 Embedding 客户端和同一个 Reranker 客户端，各自开知识库连接，88 题没有出现错误。只跑了这一次。
+
+运行目录（本地，Git 忽略）：`artifacts/runs/evaluation/2026-11-12/e5feb5b32e0742ababdf35d67e4d363e/`；lexical 的两次为同一日期下的 `708726076057461799633e395aee6bcb/`（workers=1）和 `df479a2a7a9847d68d4d3d39fc038eb0/`（workers=8），两份报告除单题耗时外完全相同。
+
 ## 4. 失败分析（只看非冻结题）
 
 非冻结题共 72 道，其中 24 道在 K=5 时没拿全相关表；这 24 道里有 13 道到 K=10 就能拿全。主要有五类原因：
@@ -186,6 +207,7 @@ uv run querypilot eval retrieval --cases evals/retrieval/retrieval_cases.json   
 uv run querypilot eval retrieval --cases evals/retrieval/retrieval_cases.json --method vector
 uv run querypilot eval retrieval --cases evals/retrieval/retrieval_cases.json --method hybrid
 uv run querypilot eval retrieval --cases evals/retrieval/retrieval_cases.json --method hybrid --rerank
+uv run querypilot eval retrieval --cases evals/retrieval/retrieval_cases.json --method hybrid --rerank --workers 8
 ```
 
 需要已经导入 PostgreSQL 的知识库，以及 `.env` 里的只读 DSN。`--method` 可选 `lexical`（BM25，默认）、`vector`、`hybrid`（RRF 融合），见[知识库](../knowledge/knowledge-base.md)第 7 节。vector 和 hybrid 还需要 `QUERYPILOT_EMBEDDING_*` 配置和已生成的向量（`knowledge store embed`），每道题调用一次 Embedding 服务，88 题约 88 次，**会产生费用**。
@@ -195,3 +217,12 @@ uv run querypilot eval retrieval --cases evals/retrieval/retrieval_cases.json --
 `--rerank` 在检索之后加一步重排，默认关闭，可以和任何 `--method` 组合（见[知识库](../knowledge/knowledge-base.md)第 7 节）。它需要 `QUERYPILOT_RERANK_*` 配置，每道题至多调用一次 Reranker 服务（最多 20 个候选；没有候选或查询没有有效词的题不调用），88 题最多 88 次，**会产生费用**；和 vector、hybrid 组合时 Embedding 的调用照旧。一次运行只创建一个 Reranker，所有题共用。评测的 `top_k=20` 等于重排的候选数，所以重排只改变这 20 个 Hit 的顺序，题集、Corpus 和指标都不变。某一题重排失败（`rerank_error`）会中止整批运行，和 Embedding 失败时一样，不能从断点续跑。
 
 不管开不开重排，运行配置都记录 `rerank`（真或假）；报告的 `config.rerank` 是请求的开关，`config.retrieval` 的每一项有 `rerank_profile_id`（没有重排时为空）。开启重排时，配置版本在方法的版本后面拼上 `r4b-rerank-v1`（如 `r4-hybrid-v1+r4b-rerank-v1`）。2026-11-12 之前生成的运行没有 `rerank`、`config.rerank` 和 `rerank_profile_id` 这三个字段，它们都没有重排。
+
+`--workers N` 用 N 个线程同时检索，默认 1，可以和 `--method`、`--rerank` 任意组合。它不改变调用次数和费用，只是把请求同时发出去。
+
+- **线程里只做检索**；计分、逐题记录和进度事件都在主线程。报告的 `records` 和 `config.retrieval` 始终按题集顺序，与哪题先检索完无关。
+- **运行配置和报告的 `config` 都记录 `workers`**。没有这个字段的旧运行都是串行的，等同于 `workers=1`。
+- **耗时只在 `workers=1` 的运行之间比较**（原因见第 3 节"并发运行"）。召回类指标不受线程数影响。
+- **进度事件按完成顺序写出**：`eval_case_finished` 的 `completed_cases` 是已完成的题数，从 1 递增；`case_index` 仍是这题在题集里的位置，所以并发时它不是递增的。
+- **出错时**：某一题遇到 `input_error` 以外的错误，不再开始新题，正在检索中的题跑完后结果丢弃，整批失败，不写 `result.json`。按 Ctrl+C 也是不再开始新题，但不会立刻退出：要等正在检索中的请求结束（客户端超时 60 秒，加上 SDK 的重试）。
+- 没有限流和自己写的重试。整份 88 题的 hybrid + 重排约 176 次请求，远低于服务的每分钟限额；换成更大的题集或更多线程时要重新估算。
