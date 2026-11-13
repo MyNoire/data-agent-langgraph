@@ -176,3 +176,32 @@ def test_graph_eval_cli_uses_graph_and_keeps_model_runs_separate(tmp_path, monke
     assert unavailable["status"] == "no_predictions"
     assert unavailable["execution_accuracy"] is None
     assert unavailable["valid_sql_rate"] is None
+
+
+def _sample_run(tmp_path, cases: list[dict]) -> tuple[Path, Settings]:
+    """建一个只有 items 表（id 为 1、2）的库并登记为 sample，写出题集，返回题集路径和运行配置。"""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    database = data_dir / "sample.sqlite"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE items (id INTEGER, name TEXT)")
+        connection.executemany("INSERT INTO items VALUES (?, ?)", [(1, "one"), (2, "two")])
+    DatabaseRegistry(data_dir).register("sample", database)
+    cases_path = tmp_path / "cases.json"
+    cases_path.write_text(json.dumps(cases), encoding="utf-8")
+    return cases_path, Settings(data_dir=data_dir, artifacts_dir=tmp_path / "artifacts")
+
+
+def test_graph_eval_record_carries_the_frozen_flag_of_its_case(tmp_path):
+    """题目带 frozen 标记时逐题记录原样带上；题目没有这个标记时记录里也没有。"""
+    cases, settings = _sample_run(tmp_path, [
+        {"question_id": 1, "db_id": "sample", "question": "q1", "SQL": "SELECT id FROM items", "frozen": True},
+        {"question_id": 2, "db_id": "sample", "question": "q2", "SQL": "SELECT id FROM items", "frozen": False},
+        {"question_id": 3, "db_id": "sample", "question": "q3", "SQL": "SELECT id FROM items"},
+    ])
+
+    result = run_graph(cases, settings, generator=lambda *_: "SELECT id FROM items")
+
+    assert result["records"][0]["frozen"] is True
+    assert result["records"][1]["frozen"] is False
+    assert "frozen" not in result["records"][2]

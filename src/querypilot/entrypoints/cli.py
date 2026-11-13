@@ -134,6 +134,12 @@ def create_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--database-source", type=Path, required=True)
     prepare.add_argument("--manifest", type=Path, default=Path("evals/bird_final100_manifest.json"))
     prepare.set_defaults(command="data.bird.prepare-final100")
+    databases = _artifacts(bird_actions.add_parser("select-databases", help="取指定数据库的全部题目，生成 SQL 题集"))
+    databases.add_argument("--source", type=Path, default=Path("data/bird/mini_dev_sqlite-00000-of-00001.json"))
+    databases.add_argument("--frozen-manifest", type=Path, default=Path("evals/bird_final100_manifest.json"))
+    databases.add_argument("--database-id", action="append", required=True)
+    databases.add_argument("--output", type=Path, required=True)
+    databases.set_defaults(command="data.bird.select-databases")
     return parser
 
 

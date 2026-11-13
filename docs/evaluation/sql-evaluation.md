@@ -8,8 +8,9 @@
 
 - **12 题开发集**：日常调试用，`evals/bird_smoke_manifest.json`；
 - **冻结的 100 题**：最终验证用，`evals/bird_final100_manifest.json`。
+- **两库 88 题**：toxicology（40 题）和 student_club（48 题）在 Mini-Dev 里的全部题，`evals/bird_toxicology_student_club_manifest.json`。知识库目前只有这两个库，所以检索接入查询图之后的对比（R5）都在这份题集上做；题号与[检索评测](retrieval-evaluation.md)的 88 题相同。其中 16 道属于冻结集，每题带 `frozen` 标记，评测的逐题记录里原样带上：冻结题一起计分，失败分析只看其余 72 道。
 
-仓库里只提交 manifest，记录题号、来源 URL 和各文件的 sha256；原题和数据库放在 Git 忽略的 `data/` 下，用 `querypilot data bird ...` 命令准备。冻结题的使用规则见 [ADR 0001](../adr/0001-frozen-set-for-component-eval.md)。
+仓库里只提交 manifest，记录题号、来源 URL 和各文件的 sha256；原题和数据库放在 Git 忽略的 `data/` 下，用 `querypilot data bird ...` 命令准备。两库题集用 `querypilot data bird select-databases --database-id toxicology --database-id student_club --output evals/bird_toxicology_student_club.json` 生成：来源文件的 sha256 必须和冻结 manifest 记录的一致，题集文件留在本地，旁边的 manifest 提交。冻结题的使用规则见 [ADR 0001](../adr/0001-frozen-set-for-component-eval.md)。
 
 ## 两种跑法
 

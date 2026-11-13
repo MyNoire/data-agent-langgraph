@@ -24,6 +24,7 @@ class CaseRecord(TypedDict):
     error_type: NotRequired[str]
     graph_run_id: NotRequired[str]
     row_count: NotRequired[int]
+    frozen: NotRequired[bool]
 
 
 class EvalSummary(TypedDict):

@@ -20,7 +20,7 @@ def new_case_record(index: int, case: Mapping[str, Any], *, evidence_used: bool,
 
     参数:
         index: 从零开始的题目索引。
-        case: 至少含 db_id、question 的题集条目。
+        case: 至少含 db_id、question 的题集条目；带 frozen（是否属于冻结集）时原样写进记录。
         evidence_used: 本题是否向模型提供了标注证据。
         graph_run_id: 单图评测的逐题图运行 ID；其他模式为空。
     返回:
@@ -34,6 +34,8 @@ def new_case_record(index: int, case: Mapping[str, Any], *, evidence_used: bool,
     }
     if graph_run_id is not None:
         record["graph_run_id"] = graph_run_id
+    if "frozen" in case:
+        record["frozen"] = case["frozen"]
     return record
 
 

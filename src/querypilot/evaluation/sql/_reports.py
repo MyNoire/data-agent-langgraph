@@ -14,7 +14,7 @@ TOP_LEVEL = (
 )
 RECORD = (
     "index", "question_id", "database_id", "graph_run_id", "evidence_used", "predicted_sql",
-    "valid_sql", "execution_match", "outcome", "latency_ms",
+    "valid_sql", "execution_match", "outcome", "latency_ms", "frozen",
 )
 
 
