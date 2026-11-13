@@ -57,6 +57,10 @@ _避免_：授权范围、scope
 把 Chunk 和查询变成向量的一组固定选择：用哪个模型、多少维、Chunk 取哪段文本嵌入、查询前加什么指令。按它算出的向量是 Corpus 的派生索引，不属于 Corpus；同一份 Corpus 可以同时有多个 Embedding Profile 的向量。
 _避免_：向量快照、向量库
 
+**Rerank Profile（重排方案）**：
+对一次检索的候选做重排时的一组固定选择：用哪个 Reranker 模型、候选取哪段文本、带什么任务指令。重排只改变候选的先后顺序，不会找出候选之外的 Chunk。
+_避免_：精排配置、rerank config
+
 **Hit（命中）**：
 一次检索匹配到的 Chunk。
 _避免_：result、match

@@ -16,6 +16,14 @@ def _artifacts(parser):
     return parser
 
 
+def _positive_int(value: str) -> int:
+    """命令行里至少为 1 的整数；不是整数或小于 1 时按参数错误处理。"""
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError("必须是至少为 1 的整数")
+    return number
+
+
 def create_parser() -> argparse.ArgumentParser:
     """构造明确命令的参数树，返回解析器；不读取配置、不产生业务副作用。"""
     parser = _artifacts(SafeArgumentParser(prog="querypilot", description="QueryPilot 查询、知识准备与评测"))
@@ -39,6 +47,9 @@ def create_parser() -> argparse.ArgumentParser:
     retrieval.add_argument("--cases", type=Path, required=True)
     retrieval.add_argument("--method", choices=("lexical", "vector", "hybrid"), default="lexical",
                            help="检索方法；vector 和 hybrid 会调用 Embedding 服务，产生费用")
+    retrieval.add_argument("--rerank", action="store_true",
+                           help="检索后用 Reranker 重排，可与任何 --method 组合；会调用 Reranker 服务，产生费用")
+    retrieval.add_argument("--workers", type=_positive_int, default=1, help="同时检索的线程数，至少为 1，默认 1")
     retrieval.set_defaults(command="eval.retrieval")
     cases = _artifacts(eval_actions.add_parser("retrieval-cases", help="从 BIRD 题目和 Corpus 生成检索题集"))
     cases.add_argument("--questions", type=Path, required=True)

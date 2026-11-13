@@ -3,14 +3,18 @@
 from hashlib import sha256
 import json
 from pathlib import Path
+import threading
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import pytest
+from pydantic import ValidationError
 
-from querypilot.evaluation.api import RetrievalCase, RetrievalCaseSet, evaluate_retrieval
+from querypilot.evaluation.api import (
+    RetrievalCase, RetrievalCaseSet, evaluate_retrieval, retrieval_run_config,
+)
 from querypilot.knowledge.api import KnowledgeScope
 from querypilot.retrieval.api import KnowledgeRetrievalError, RetrievalHit, RetrievalResult
-from querypilot.runtime.api import Settings
+from querypilot.runtime.api import Settings, task_run
 
 SCOPE = KnowledgeScope(corpus_id="a" * 64, database_id="demo", schema_version="b" * 64)
 
@@ -39,12 +43,14 @@ def _hit(rank: int, knowledge_type: str = "column", table: str | None = "items",
 
 
 def _result(request, hits: list[RetrievalHit], elapsed_ms: float = 1.0) -> RetrievalResult:
-    """按请求的方法返回结果；vector 和 hybrid 带上假的 Embedding Profile。"""
+    """按请求的方法返回结果；vector 和 hybrid 带上假的 Embedding Profile，开启重排时带上假的 Rerank Profile。"""
     profile = None if request.method == "lexical" else "fake:3:test-v1"
+    rerank_profile = "fake-rerank:test-v1" if request.rerank else None
     return RetrievalResult(request_id=str(uuid4()), outcome="matched" if hits else "no_match", scope=request.scope,
                            query_sha256=sha256(request.query.encode()).hexdigest(), top_k=request.top_k,
                            knowledge_types=request.knowledge_types, hit_count=len(hits), hits=hits,
-                           elapsed_ms=elapsed_ms, method=request.method, embedding_profile_id=profile)
+                           elapsed_ms=elapsed_ms, method=request.method, embedding_profile_id=profile,
+                           rerank_profile_id=rerank_profile)
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -73,7 +79,10 @@ def test_each_case_is_retrieved_once_and_recorded_without_question_text(tmp_path
         "dataset_sha256": sha256(cases_file.read_bytes()).hexdigest(),
         "scopes": {"demo": SCOPE.model_dump(mode="json")},
         "method": "lexical",
-        "retrieval": [{"method": "lexical", "embedding_profile_id": None, "retrieval_config_version": "r3-bm25-v1"}],
+        "rerank": False,
+        "workers": 1,
+        "retrieval": [{"method": "lexical", "embedding_profile_id": None, "rerank_profile_id": None,
+                       "retrieval_config_version": "r3-bm25-v1"}],
         "top_k": 20,
         "table_ks": [5, 10],
         "column_k": 10,
@@ -101,11 +110,251 @@ def test_method_reaches_every_request_the_run_config_and_the_report(tmp_path):
     assert [request.method for request in requests] == ["hybrid", "hybrid"]
     assert report["config"]["method"] == "hybrid"
     assert report["config"]["retrieval"] == [
-        {"method": "hybrid", "embedding_profile_id": "fake:3:test-v1", "retrieval_config_version": "r4-hybrid-v1"},
+        {"method": "hybrid", "embedding_profile_id": "fake:3:test-v1", "rerank_profile_id": None,
+         "retrieval_config_version": "r4-hybrid-v1"},
     ]
     runs = list((tmp_path / "artifacts").glob("runs/evaluation/*/*"))
     config = json.loads((runs[0] / "config.json").read_text(encoding="utf-8"))
     assert config["parameters"]["method"] == "hybrid"
+
+
+def test_rerank_reaches_every_request_the_run_config_and_the_report(tmp_path):
+    """输入：method=hybrid，rerank=True；输出：每个请求都开启重排，top_k 仍是 20；运行配置记下开启了重排，
+    报告记下请求的开关，以及结果实际用到的 Rerank Profile 和带重排的配置版本。"""
+    cases_file = _cases_file(tmp_path, [_case(1), _case(2)])
+    requests = []
+
+    def retriever(request):
+        requests.append(request)
+        return _result(request, [_hit(1)])
+
+    report = evaluate_retrieval(cases_file, _settings(tmp_path), method="hybrid", rerank=True, retriever=retriever)
+
+    assert [(request.method, request.rerank, request.top_k) for request in requests] == [("hybrid", True, 20)] * 2
+    assert (report["config"]["method"], report["config"]["rerank"]) == ("hybrid", True)
+    assert report["config"]["retrieval"] == [
+        {"method": "hybrid", "embedding_profile_id": "fake:3:test-v1", "rerank_profile_id": "fake-rerank:test-v1",
+         "retrieval_config_version": "r4-hybrid-v1+r4b-rerank-v1"},
+    ]
+    runs = list((tmp_path / "artifacts").glob("runs/evaluation/*/*"))
+    config = json.loads((runs[0] / "config.json").read_text(encoding="utf-8"))
+    assert (config["parameters"]["method"], config["parameters"]["rerank"]) == ("hybrid", True)
+
+
+def test_workers_is_recorded_in_the_run_config_and_the_report_and_defaults_to_one(tmp_path):
+    """输入：同一份题集跑两次，一次不传 workers，一次 workers=3；输出：运行配置和报告的 config 分别记下 1 和 3。"""
+    cases_file = _cases_file(tmp_path, [_case(1), _case(2), _case(3)])
+    recorded = []
+    for name, kwargs in (("default", {}), ("three", {"workers": 3})):
+        settings = Settings(_env_file=None, artifacts_dir=tmp_path / name)
+        report = evaluate_retrieval(cases_file, settings, retriever=lambda request: _result(request, [_hit(1)]),
+                                    **kwargs)
+        runs = list((tmp_path / name).glob("runs/evaluation/*/*"))
+        config = json.loads((runs[0] / "config.json").read_text(encoding="utf-8"))
+        recorded.append((report["config"]["workers"], config["parameters"]["workers"]))
+    assert recorded == [(1, 1), (3, 3)]
+
+
+def test_default_retriever_needs_reranker_settings_only_when_rerank_is_on(tmp_path, monkeypatch):
+    """输入：默认检索器，没有 QUERYPILOT_RERANK_* 配置，题集为空（不会发生检索，不连数据库）。
+
+    输出：不开重排时照常跑完；开启重排时在第一题之前就因为缺配置失败，说明 Reranker 在运行开始时创建。
+    """
+    for name in ("BASE_URL", "MODEL", "API_KEY"):
+        monkeypatch.delenv(f"QUERYPILOT_RERANK_{name}", raising=False)
+    monkeypatch.chdir(tmp_path)                       # 不读仓库的 .env
+    cases_file = _cases_file(tmp_path, [])
+    assert evaluate_retrieval(cases_file, _settings(tmp_path))["summary"]["overall"]["cases"] == 0
+    with pytest.raises(ValidationError, match="RerankSettings"):
+        evaluate_retrieval(cases_file, _settings(tmp_path), rerank=True)
+
+
+def test_default_retriever_shares_one_reranker_across_cases(tmp_path, monkeypatch):
+    """输入：默认检索器，开启重排，两道题；retrieve_knowledge 换成假的，不连数据库也不联网。
+
+    输出：两次检索收到的是同一个按 QUERYPILOT_RERANK_* 创建的 Reranker。
+    """
+    from querypilot.evaluation.retrieval import _runner
+    monkeypatch.setenv("QUERYPILOT_RERANK_BASE_URL", "http://127.0.0.1:9/v1")
+    monkeypatch.setenv("QUERYPILOT_RERANK_MODEL", "Qwen/Qwen3-Reranker-8B")
+    monkeypatch.setenv("QUERYPILOT_RERANK_API_KEY", "sk-not-a-real-key")
+    rerankers = []
+
+    def fake_retrieve(request, settings, embedder=None, reranker=None):
+        rerankers.append(reranker)
+        return _result(request, [_hit(1)])
+
+    monkeypatch.setattr(_runner, "retrieve_knowledge", fake_retrieve)
+    evaluate_retrieval(_cases_file(tmp_path, [_case(1), _case(2)]), _settings(tmp_path), rerank=True)
+    assert len(rerankers) == 2 and rerankers[0] is rerankers[1]
+    assert rerankers[0].profile_id.startswith("siliconflow:Qwen/Qwen3-Reranker-8B:")
+
+
+def test_workers_cases_are_in_retrieval_at_the_same_time(tmp_path):
+    """输入：3 道题，workers=3；假检索器里有一道关卡，要 3 个线程都到了才一起放行。
+
+    输出：3 道题都检索完成。一题一题串行跑时，第 1 题永远等不到另外两题，会在关卡上超时，整批失败。
+    """
+    barrier = threading.Barrier(3, timeout=2)
+
+    def retriever(request):
+        barrier.wait()
+        return _result(request, [_hit(1)])
+
+    report = evaluate_retrieval(_cases_file(tmp_path, [_case(1), _case(2), _case(3)]), _settings(tmp_path),
+                                workers=3, retriever=retriever)
+
+    assert [r["outcome"] for r in report["records"]] == ["ok", "ok", "ok"]
+
+
+class _EventWatcher:
+    """接在运行上的进度流：记下写出的每条事件；看到指定题目的完成事件时点亮一个信号。"""
+
+    def __init__(self, question_id: int, reported: threading.Event):
+        self.events, self._question_id, self._reported = [], question_id, reported
+
+    def write(self, text: str) -> None:
+        event = json.loads(text)
+        self.events.append(event)
+        if event["event"] == "eval_case_finished" and event["question_id"] == self._question_id:
+            self._reported.set()
+
+    def flush(self) -> None:
+        pass
+
+
+def test_report_keeps_case_order_while_events_follow_completion_order(tmp_path):
+    """输入：两道题，workers=2；第 1 题要等主线程写出第 2 题的完成事件之后才返回，所以第 2 题一定先完成。
+
+    输出：报告的 records 和 config.retrieval 仍按题集顺序；eval_case_finished 按完成顺序写出，
+    completed_cases 从 1 递增，case_index 是这题在题集里的位置。
+    """
+    second_reported = threading.Event()
+    watcher = _EventWatcher(2, second_reported)
+
+    def retriever(request):
+        if request.query == "first":
+            assert second_reported.wait(5)
+            return _result(request, [_hit(1)], elapsed_ms=10.0).model_copy(update={"embedding_profile_id": "fake:a"})
+        return _result(request, [_hit(1)], elapsed_ms=20.0).model_copy(update={"embedding_profile_id": "fake:b"})
+
+    cases_file = _cases_file(tmp_path, [_case(1, question="first"), _case(2, question="second")])
+    settings = _settings(tmp_path)
+    with task_run("evaluation", settings, command="retrieval",
+                  config=retrieval_run_config(cases_file, "vector", False, 2)) as context:
+        context.attach_stream(watcher)
+        report = evaluate_retrieval(cases_file, settings, method="vector", workers=2, retriever=retriever,
+                                    run_context=context)
+        context.complete(report)
+
+    assert [(r["question_id"], r["elapsed_ms"]) for r in report["records"]] == [(1, 10.0), (2, 20.0)]
+    assert [v["embedding_profile_id"] for v in report["config"]["retrieval"]] == ["fake:a", "fake:b"]
+    finished = [e for e in watcher.events if e["event"] == "eval_case_finished"]
+    assert [(e["question_id"], e["case_index"], e["completed_cases"]) for e in finished] == [(2, 2, 1), (1, 1, 2)]
+    assert "first" not in json.dumps(watcher.events)
+
+
+def test_input_error_only_affects_its_own_case_when_cases_run_concurrently(tmp_path):
+    """输入：3 道题同时在检索中（关卡保证），其中第 2 题没有有效词。
+
+    输出：第 2 题记为 input_error，另外两题照常完成，整批不中止。
+    """
+    barrier = threading.Barrier(3, timeout=5)
+
+    def retriever(request):
+        barrier.wait()
+        if request.query == "??":
+            raise KnowledgeRetrievalError("input_error")
+        return _result(request, [_hit(1)])
+
+    cases = [_case(1), _case(2, question="??"), _case(3)]
+    report = evaluate_retrieval(_cases_file(tmp_path, cases), _settings(tmp_path), workers=3, retriever=retriever)
+
+    assert [(r["question_id"], r["outcome"]) for r in report["records"]] == [
+        (1, "ok"), (2, "input_error"), (3, "ok")]
+
+
+def test_fatal_error_starts_no_new_case_and_lets_the_in_flight_case_finish(tmp_path):
+    """输入：workers=2，4 道题；前两题同时在检索中（关卡保证），第 1 题重排失败。
+
+    第 2 题要等"运行第 1 题的那个工作线程退出"才返回。线程池只在关闭时才让空闲的工作线程退出，
+    所以第 2 题一定是在评测因为这次失败停止提交之后才完成的。
+    输出：第 3、4 题没有被调用；第 2 题跑完了，结果被丢弃；抛出的是第 1 题的原始错误，
+    运行记为 failed，没有 result.json。
+    """
+    barrier = threading.Barrier(2, timeout=5)
+    failing_threads, calls, returned = [], [], []
+
+    def retriever(request):
+        calls.append(request.query)
+        if request.query == "bad":
+            failing_threads.append(threading.current_thread())
+            barrier.wait()
+            raise KnowledgeRetrievalError("rerank_error")
+        if request.query == "slow":
+            barrier.wait()
+            failing_threads[0].join(5)
+            assert not failing_threads[0].is_alive()
+            returned.append(request.query)
+        return _result(request, [_hit(1)])
+
+    cases = [_case(1, question="bad"), _case(2, question="slow"), _case(3, question="q3"), _case(4, question="q4")]
+    with pytest.raises(KnowledgeRetrievalError) as caught:
+        evaluate_retrieval(_cases_file(tmp_path, cases), _settings(tmp_path), workers=2, retriever=retriever)
+
+    assert sorted(calls) == ["bad", "slow"] and returned == ["slow"]
+    assert caught.value.error_type == "rerank_error"
+    runs = list((tmp_path / "artifacts").glob("runs/evaluation/*/*"))
+    record = json.loads((runs[0] / "run.json").read_text(encoding="utf-8"))
+    assert (record["status"], record["error_type"]) == ("failed", "rerank_error")
+    assert not (runs[0] / "result.json").exists()
+
+
+def test_main_thread_failure_starts_no_new_case(tmp_path):
+    """输入：workers=2，5 道题；第 1 题立刻完成，第 2 题一直在检索中。主线程在写第 1 题的完成事件时
+    出错，并在出错的那一刻放行第 2 题。Ctrl+C 走的是同一条路径：主线程带着异常离开。
+
+    输出：抛出主线程的错误；只有前两题被调用过，第 3–5 题没有开始。
+    """
+    release_second = threading.Event()
+    calls = []
+
+    def retriever(request):
+        calls.append(request.query)
+        if request.query == "q2":
+            assert release_second.wait(5)
+        return _result(request, [_hit(1)])
+
+    def broken_event(event, **fields):
+        if event == "eval_case_finished":
+            release_second.set()
+            raise RuntimeError("main thread failed")
+
+    cases_file = _cases_file(tmp_path, [_case(i, question=f"q{i}") for i in range(1, 6)])
+    settings = _settings(tmp_path)
+    with pytest.raises(RuntimeError, match="main thread failed"):
+        with task_run("evaluation", settings, command="retrieval",
+                      config=retrieval_run_config(cases_file, workers=2)) as context:
+            context.event = broken_event
+            evaluate_retrieval(cases_file, settings, workers=2, retriever=retriever, run_context=context)
+
+    assert sorted(calls) == ["q1", "q2"]
+
+
+def test_one_worker_reports_cases_in_case_set_order_even_when_retrieval_is_instant(tmp_path):
+    """输入：workers=1（默认值），400 道题，检索瞬间返回。
+
+    输出：eval_case_finished 的 case_index 和 completed_cases 都是 1 到 400：只有一个线程时，
+    完成顺序就是题集顺序，和没有并发时一样。
+    """
+    cases = [_case(i, question=f"q{i}") for i in range(1, 401)]
+    evaluate_retrieval(_cases_file(tmp_path, cases), _settings(tmp_path),
+                       retriever=lambda request: _result(request, [_hit(1)]))
+
+    runs = list((tmp_path / "artifacts").glob("runs/evaluation/*/*"))
+    events = [json.loads(line) for line in (runs[0] / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    finished = [(e["case_index"], e["completed_cases"]) for e in events if e["event"] == "eval_case_finished"]
+    assert finished == [(i, i) for i in range(1, 401)]
 
 
 def test_input_error_is_recorded_on_the_case_and_the_batch_continues(tmp_path):
@@ -120,7 +369,8 @@ def test_input_error_is_recorded_on_the_case_and_the_batch_continues(tmp_path):
     assert [(r["question_id"], r["outcome"]) for r in report["records"]] == [(1, "input_error"), (2, "ok")]
 
 
-@pytest.mark.parametrize("error", [KnowledgeRetrievalError("connection_failed"), RuntimeError("boom")])
+@pytest.mark.parametrize("error", [KnowledgeRetrievalError("connection_failed"),
+                                   KnowledgeRetrievalError("rerank_error"), RuntimeError("boom")])
 def test_other_retrieval_errors_abort_the_batch(tmp_path, error):
     cases_file = _cases_file(tmp_path, [_case(1), _case(2)])
     calls = []
@@ -171,15 +421,16 @@ def test_cli_runs_one_recorded_evaluation_and_prints_locations(tmp_path, monkeyp
     monkeypatch.setattr(cli, "get_settings", lambda: settings)
     built_for, requests = [], []
 
-    def default_retriever(method):
-        built_for.append(method)
+    def default_retriever(method, rerank):
+        built_for.append((method, rerank))
         return lambda request: requests.append(request) or _result(request, [_hit(1)])
 
     monkeypatch.setattr(_runner, "_default_retriever", default_retriever)
     cases_file = _cases_file(tmp_path, [_case(1, question="PRIVATE RETRIEVAL QUESTION")])
 
     assert cli.main(["eval", "retrieval", "--cases", str(cases_file), "--method", "vector"]) == 0
-    assert built_for == ["vector"] and [request.method for request in requests] == ["vector"]
+    assert built_for == [("vector", False)]
+    assert [(request.method, request.rerank) for request in requests] == [("vector", False)]
 
     captured = capsys.readouterr()
     output = json.loads(captured.out)
@@ -188,8 +439,80 @@ def test_cli_runs_one_recorded_evaluation_and_prints_locations(tmp_path, monkeyp
     record = json.loads((runs[0] / "run.json").read_text(encoding="utf-8"))
     config = json.loads((runs[0] / "config.json").read_text(encoding="utf-8"))
     assert record["status"] == "completed" and config["parameters"]["mode"] == "retrieval"
-    assert config["parameters"]["method"] == "vector"
+    assert (config["parameters"]["method"], config["parameters"]["rerank"]) == ("vector", False)
     assert Path(output["result_file"]) == runs[0] / "result.json"
     assert output["summary"]["overall"]["cases"] == 1
     safe = captured.out + captured.err + (runs[0] / "events.jsonl").read_text(encoding="utf-8")
     assert "PRIVATE RETRIEVAL QUESTION" not in safe
+
+
+def test_cli_rerank_flag_turns_reranking_on_for_the_whole_run(tmp_path, monkeypatch, capsys):
+    """输入：eval retrieval --rerank（方法用默认的 lexical）；输出：默认检索器按"开启重排"创建一次，
+    每个请求都开启重排，运行配置和结果文件都记下。"""
+    from querypilot.entrypoints import cli
+    from querypilot.evaluation.retrieval import _runner
+
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+    built_for, requests = [], []
+
+    def default_retriever(method, rerank):
+        built_for.append((method, rerank))
+        return lambda request: requests.append(request) or _result(request, [_hit(1)])
+
+    monkeypatch.setattr(_runner, "_default_retriever", default_retriever)
+    cases_file = _cases_file(tmp_path, [_case(1), _case(2)])
+
+    assert cli.main(["eval", "retrieval", "--cases", str(cases_file), "--rerank"]) == 0
+    assert built_for == [("lexical", True)]
+    assert [(request.method, request.rerank) for request in requests] == [("lexical", True)] * 2
+
+    output = json.loads(capsys.readouterr().out)
+    runs = list(settings.artifacts_dir.glob("runs/evaluation/*/*"))
+    config = json.loads((runs[0] / "config.json").read_text(encoding="utf-8"))
+    assert (config["parameters"]["method"], config["parameters"]["rerank"]) == ("lexical", True)
+    report = json.loads(Path(output["result_file"]).read_text(encoding="utf-8"))
+    assert report["config"]["retrieval"] == [
+        {"method": "lexical", "embedding_profile_id": None, "rerank_profile_id": "fake-rerank:test-v1",
+         "retrieval_config_version": "r3-bm25-v1+r4b-rerank-v1"},
+    ]
+
+
+def test_cli_workers_flag_reaches_the_runner_and_the_run_config(tmp_path, monkeypatch, capsys):
+    """输入：eval retrieval --workers 4；输出：运行配置和结果文件的 config 都记下 4。"""
+    from querypilot.entrypoints import cli
+    from querypilot.evaluation.retrieval import _runner
+
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+    monkeypatch.setattr(_runner, "_default_retriever",
+                        lambda method, rerank: lambda request: _result(request, [_hit(1)]))
+    cases_file = _cases_file(tmp_path, [_case(1), _case(2)])
+
+    assert cli.main(["eval", "retrieval", "--cases", str(cases_file), "--workers", "4"]) == 0
+
+    output = json.loads(capsys.readouterr().out)
+    runs = list(settings.artifacts_dir.glob("runs/evaluation/*/*"))
+    config = json.loads((runs[0] / "config.json").read_text(encoding="utf-8"))
+    report = json.loads(Path(output["result_file"]).read_text(encoding="utf-8"))
+    assert (config["parameters"]["workers"], report["config"]["workers"]) == (4, 4)
+
+
+@pytest.mark.parametrize("workers", ["0", "-3", "two"])
+def test_cli_rejects_workers_below_one_before_any_run_is_recorded(tmp_path, monkeypatch, workers):
+    """输入：eval retrieval --workers 取 0、负数或不是整数；输出：按参数错误退出（退出码 2），
+    没有建运行记录，也没有创建检索器。"""
+    from querypilot.entrypoints import cli
+    from querypilot.evaluation.retrieval import _runner
+
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+    built = []
+    monkeypatch.setattr(_runner, "_default_retriever", lambda method, rerank: built.append(method))
+    cases_file = _cases_file(tmp_path, [_case(1)])
+
+    with pytest.raises(SystemExit) as caught:
+        cli.main(["eval", "retrieval", "--cases", str(cases_file), "--workers", workers])
+
+    assert caught.value.code == 2
+    assert built == [] and not list(settings.artifacts_dir.glob("runs/evaluation/*/*"))

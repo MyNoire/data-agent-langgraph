@@ -75,9 +75,10 @@ def _retrieval_cases(args) -> int:
 def _retrieval(args, settings) -> int:
     """在一份运行记录里跑检索评测，打印结果文件位置和汇总；进度事件同时写到 stderr。"""
     with task_run("evaluation", settings, command="retrieval",
-                  config=retrieval_run_config(args.cases, args.method)) as context:
+                  config=retrieval_run_config(args.cases, args.method, args.rerank, args.workers)) as context:
         context.attach_stream(sys.stderr)
-        report = evaluate_retrieval(args.cases, settings, method=args.method, run_context=context)
+        report = evaluate_retrieval(args.cases, settings, method=args.method, rerank=args.rerank,
+                                    workers=args.workers, run_context=context)
         context.complete(report)
     print(json.dumps({"result_file": str(context.run_dir / "result.json"),
                       "event_file": str(context.run_dir / "events.jsonl"),

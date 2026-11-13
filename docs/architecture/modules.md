@@ -21,7 +21,7 @@ src/querypilot/
     knowledge_corpus/     渲染、生成身份、构建和校验 Corpus（知识语料）
     knowledge_store/      PostgreSQL 导入、复验、限定只读会话、写入向量
     knowledge_embedding/  Embedder 接口、硅基流动 Embedding 客户端
-  retrieval/         限定 Knowledge Scope 的 BM25 / 向量 / 混合检索（retrieve_knowledge）
+  retrieval/         限定 Knowledge Scope 的 BM25 / 向量 / 混合检索和可选的重排（retrieve_knowledge）
   runtime/           配置、运行目录、事件、审计、版本信息
 ~~~
 
@@ -88,7 +88,7 @@ with TemporaryDirectory() as temporary:
 | knowledge_store | import_corpus(corpus_dir, storage_settings, *, run_context=None) → ImportSummary；verify_import(...) → ImportVerificationSummary | 先重读快照；原事务锁、全字段回读、imported/reused 和未知提交语义保留；KnowledgeStorageError |
 | knowledge_store | open_read_scope(scope, storage_settings, limits=None) → 上下文 ReadSession | 一个只读一致事务；关闭后不可复用；KnowledgeReadError |
 | knowledge_store | embed_corpus(scope, storage_settings, embedder, *, run_context=None) → EmbeddingSummary | reader 读 Chunk，事务外调用 embedder，importer 一个事务写入全部向量；已有为 exists；KnowledgeReadError/EmbeddingError/KnowledgeStorageError |
-| knowledge_embedding | Embedder（profile_id、embed_documents、embed_query）；OpenAIEmbedder(EmbeddingSettings()) | 读 QUERYPILOT_EMBEDDING_*；查询前拼任务指令，文档原样；条数、维度不对或请求失败为 EmbeddingError |
+| knowledge_embedding | Embedder（profile_id、embed_documents、embed_query）；OpenAIEmbedder(EmbeddingSettings()) | 读 QUERYPILOT_EMBEDDING_*；查询前拼任务指令（`QUERY_TASK`，重排也用这一句），文档原样；条数、维度不对或请求失败为 EmbeddingError |
 
 例如，准备好批准包 bundle 和语义文件 semantics.json 后：
 
@@ -134,9 +134,9 @@ read_report(source) 显式读取旧 JSON 或完整的新评测运行目录，不
 
 BIRD 的 fetch/import/select/freeze/prepare 逻辑归 evaluation/datasets；命令层只适配参数。搬迁没有重新下载、选题或冻结正式数据。
 
-检索评测归 `evaluation/retrieval`，按需离线运行：`prepare_retrieval_cases` 从 BIRD 题目和 Corpus 生成检索题集（`eval retrieval-cases`），`evaluate_retrieval` 按 `method`（lexical / vector / hybrid）逐题调用 `retrieve_knowledge` 并按 GLOSSARY「评测」的口径计分（`eval retrieval --method`），vector 和 hybrid 整次运行共用一个 Embedder，报告写进运行记录。SQL 报告不接收检索分数，SQL 的延迟计算也不为此改公式。
+检索评测归 `evaluation/retrieval`，按需离线运行：`prepare_retrieval_cases` 从 BIRD 题目和 Corpus 生成检索题集（`eval retrieval-cases`），`evaluate_retrieval` 按 `method`（lexical / vector / hybrid）和 `rerank`（是否重排，默认关闭）用 `workers` 个线程（默认 1）对每道题调用一次 `retrieve_knowledge`，在主线程里按 GLOSSARY「评测」的口径计分（`eval retrieval --method ... [--rerank] [--workers N]`），vector 和 hybrid 整次运行共用一个 Embedder，开启重排时整次运行共用一个 Reranker，它们会被多个线程同时使用；报告按题集顺序写进运行记录。SQL 报告不接收检索分数，SQL 的延迟计算也不为此改公式。
 
-检索本体的 `retrieval.api` 导出 `retrieve_knowledge`（限定 Knowledge Scope，按 `method` 做 BM25、向量或 RRF 混合检索；向量和混合检索可传入 Embedder，没传时按配置创建）和它的请求、结果、Hit、错误与 ScopeFile 类型；KnowledgeScope 仍从 `knowledge.api` 取得。参数和 scope 文件解析位于 `entrypoints/commands/retrieval.py`，安全解析器在 `entrypoints/_arguments.py` 共用。统一检索命令还没有接进 CLI，不公开内部查询或会话辅助函数凑接口。
+检索本体的 `retrieval.api` 导出 `retrieve_knowledge`（限定 Knowledge Scope，按 `method` 做 BM25、向量或 RRF 混合检索；向量和混合检索可传入 Embedder，没传时按配置创建；请求开启 `rerank` 时用 Reranker 对候选重排，没传时按 `QUERYPILOT_RERANK_*` 创建）和它的请求、结果、Hit、错误与 ScopeFile 类型，以及 `Reranker` 接口、`RerankError`、硅基流动的 `SiliconFlowReranker` 和它的配置 `RerankSettings`；KnowledgeScope 仍从 `knowledge.api` 取得。参数和 scope 文件解析位于 `entrypoints/commands/retrieval.py`，安全解析器在 `entrypoints/_arguments.py` 共用。统一检索命令还没有接进 CLI，不公开内部查询或会话辅助函数凑接口。
 
 ## 一次任务的记录归谁管
 

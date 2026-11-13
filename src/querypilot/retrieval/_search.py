@@ -40,19 +40,20 @@ SEARCH_SQL = """
     ORDER BY score DESC,
             c.chunk_key COLLATE "C" ASC,
             c.chunk_id ASC
-    LIMIT %(top_k)s
+    LIMIT %(limit)s
 """
 
 
-def search_chunks(session: ReadSession, request: RetrievalRequest, terms: list[str]) -> list[dict]:
+def search_chunks(session: ReadSession, request: RetrievalRequest, terms: list[str], limit: int) -> list[dict]:
     """在 request 的 Knowledge Scope 和知识类型内做 BM25 搜索。
 
     参数：
         session：用 request.scope 打开的只读会话。
-        request：检索请求，提供范围、知识类型和 top_k。
+        request：检索请求，提供范围和知识类型。
         terms：已准备好的查询词；任意一个词命中即为候选（OR）。
+        limit：最多取多少行，由调用方决定，不读 request.top_k。
     返回：
-        最多 top_k 行，已按 分数降序 → chunk_key → chunk_id 排好序。每行的键与
+        最多 limit 行，已按 分数降序 → chunk_key → chunk_id 排好序。每行的键与
         RetrievalHit 除 rank 外的 10 个字段同名：chunk_id、chunk_key、knowledge_type、
         title、content、content_hash、schema_name、table_name、column_name、score。
         没有命中时返回 []。
@@ -64,7 +65,7 @@ def search_chunks(session: ReadSession, request: RetrievalRequest, terms: list[s
         "schema_version": scope.schema_version,
         "knowledge_types": request.knowledge_types,
         "terms": terms,
-        "top_k": request.top_k,
+        "limit": limit,
     })
 
 
@@ -103,7 +104,7 @@ VECTOR_SQL = """
     ORDER BY e.embedding <=> %(query_vector)s::public.vector ASC,
             c.chunk_key COLLATE "C" ASC,
             c.chunk_id ASC
-    LIMIT %(top_k)s
+    LIMIT %(limit)s
 """
 
 
@@ -120,16 +121,17 @@ def has_vectors(session: ReadSession, profile_id: str) -> bool:
 
 
 def vector_chunks(session: ReadSession, request: RetrievalRequest, profile_id: str,
-                  query_vector: list[float]) -> list[dict]:
-    """在 request 的 Knowledge Scope、知识类型和 profile_id 的向量里，按余弦距离找最近的 top_k 个 Chunk。
+                  query_vector: list[float], limit: int) -> list[dict]:
+    """在 request 的 Knowledge Scope、知识类型和 profile_id 的向量里，按余弦距离找最近的 limit 个 Chunk。
 
     参数：
         session：用 request.scope 打开的只读会话。
-        request：检索请求，提供范围、知识类型和 top_k。
+        request：检索请求，提供范围和知识类型。
         profile_id：查询向量所属的 Embedding Profile，只和同一 Profile 的向量比较。
         query_vector：查询的向量，维度必须与该 Profile 的向量相同。
+        limit：最多取多少行，由调用方决定，不读 request.top_k。
     返回：
-        最多 top_k 行，按 距离升序 → chunk_key → chunk_id 排好序；键与 search_chunks 相同，
+        最多 limit 行，按 距离升序 → chunk_key → chunk_id 排好序；键与 search_chunks 相同，
         score 为余弦相似度。
     """
     scope = request.scope
@@ -140,5 +142,5 @@ def vector_chunks(session: ReadSession, request: RetrievalRequest, profile_id: s
         "knowledge_types": request.knowledge_types,
         "profile_id": profile_id,
         "query_vector": "[" + ",".join(repr(float(value)) for value in query_vector) + "]",
-        "top_k": request.top_k,
+        "limit": limit,
     })

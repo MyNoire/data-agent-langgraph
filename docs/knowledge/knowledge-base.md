@@ -131,16 +131,16 @@ BIRD 的说明文件里有编码错误。比如 toxicology 的 `atom.element` �
 | `chunk_embeddings` | 每个 (Chunk, Embedding Profile) 一条向量；是从 Corpus 派生的索引，不属于 Corpus（[ADR 0002](../adr/0002-embeddings-outside-corpus.md)） |
 | `schema_migrations` | 迁移版本 |
 
-**迁移**：结构变化写成按编号执行的迁移文件。`001` 建知识表；`002` 建向量表，并删掉 `knowledge_chunks` 上预留的三个向量列（`embedding`、`embedding_profile_id`、`embedding_dimensions`）和对应的 CHECK。`store migrate` 在一个事务里按顺序补跑缺少的迁移，已执行的迁移版本和摘要必须与文件一致，否则拒绝。`store check` 核对 PostgreSQL 与 pgvector 版本、迁移已执行到最新且摘要一致，以及三个角色的实际权限；不逐列比对表结构，迁移文件不被改动由摘要保证，数据是否完整由 `store verify` 逐字段核对。
+**迁移**：结构变化写成按编号执行的迁移文件。`001` 建知识表；`002` 建向量表，并删掉 `knowledge_chunks` 上预留的三个向量列（`embedding`、`embedding_profile_id`、`embedding_dimensions`）和对应的 CHECK。`store migrate` 在一个事务里按顺序补跑缺少的迁移，已执行的迁移版本和摘要必须与文件一致，否则拒绝。`store check` 核对 PostgreSQL 与 pgvector 版本、迁移已执行到最新且摘要一致，以及 importer 和 reader 两个角色的实际权限（admin 是知识表的所有者，不在核对范围内）；不逐列比对表结构，迁移文件不被改动由摘要保证，数据是否完整由 `store verify` 逐字段核对。
 
 **三个角色，权限最小化**：admin 只负责建库和迁移；importer 只能 SELECT 和 INSERT（包括向量表），没有 UPDATE 和 DELETE，所以导入和写向量都只能新增、不能改写已有知识；reader 只能 SELECT。
 
 - **导入**：先重新校验快照，再在一个事务里写入。如果同一个快照已经导入过，就逐字段读回核对，一致就复用（`reused`），不一致就拒绝，绝不覆盖。如果没收到 COMMIT 的确认，结果记为 `unknown`，不会猜成功或失败。
 - **读取**：`open_read_scope` 开一个 `REPEATABLE READ READ ONLY` 事务，先核对 Scope 存在，之后的查询都在同一个一致的快照视图里进行。会话只暴露有上限的读取方法，不给连接和游标。
 
-## 7. 检索：BM25、向量与混合
+## 7. 检索：BM25、向量、混合与重排
 
-`retrieve_knowledge(request, settings, embedder=None)` 在一个 Scope 内做一次检索，返回按分数排好序的 Hit 列表。`request.method` 选择方法，默认 `lexical`：
+`retrieve_knowledge(request, settings, embedder=None, reranker=None)` 在一个 Scope 内做一次检索，返回按分数排好序的 Hit 列表。`request.method` 选择方法，默认 `lexical`：
 
 | method | 做什么 | `score` |
 |---|---|---|
@@ -150,11 +150,21 @@ BIRD 的说明文件里有编码错误。比如 toxicology 的 `atom.element` �
 
 三种方法在检索题集上的对比见[检索评测](../evaluation/retrieval-evaluation.md)第 3、4 节。不同方法的分数不能直接比较。嵌入查询失败报 `embedding_error`，不退回 BM25。没传 embedder 时按 `QUERYPILOT_EMBEDDING_*` 创建；批量调用时由调用方创建一个传入。k、权重和候选数用固定的默认值，不针对评测题调整（见 ADR 0001）。
 
+**重排**是检索之后独立的一步，由 `request.rerank` 开启，默认关闭，可以和三种 `method` 任意组合：
+
+1. 按 `method` 取前 20 个候选。这个数固定，与 `top_k` 无关；hybrid 仍是两路各 50 个融合后取前 20。
+2. 只读会话关闭之后，把查询原文和每个候选的 `content` 原文交给 Reranker 打分。
+3. 每个 Hit 的 `score` 换成相关性分数，按分数从高到低排，同分保持重排前的先后顺序，再取前 `top_k` 个。
+
+开启重排时 `top_k` 最大为 20，超过在构造请求时就被拒绝。没有候选时不调用 Reranker，直接返回 `no_match`。重排失败报 `rerank_error`，不退回未重排的结果。结果里的 `rerank_profile_id` 是这次请求用的 Rerank Profile，请求没有开启重排时为空；配置版本在方法的版本后面拼上 `r4b-rerank-v1`（如 `r4-hybrid-v1+r4b-rerank-v1`）。这两项表示请求按哪套配置执行，所以开启了重排但没有候选时也会写明；有没有实际打分，看 Hit 列表是否为空。重排只改变候选的顺序，候选里没有的 Chunk 它找不出来。
+
+Reranker 的接口是 `profile_id` 加 `rerank(query, documents)`。没传 reranker 时按 `QUERYPILOT_RERANK_BASE_URL / MODEL / API_KEY` 创建 `SiliconFlowReranker`（地址停在 `/v1`，代码拼上 `/rerank`）；批量调用时由调用方创建一个传入。它调用硅基流动的重排接口，Rerank Profile 为 `siliconflow:<模型>:content-v1:task-instruct-v1`：查询和候选文本原样发送，任务指令是 Embedding 查询用的同一句话。请求通过 OpenAI SDK 发出，超时 60 秒，连接失败、超时、限流和服务端错误由 SDK 自动重试 2 次；仍然失败，或返回的条数、`index`、分数不正常，都是 `rerank_error`。
+
 BM25 这一路的细节：
 
-- **索引**：使用 pg_search 0.26.4。`title`、`content` 和展示名用 `jieba` 分词，支持中文；`table_name`、`column_name`、`schema_name` 用 `simple` 分词。
+- **索引**：使用 pg_search 0.26.4。`title`、`content` 和展示名用 `jieba` 分词，支持中文；`table_name`、`column_name`、`schema_name` 用 `simple` 分词。BM25 的统计量覆盖整个索引，不按 Knowledge Scope 分开算，所以索引里有哪些 Corpus 会影响分数（见 [pg_search 维护](../operations/pg-search.md)）。
 - **查询处理**：ASCII 字母转成小写，除字母、数字、汉字以外的字符都当作分隔符；中文片段用 jieba 分词，并过滤掉表达用的词；最后保序去重。如果没有一个有效的词，返回 `input_error`；hybrid 也一样，不会退化成只用向量（向量检索对任何输入都会给出 top_k 个结果，会把输入错误变成看似正常的 Hit）。
-- **匹配和排序**：任意一个词命中任意一个字段就算候选（OR）。先按 Scope 和知识类型过滤，再按分数降序排列；分数相同时，按 `chunk_key`、`chunk_id` 排，保证结果稳定。`top_k` 默认 10，最大 50。
+- **匹配和排序**：任意一个词命中任意一个字段就算候选（OR）。先按 Scope 和知识类型过滤，再按分数降序排列；分数相同时，按 `chunk_key`、`chunk_id` 排，保证结果稳定。`top_k` 默认 10，最大 50（开启重排时最大 20）。
 - **只读**：使用 reader 角色和只读事务；检索结果里只带查询的 sha256，不带原文。
 
 **已知局限**：没有做英文词干化，`elements` 匹配不到 `element`。另外，同一张表的多个列块可能一起挤占排名前列。两者都在[检索评测](../evaluation/retrieval-evaluation.md)里量化过。
