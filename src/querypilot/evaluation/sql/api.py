@@ -6,6 +6,7 @@ from pathlib import Path
 from querypilot.runtime.api import Settings, sanitize_private, task_run
 from querypilot.sql_generation.api import PROMPT_VERSION, SqlGenerator, generate_sql
 from .models import CaseRecord, CaseOutcome, EvalReport, EvalSummary
+from ._cases import SqlCaseSetError, select_database_cases
 from ._reports import export_public, read_report
 
 
@@ -77,6 +78,6 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator |
 
 
 __all__ = [
-    "run_direct", "run_graph", "read_report", "export_public",
+    "run_direct", "run_graph", "read_report", "export_public", "select_database_cases", "SqlCaseSetError",
     "CaseRecord", "CaseOutcome", "EvalReport", "EvalSummary",
 ]

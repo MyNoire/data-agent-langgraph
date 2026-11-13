@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from querypilot.evaluation.api import DataPreparationError, select_database_cases
+from querypilot.evaluation.api import SqlCaseSetError, select_database_cases
 
 
 def _fixture(tmp_path):
@@ -84,7 +84,7 @@ def test_source_that_differs_from_the_frozen_manifest_is_refused(tmp_path):
     source.write_text(source.read_text(encoding="utf-8") + "\n", encoding="utf-8")
     output = tmp_path / "cases.json"
 
-    with pytest.raises(DataPreparationError) as error:
+    with pytest.raises(SqlCaseSetError) as error:
         select_database_cases(source, ["alpha", "beta"], frozen, output)
 
     assert error.value.error_type == "source_version_mismatch"
@@ -96,7 +96,7 @@ def test_database_without_any_question_is_refused(tmp_path):
     source, frozen = _fixture(tmp_path)
     output = tmp_path / "cases.json"
 
-    with pytest.raises(DataPreparationError) as error:
+    with pytest.raises(SqlCaseSetError) as error:
         select_database_cases(source, ["alpha", "betta"], frozen, output)
 
     assert error.value.error_type == "data_input_invalid"

@@ -23,13 +23,15 @@ GRAPH_VERSION = "single-v1"
 class _CaseRun:
     """一道题在工作线程里跑出来的原始结果，交给主线程比对和记录。
 
-    result 是图的执行结果，gold_rows 是金标准 SQL 的结果行；题内出错时 error 是那个异常，
+    token_usage 是生成这一步报告的两项用量（没走到生成时为 None）；result 是图的执行结果，
+    gold_rows 是金标准 SQL 的结果行；题内出错时 error 是那个异常，
     出错之前已经拿到的部分照常保留。started 和 finished 是这道题在工作线程里的起止时刻。
     """
 
     started: float
     finished: float = 0.0
     predicted_sql: str | None = None
+    token_usage: dict | None = None
     result: dict | None = None
     gold_rows: list | None = None
     error: Exception | None = None
@@ -50,6 +52,7 @@ def _run_case(graph, config, case: dict, settings: Settings, run_context) -> _Ca
                     continue
                 if "generated_sql" in delta:
                     run.predicted_sql = delta["generated_sql"]
+                    run.token_usage = {key: delta[key] for key in ("prompt_tokens", "completion_tokens")}
                 if "sql" in delta:
                     answer["sql"] = delta["sql"]
                 if "result" in delta:
@@ -143,6 +146,7 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator =
                                          graph_run_id=fields["graph_run_id"])
                 if run.predicted_sql is not None:
                     record["predicted_sql"] = run.predicted_sql
+                    record.update(run.token_usage)
                 if run.result is not None:
                     record["valid_sql"] = True
                     record["row_count"] = run.result["row_count"]

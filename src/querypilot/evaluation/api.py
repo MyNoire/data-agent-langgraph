@@ -2,7 +2,7 @@
 
 from .sql.api import (
     CaseRecord, CaseOutcome, EvalReport, EvalSummary,
-    run_direct, run_graph, read_report, export_public,
+    run_direct, run_graph, read_report, export_public, select_database_cases, SqlCaseSetError,
 )
 from .retrieval.api import (
     PreparedCases, RelevantColumn, RetrievalCase, RetrievalCaseError, RetrievalCaseSet, evaluate_retrieval,
@@ -15,12 +15,11 @@ from .datasets._import import import_bird
 from .datasets._selection import select_final100
 from .datasets._freeze import freeze_final100
 from .datasets._prepare import prepare_final100
-from .datasets._database_cases import select_database_cases
 
 __all__ = [
     "run_direct", "run_graph", "read_report", "export_public",
     "CaseRecord", "CaseOutcome", "EvalReport", "EvalSummary", "DataPreparationError",
     "fetch_bird", "import_bird", "select_final100", "freeze_final100", "prepare_final100",
-    "select_database_cases",
+    "select_database_cases", "SqlCaseSetError",
     "prepare_retrieval_cases", "evaluate_retrieval", "retrieval_run_config", "PreparedCases", "RetrievalCaseError", "RetrievalCase", "RetrievalCaseSet", "RelevantColumn",
 ]

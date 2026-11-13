@@ -76,6 +76,26 @@ def summarize_records(records: list[CaseRecord]) -> EvalSummary:
     }
 
 
+def summarize_token_usage(records: list[CaseRecord]) -> dict[str, dict]:
+    """汇总两项 token 用量，各自只对有值的题统计。
+
+    参数:
+        records: 逐题记录；没有调用模型的题没有用量字段，接口没返回用量的题用量为 None。
+    返回:
+        prompt_tokens 和 completion_tokens 各一份：有值的题数 count、总数 total、平均数 mean
+        和中位数 median；一道有值的题都没有时后三项为 None。
+    """
+    usage = {}
+    for key in ("prompt_tokens", "completion_tokens"):
+        values = [record[key] for record in records if record.get(key) is not None]
+        usage[key] = {
+            "count": len(values), "total": sum(values) if values else None,
+            "mean": statistics.fmean(values) if values else None,
+            "median": float(statistics.median(values)) if values else None,
+        }
+    return usage
+
+
 def build_report(*, cases_path: Path, case_bytes: bytes, settings: Settings,
                  provider: EvalProvider, run_id: str, records: list[CaseRecord],
                  evidence_mode: str | None, prompt_version: str | None,
@@ -93,7 +113,7 @@ def build_report(*, cases_path: Path, case_bytes: bytes, settings: Settings,
         prompt_version: 实际使用的 Prompt 版本；fixture 为 None。
         graph_version: 单图实现版本；其他模式为空。
     返回:
-        与现有原始评测 JSON 兼容的 EvalReport。没有任何预测时模型
+        与现有原始评测 JSON 兼容的 EvalReport，另含 token_usage（两项用量的汇总）。没有任何预测时模型
         准确率和有效 SQL 率为 None，避免把服务不可用算成 0%。
     """
     summary = summarize_records(records)
@@ -122,6 +142,7 @@ def build_report(*, cases_path: Path, case_bytes: bytes, settings: Settings,
         "execution_accuracy": summary["success"] / len(records) if rate_available else None,
         "p50_latency_ms": statistics.median(latencies) if latencies else None,
         "p95_latency_ms": latencies[min(len(latencies) - 1, int(len(latencies) * .95))] if latencies else None,
+        "token_usage": summarize_token_usage(records),
         "records": records,
     }
     if graph_version is not None:

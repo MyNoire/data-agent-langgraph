@@ -56,7 +56,13 @@ def run_direct(cases_path: Path, settings: Settings, *, provider="model", eviden
         record = new_case_record(index, case, evidence_used=bool(evidence))
         try:
             # fixture 是管线自检；只有 model 模式才实际调用 Text2SQL 模型。
-            prediction = case["SQL"] if provider == "fixture" else generator(case["question"], schema, evidence, settings)
+            if provider == "fixture":
+                prediction = case["SQL"]
+            else:
+                generated = generator(case["question"], schema, evidence, settings)
+                prediction = generated.sql
+                record["prompt_tokens"] = generated.prompt_tokens
+                record["completion_tokens"] = generated.completion_tokens
             record["predicted_sql"] = prediction
             actual = execute_sql(database_id, prediction, settings, run_context=run_context)
             record["valid_sql"] = True

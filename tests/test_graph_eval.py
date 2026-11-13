@@ -16,6 +16,7 @@ from querypilot.evaluation.api import run_graph
 from querypilot.runtime.api import task_run
 from querypilot.querying.api import query_result_row_count
 from querypilot.runtime.api import graph_logging
+from querypilot.sql_generation.api import GeneratedSql
 
 
 def test_graph_eval_records_match_mismatch_and_guard_failure(tmp_path, monkeypatch, capsys):
@@ -56,11 +57,11 @@ def test_graph_eval_records_match_mismatch_and_guard_failure(tmp_path, monkeypat
         返回:
             对应题目的 SELECT 或应被拒绝的 DELETE。
         """
-        return {
+        return GeneratedSql({
             "MATCH SECRET": "SELECT name FROM items ORDER BY id",
             "MISMATCH SECRET": "SELECT name FROM items WHERE id = 1",
             "REJECT SECRET": "DELETE FROM items",
-        }[question]
+        }[question])
 
     settings = Settings(data_dir=data_dir, artifacts_dir=tmp_path / "artifacts")
     result = run_graph(cases, settings, generator=fake_generator)
@@ -145,7 +146,7 @@ def test_graph_eval_cli_uses_graph_and_keeps_model_runs_separate(tmp_path, monke
         {"question_id": 7, "db_id": "sample", "question": "Count items",
          "SQL": "SELECT COUNT(*) FROM items"},
     ]), encoding="utf-8")
-    monkeypatch.setattr(evaluation_api, "generate_sql", lambda *_: "SELECT COUNT(*) FROM items")
+    monkeypatch.setattr(evaluation_api, "generate_sql", lambda *_: GeneratedSql("SELECT COUNT(*) FROM items"))
     monkeypatch.setattr(cli, "get_settings", lambda: Settings(data_dir=data_dir, model_name="test-model",
                                                             artifacts_dir=tmp_path / "artifacts"))
     monkeypatch.chdir(tmp_path)
@@ -204,7 +205,7 @@ def test_graph_eval_record_carries_the_frozen_flag_of_its_case(tmp_path):
         {"question_id": 3, "db_id": "sample", "question": "q3", "SQL": "SELECT id FROM items"},
     ])
 
-    result = run_graph(cases, settings, generator=lambda *_: "SELECT id FROM items")
+    result = run_graph(cases, settings, generator=lambda *_: GeneratedSql("SELECT id FROM items"))
 
     assert result["records"][0]["frozen"] is True
     assert result["records"][1]["frozen"] is False
@@ -229,7 +230,7 @@ def test_workers_cases_are_in_the_graph_at_the_same_time(tmp_path):
 
     def generator(*_):
         barrier.wait()
-        return MATCHING_SQL
+        return GeneratedSql(MATCHING_SQL)
 
     cases, settings = _sample_run(tmp_path, _cases(3))
 
@@ -266,7 +267,7 @@ def test_report_keeps_case_order_while_events_follow_completion_order(tmp_path):
     def generator(question, *_):
         if question == "q1":
             assert second_reported.wait(5)
-        return MATCHING_SQL
+        return GeneratedSql(MATCHING_SQL)
 
     cases, settings = _sample_run(tmp_path, _cases(2))
     with task_run("evaluation", settings, command="graph", private=True) as context:
@@ -290,7 +291,7 @@ def test_case_error_only_affects_its_own_case_when_cases_run_concurrently(tmp_pa
 
     def generator(question, *_):
         barrier.wait()
-        return "DELETE FROM items" if question == "q2" else MATCHING_SQL
+        return GeneratedSql("DELETE FROM items" if question == "q2" else MATCHING_SQL)
 
     cases, settings = _sample_run(tmp_path, _cases(3))
 
@@ -314,7 +315,7 @@ def test_main_thread_failure_starts_no_new_case(tmp_path):
         calls.append(question)
         if question == "q2":
             assert release_second.wait(5)
-        return MATCHING_SQL
+        return GeneratedSql(MATCHING_SQL)
 
     class BreakOnFirstFinishedCase(logging.Filter):
         def filter(self, record):
@@ -339,7 +340,7 @@ def test_report_is_the_same_with_one_worker_and_with_four(tmp_path):
     """
     def generator(question, *_):
         number = int(question[1:])
-        return {0: MATCHING_SQL, 1: "SELECT id FROM items WHERE id = 1", 2: "DELETE FROM items"}[number % 3]
+        return GeneratedSql({0: MATCHING_SQL, 1: "SELECT id FROM items WHERE id = 1", 2: "DELETE FROM items"}[number % 3])
 
     def comparable(result):
         records = [{key: value for key, value in record.items() if key not in {"latency_ms", "graph_run_id"}}
@@ -365,8 +366,8 @@ def test_workers_is_recorded_in_the_run_config_and_the_report_and_defaults_to_on
     """输入：同一份题集跑两次，一次不传 workers，一次 workers=3；输出：运行配置和报告分别记下 1 和 3。"""
     cases, settings = _sample_run(tmp_path, _cases(2))
 
-    default = run_graph(cases, settings, generator=lambda *_: MATCHING_SQL)
-    three = run_graph(cases, settings, generator=lambda *_: MATCHING_SQL, workers=3)
+    default = run_graph(cases, settings, generator=lambda *_: GeneratedSql(MATCHING_SQL))
+    three = run_graph(cases, settings, generator=lambda *_: GeneratedSql(MATCHING_SQL), workers=3)
 
     assert default["workers"] == 1 and three["workers"] == 3
     assert _run_config(settings, default["run_id"])["workers"] == 1
@@ -385,7 +386,7 @@ def test_cli_workers_flag_reaches_the_runner_and_the_run_config(tmp_path, monkey
 
     def generator(*_):
         barrier.wait()
-        return MATCHING_SQL
+        return GeneratedSql(MATCHING_SQL)
 
     cases, settings = _sample_run(tmp_path, _cases(2))
     monkeypatch.setattr(evaluation_api, "generate_sql", generator)
@@ -411,3 +412,26 @@ def test_cli_rejects_workers_below_one_before_any_run_is_recorded(tmp_path, monk
         cli.main(["eval", "graph", "--cases", str(cases), "--workers", workers])
 
     assert not (tmp_path / "artifacts").exists()
+
+
+def test_graph_eval_records_token_usage_per_case_and_in_total(tmp_path):
+    """输入：3 道题，假生成器返回的用量依次是 (100, 10)、(200, 30)、没有用量。
+
+    输出：逐题记录带上各自的两项用量（没有用量的为空）；报告的 token_usage 只对有值的题统计
+    题数、总数、平均数和中位数。
+    """
+    usage = {"q1": (100, 10), "q2": (200, 30), "q3": (None, None)}
+
+    def generator(question, *_):
+        return GeneratedSql(MATCHING_SQL, *usage[question])
+
+    cases, settings = _sample_run(tmp_path, _cases(3))
+
+    result = run_graph(cases, settings, generator=generator)
+
+    assert [(record["prompt_tokens"], record["completion_tokens"]) for record in result["records"]] == [
+        (100, 10), (200, 30), (None, None)]
+    assert result["token_usage"] == {
+        "prompt_tokens": {"count": 2, "total": 300, "mean": 150.0, "median": 150.0},
+        "completion_tokens": {"count": 2, "total": 40, "mean": 20.0, "median": 20.0},
+    }

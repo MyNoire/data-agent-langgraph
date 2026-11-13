@@ -25,6 +25,8 @@ class CaseRecord(TypedDict):
     graph_run_id: NotRequired[str]
     row_count: NotRequired[int]
     frozen: NotRequired[bool]
+    prompt_tokens: NotRequired[int | None]
+    completion_tokens: NotRequired[int | None]
 
 
 class EvalSummary(TypedDict):
@@ -62,6 +64,7 @@ class EvalReport(TypedDict):
     p50_latency_ms: float | None
     p95_latency_ms: float | None
     records: list[CaseRecord]
+    token_usage: NotRequired[dict[str, dict]]
     graph_version: NotRequired[str]
     workers: NotRequired[int]
 

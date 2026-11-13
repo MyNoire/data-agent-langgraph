@@ -35,7 +35,7 @@ tests/architecture/test_module_boundaries.py 检查方向、跨模块私有访�
 | --- | --- | --- |
 | querying.api | ask(database_id, question, settings, *, generator=..., run_context=None) → 原 sql/result | 创建查询记录；模型和数据库错误保留；没有检索、修复、重试 |
 | querying.api | build_query_graph(settings, *, generator=..., run_context=None) → 编译图 | 编译不建运行目录；手动执行时提供任务上下文 |
-| sql_generation.api | direct_prompt → 文本；generate_sql(question, schema, evidence, settings) → SQL | 前者纯计算，后者请求模型；direct-v2、超时与客户端参数保持 |
+| sql_generation.api | direct_prompt → 文本；generate_sql(question, schema, evidence, settings) → GeneratedSql（SQL 和接口报告的 token 用量） | 前者纯计算，后者请求模型；direct-v2、超时与客户端参数保持 |
 | databases.api | DatabaseRegistry(data_dir).list/register/get → 登记映射或路径 | 注册写索引；不接受 data_dir 以外的源 |
 | databases.api | get_schema(database_id, settings) → 表名到列名；format_schema → 文本 | 自行定位；未知 ID 抛 RegistryError；结构读取不建任务 |
 | databases.api | validate_sql → 受限 SQL；execute_sql(database_id, sql, settings, *, run_context=None) → QueryResult | 自行定位、检查和只读执行；保留行数、时间、字节限制 |
@@ -126,7 +126,7 @@ PG 的真实事务和权限必须在专用测试库验证；替身只能证明�
 
 ## 评测与报告
 
-querypilot.evaluation.api 提供 run_direct/run_graph，返回原 EvalReport。fixture 把金标准 SQL 交回执行器，只检查评测管线，分数不能当模型能力。direct 在查库或读取结构失败时中止批次；进入逐题处理后，生成服务和执行错误都会记录后继续。graph 的查库也在逐题错误处理内，因此未知库会记错后继续下一题。两者保留原来的差异。
+querypilot.evaluation.api 提供 run_direct/run_graph，返回原 EvalReport；run_graph 可用 workers 同时跑多道题，报告仍按题集顺序。select_database_cases 从 BIRD 题目文件生成指定数据库的 SQL 题集和 manifest。fixture 把金标准 SQL 交回执行器，只检查评测管线，分数不能当模型能力。direct 在查库或读取结构失败时中止批次；进入逐题处理后，生成服务和执行错误都会记录后继续。graph 的查库也在逐题错误处理内，因此未知库会记错后继续下一题。两者保留原来的差异。
 
 这些完整操作只在 `evaluation/sql/api.py` 实现，根 `evaluation.api` 普通重导出同一个函数和类型，不再包一层转发。调用方原有导入不变；已有 generator 参数继续用于固定生成器注入。SQL 批次沿用 operation=evaluation，实际最外层配置标明 mode=sql；完整无预测报告仍是完成批次，不因搬迁改成命令失败。
 
