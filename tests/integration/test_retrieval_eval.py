@@ -1,12 +1,11 @@
 """检索评测端到端：真实 PG 和真实 retrieve_knowledge 经 evaluate_retrieval 跑出报告。
 
-复用 test_knowledge_retrieval 的 retrieval_source：导入本次唯一的原创 Corpus，结束后按身份精确删除。
+复用 test_knowledge_retrieval 的 retrieval_source：往专用测试库导入一份原创 Corpus。
 """
 
 from querypilot.evaluation.api import RetrievalCase, RetrievalCaseSet, evaluate_retrieval
 from querypilot.retrieval.api import retrieve_knowledge
 from querypilot.runtime.api import Settings
-from _bm25_fixtures import live_bm25_settings, unchanged_live_knowledge  # noqa: F401  （pytest 夹具）
 from test_knowledge_retrieval import retrieval_source  # noqa: F401  （pytest 夹具）
 
 

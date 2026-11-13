@@ -29,4 +29,4 @@
 - 约定的一个顺序：主线程对一道完成的题先计分、记录、写事件，然后才提交下一道。测试"主线程失败后没有新题开始"是在写事件这一步让主线程出错的，所以它也钉住了这个顺序。
 - 实现与审查（2026-11-13）：用户写了 `evaluate_retrieval` 的主线程派发和 `_retrieve_case`。Claude 审查没有发现缺陷，只把一行超长的代码折了行，并更新了 docstring 和检索评测文档。`tests/test_retrieval_eval_runner.py` 23 个测试连跑 3 次全部通过；全量单元测试 474 通过、1 跳过、1 失败（`test_console_and_module_share_help`，与本功能无关的已知失败）；`tests/integration/test_retrieval_eval.py --require-postgres` 通过。
 - lexical 对比（2026-11-13，不调用收费服务）：`--workers 1` 23.8 秒，`--workers 8` 3.8 秒，逐题结果除 `elapsed_ms` 外完全相同；`workers=1` 的事件按题集顺序。hybrid + 重排没有重跑。
-- 对比时发现的另一个问题（不属于本功能，未修）：当天的 lexical 结果和前一天的有 14 题名次不同。用提交里的旧运行器当天再跑一次，结果和新实现相同，所以不是返工引起的。原因是集成测试往真实知识库导入并删除临时 Corpus，改变了 BM25 索引的统计量：单跑一次 `tests/integration/test_retrieval_eval.py`，前后两次 lexical 评测就有 9 题不同。已写进检索评测文档第 3 节的"已知问题"，怎么修由用户决定。
+- 对比时发现的另一个问题（不属于本功能，未修）：当天的 lexical 结果和前一天的有 14 题名次不同。用提交里的旧运行器当天再跑一次，结果和新实现相同，所以不是返工引起的。原因是集成测试往真实知识库导入并删除临时 Corpus，改变了 BM25 索引的统计量：单跑一次 `tests/integration/test_retrieval_eval.py`，前后两次 lexical 评测就有 9 题不同。用户决定当天修：这些测试改到专用测试库上跑，正式库执行了一次 `VACUUM`；原因、验证和干净索引上的 lexical 数字写在检索评测文档第 3 节"BM25 分数受索引里残留行的影响"。

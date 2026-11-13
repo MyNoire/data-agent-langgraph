@@ -162,7 +162,7 @@ Reranker 的接口是 `profile_id` 加 `rerank(query, documents)`。没传 reran
 
 BM25 这一路的细节：
 
-- **索引**：使用 pg_search 0.26.4。`title`、`content` 和展示名用 `jieba` 分词，支持中文；`table_name`、`column_name`、`schema_name` 用 `simple` 分词。
+- **索引**：使用 pg_search 0.26.4。`title`、`content` 和展示名用 `jieba` 分词，支持中文；`table_name`、`column_name`、`schema_name` 用 `simple` 分词。BM25 的统计量覆盖整个索引，不按 Knowledge Scope 分开算，所以索引里有哪些 Corpus 会影响分数（见 [pg_search 维护](../operations/pg-search.md)）。
 - **查询处理**：ASCII 字母转成小写，除字母、数字、汉字以外的字符都当作分隔符；中文片段用 jieba 分词，并过滤掉表达用的词；最后保序去重。如果没有一个有效的词，返回 `input_error`；hybrid 也一样，不会退化成只用向量（向量检索对任何输入都会给出 top_k 个结果，会把输入错误变成看似正常的 Hit）。
 - **匹配和排序**：任意一个词命中任意一个字段就算候选（OR）。先按 Scope 和知识类型过滤，再按分数降序排列；分数相同时，按 `chunk_key`、`chunk_id` 排，保证结果稳定。`top_k` 默认 10，最大 50（开启重排时最大 20）。
 - **只读**：使用 reader 角色和只读事务；检索结果里只带查询的 sha256，不带原文。

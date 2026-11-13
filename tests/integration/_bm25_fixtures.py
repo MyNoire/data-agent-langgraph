@@ -77,7 +77,14 @@ def knowledge_state(settings):
             i.indisvalid,i.indisready FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid
             JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='querypilot_kb'
             ORDER BY c.relname""").fetchall()
-    return {"tables": tables, "roles": roles, "acl": acl, "constraints": constraints, "indexes": indexes}
+        # BM25 的分数由整个索引的统计量决定，已删除但还没被 VACUUM 清掉的行仍然计入。
+        # 所以"行没变"不够，还要核对索引的段：往知识表里写过再删掉，这里也会不同。
+        segments = None
+        if conn.execute("SELECT to_regclass('querypilot_kb.knowledge_chunks_bm25_idx') AS oid").fetchone()["oid"]:
+            segments = conn.execute("""SELECT segno,num_docs,num_deleted
+                FROM paradedb.index_info('querypilot_kb.knowledge_chunks_bm25_idx') ORDER BY segno""").fetchall()
+    return {"tables": tables, "roles": roles, "acl": acl, "constraints": constraints, "indexes": indexes,
+            "bm25_segments": segments}
 
 
 @pytest.fixture(scope="module")

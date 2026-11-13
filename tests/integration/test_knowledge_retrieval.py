@@ -1,7 +1,7 @@
 """R3 检索验收：经 retrieve_knowledge 验证 BM25 行为，经知识读取层验证只读会话。
 
-本文件不调用旧 pg_database；所有写入仅限同库本次唯一 corpus。
-当前可立即执行的设施组在 test_bm25_search_setup.py。
+跑在专用测试库 querypilot_knowledge_test 上（带 BM25 索引），不读写正式知识库。
+针对正式库索引设施的检查在 test_bm25_search_setup.py。
 """
 
 import json
@@ -13,15 +13,14 @@ from uuid import uuid4
 
 from querypilot.knowledge.api import KnowledgeReadError, KnowledgeScope, ReadLimits, open_read_scope
 from querypilot.retrieval.api import KnowledgeRetrievalError, RetrievalRequest, retrieve_knowledge
-from _bm25_fixtures import live_bm25_settings, role_connection, unchanged_live_knowledge
+from _bm25_fixtures import role_connection
 from _embedding_fakes import ErrorEmbedder, FakeEmbedder
 from _rerank_fakes import ErrorReranker, FakeReranker
 
 
 @pytest.fixture
-def retrieval_source(live_bm25_settings, r3_corpus_factory, unchanged_live_knowledge):
-    """导入本次唯一原创 corpus；结束按身份精确删除，不改已有知识或权限。"""
-    from psycopg import sql
+def retrieval_source(pg_search_database, r3_corpus_factory):
+    """往专用测试库导入一份原创 Corpus，返回 (存储配置, Corpus, Knowledge Scope)；夹具负责前后清理。"""
     from querypilot.knowledge.api import import_corpus, load_corpus
 
     database_id = "r3probe" + uuid4().hex
@@ -29,31 +28,8 @@ def retrieval_source(live_bm25_settings, r3_corpus_factory, unchanged_live_knowl
     source = load_corpus(path)
     scope = KnowledgeScope(corpus_id=source.manifest.corpus_id, database_id=database_id,
                            schema_version=source.manifest.identity_descriptor.schema_versions[database_id])
-    with role_connection(live_bm25_settings, "admin") as conn:
-        assert not conn.execute("SELECT 1 FROM querypilot_kb.knowledge_corpora WHERE corpus_id=%s",
-                                (scope.corpus_id,)).fetchone()
-    try:
-        import_corpus(path, live_bm25_settings)
-        yield live_bm25_settings, source, scope
-    finally:
-        # 先证明是本次生成且此前不存在的身份，再逐表按完整 scope 和记录 ID 清理。
-        with role_connection(live_bm25_settings, "admin") as conn, conn.transaction():
-            # 向量表对 Chunk 的外键是 RESTRICT，先删本次 Chunk 的向量。
-            conn.execute("DELETE FROM querypilot_kb.chunk_embeddings WHERE chunk_id=ANY(%s::uuid[])",
-                         ([str(chunk.chunk_id) for chunk in source.chunks],))
-            for table, key, records in (
-                ("knowledge_chunks", "chunk_id", source.chunks),
-                ("schema_relations", "relation_id", source.relations),
-                ("knowledge_documents", "document_id", source.documents),
-            ):
-                ids = [str(getattr(record, key)) for record in records]
-                conn.execute(sql.SQL("DELETE FROM {} WHERE corpus_id=%s AND database_id=%s "
-                                     "AND schema_version=%s AND {}=ANY(%s::uuid[])").format(
-                    sql.Identifier("querypilot_kb", table), sql.Identifier(key)),
-                    (scope.corpus_id, scope.database_id, scope.schema_version, ids))
-            conn.execute("DELETE FROM querypilot_kb.knowledge_corpora WHERE corpus_id=%s "
-                         "AND database_id=%s AND schema_version=%s",
-                         (scope.corpus_id, scope.database_id, scope.schema_version))
+    import_corpus(path, pg_search_database)
+    return pg_search_database, source, scope
 
 
 def test_scoped_read_uses_reader_and_one_readonly_view(retrieval_source):
