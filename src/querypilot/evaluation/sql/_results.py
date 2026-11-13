@@ -39,19 +39,21 @@ def new_case_record(index: int, case: Mapping[str, Any], *, evidence_used: bool,
     return record
 
 
-def finish_case_record(record: CaseRecord, started: float) -> CaseRecord:
+def finish_case_record(record: CaseRecord, started: float, *, finished: float | None = None) -> CaseRecord:
     """根据错误或执行匹配结果给一题定类并计算耗时。
 
     参数:
         record: 已写入预测、执行结果或错误的当前记录。
         started: 本题开始时的 ``time.monotonic()`` 值。
+        finished: 本题结束时的 ``time.monotonic()`` 值；不传时取调用这一刻。
     返回:
         原记录对象，新增 outcome 与 latency_ms 两个字段。
     """
     record["outcome"] = (
         "error" if "error" in record else "matched" if record["execution_match"] else "mismatched"
     )
-    record["latency_ms"] = round((time.monotonic() - started) * 1000, 3)
+    ended = time.monotonic() if finished is None else finished
+    record["latency_ms"] = round((ended - started) * 1000, 3)
     return record
 
 

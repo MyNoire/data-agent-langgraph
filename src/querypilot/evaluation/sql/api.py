@@ -9,10 +9,12 @@ from .models import CaseRecord, CaseOutcome, EvalReport, EvalSummary
 from ._reports import export_public, read_report
 
 
-def _configuration(cases_path: Path, settings: Settings, provider: str, evidence_mode: str) -> dict:
+def _configuration(cases_path: Path, settings: Settings, provider: str, evidence_mode: str,
+                   workers: int | None = None) -> dict:
     """提取批次安全配置与来源摘要。
 
-    参数：cases_path 为题集路径，settings 为运行配置，其余参数为评测模式。
+    参数：cases_path 为题集路径，settings 为运行配置，provider 和 evidence_mode 为评测模式，
+        workers 为图评测同时在跑的题数（direct 评测不传）。
     返回：不含题目、SQL 或完整设置的配置字典；读取题集计算摘要，I/O 错误原样传播。
     """
     return {"mode": "sql", "dataset_sha256": sha256(cases_path.read_bytes()).hexdigest(), "provider": provider,
@@ -23,7 +25,8 @@ def _configuration(cases_path: Path, settings: Settings, provider: str, evidence
             "model_base_url": settings.model_base_url if provider != "fixture" else None,
             "model_temperature": settings.model_temperature if provider != "fixture" else None,
             "max_rows": settings.max_rows, "query_timeout_ms": settings.query_timeout_ms,
-            "max_response_bytes": settings.max_response_bytes}
+            "max_response_bytes": settings.max_response_bytes,
+            **({} if workers is None else {"workers": workers})}
 
 
 def run_direct(cases_path: Path, settings: Settings, *, provider: str = "model",
@@ -52,19 +55,20 @@ def run_direct(cases_path: Path, settings: Settings, *, provider: str = "model",
 
 
 def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator | None = None,
-              run_context=None) -> EvalReport:
+              workers: int = 1, run_context=None) -> EvalReport:
     """完整运行单图评测并保存私有报告。
 
-    参数：题集、配置、固定或真实生成器及可选外层上下文。
-    返回：原 EvalReport；逐题错误继续、无预测时比率为 None；不增加检索或修复。
+    参数：题集、配置、固定或真实生成器、同时在跑的题数 workers（默认 1）及可选外层上下文。
+    返回：原 EvalReport，records 按题集顺序；逐题错误继续、无预测时比率为 None；不增加检索或修复。
     副作用：读取 SQLite，可调用模型；一个批次一份运行，子题不另建根。
     """
     from ._graph import run_graph as perform
 
     owned = run_context is None
     with task_run("evaluation", settings, run_context=run_context, command="graph", private=True,
-                  config=_configuration(cases_path, settings, "graph", "none")) as context:
-        result = perform(cases_path, settings, generator=generator or generate_sql, run_context=context)
+                  config=_configuration(cases_path, settings, "graph", "none", workers)) as context:
+        result = perform(cases_path, settings, generator=generator or generate_sql, workers=workers,
+                         run_context=context)
         secrets = (settings.model_api_key,) if settings.model_api_key != "local" else ()
         result = sanitize_private(result, secrets=secrets)
         if owned:

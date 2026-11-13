@@ -10,7 +10,7 @@ from querypilot.runtime.api import publish_json, read_run_result
 TOP_LEVEL = (
     "dataset_sha256", "provider", "status", "run_id", "summary", "evidence_mode", "model",
     "model_temperature", "prompt_version", "graph_version", "count", "max_rows", "query_timeout_ms",
-    "max_response_bytes", "valid_sql_rate", "execution_accuracy", "p50_latency_ms", "p95_latency_ms",
+    "max_response_bytes", "valid_sql_rate", "execution_accuracy", "p50_latency_ms", "p95_latency_ms", "workers",
 )
 RECORD = (
     "index", "question_id", "database_id", "graph_run_id", "evidence_used", "predicted_sql",

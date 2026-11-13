@@ -42,6 +42,8 @@ def create_parser() -> argparse.ArgumentParser:
         if name == "direct":
             command.add_argument("--provider", choices=("model", "fixture"), default="model")
             command.add_argument("--evidence-mode", choices=("none", "oracle"), default="none")
+        else:
+            command.add_argument("--workers", type=_positive_int, default=1, help="同时在跑的题数，至少为 1，默认 1")
         command.set_defaults(command=f"eval.{name}")
     retrieval = _artifacts(eval_actions.add_parser("retrieval", help="对检索题集跑一次检索评测"))
     retrieval.add_argument("--cases", type=Path, required=True)

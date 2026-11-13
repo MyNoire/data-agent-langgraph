@@ -63,4 +63,5 @@ class EvalReport(TypedDict):
     p95_latency_ms: float | None
     records: list[CaseRecord]
     graph_version: NotRequired[str]
+    workers: NotRequired[int]
 
