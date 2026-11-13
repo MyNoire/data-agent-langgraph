@@ -75,6 +75,10 @@ _避免_：evidence、context（单独使用时）
 提供给 SQL 生成的数据库结构文本。
 _避免_：用 schema 指代 Catalog
 
+**Context Source（上下文来源）**：
+SQL 生成所用的 Schema 取自哪里：裸表列名、全部建表语句、全量知识，或检索得到的 Retrieval Context。对比不同的 Context Source 是 SQL 评测的一部分。
+_避免_：模式、上下文模式
+
 ## 评测
 
 **Relevant Set（相关集合）**：
