@@ -1,12 +1,11 @@
 """检索评测运行器：用线程池逐题检索，交给计分规则，组装报告。"""
 
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from hashlib import sha256
 from math import ceil
 from pathlib import Path
 from statistics import median
-from threading import Event
 
 from querypilot.knowledge.api import EmbeddingSettings, KnowledgeStorageSettings, OpenAIEmbedder
 from querypilot.retrieval.api import (
@@ -61,22 +60,14 @@ def _summarize(records: list[dict]) -> dict:
     }
 
 
-def _retrieve_case(retriever: Retriever, request: RetrievalRequest,
-                   stop: Event) -> tuple[str, RetrievalResult | None]:
-    """在工作线程里检索一道题，返回 (outcome, 检索结果)。
-
-    outcome 为 ok 时带检索结果；为 input_error（查询没有有效词）或 skipped（停止标志已置位，
-    没有调用检索器）时结果为空。其他错误先置停止标志再抛出，这样别的线程不会再开始新题。
-    """
-    if stop.is_set():
-        return "skipped", None
+def _retrieve_case(retriever: Retriever, request: RetrievalRequest) -> RetrievalResult | None:
+    """在工作线程里检索一道题。查询没有有效词（input_error）时返回 None，其他错误原样抛出。"""
     try:
-        return "ok", retriever(request)
-    except Exception as exc:
-        if isinstance(exc, KnowledgeRetrievalError) and exc.error_type == "input_error":
-            return "input_error", None
-        stop.set()
-        raise
+        return retriever(request)
+    except KnowledgeRetrievalError as exc:
+        if exc.error_type != "input_error":
+            raise
+        return None
 
 
 def evaluate_retrieval(cases_file: Path, settings: Settings, *, method: RetrievalMethod = "lexical",
@@ -103,13 +94,14 @@ def evaluate_retrieval(cases_file: Path, settings: Settings, *, method: Retrieva
         records 和 config 里的检索配置列表按题集顺序排列，与哪题先检索完无关。
         报告不含问题原文、SQL 和 Hit 正文。
     异常：
-        查询没有有效词（input_error）只记在那一题上。其他错误中止整批并原样抛出：出错之后不再开始
-        新题，正在检索中的题跑完后结果丢弃，不写 result.json。调用方的线程中途退出（包括 Ctrl+C）
-        时置停止标志，但刚空出来的工作线程可能已经开始了下一题。
+        查询没有有效词（input_error）只记在那一题上。其他错误中止整批并原样抛出，不写 result.json。
+        只有调用方的线程提交题目，同时在检索中的题不超过 workers 道，处理完一道才提交下一道；
+        所以它带着异常离开之后（某题的错误、它自己出错、Ctrl+C）不会再有新题开始，已经在检索中
+        的题（最多 workers 道）跑完后结果丢弃。
     副作用：
         每题至多调用一次检索器；每题检索完成时写一条 eval_case_finished 事件（按完成顺序，
-        completed_cases 为已完成题数，case_index 为题集里的位置；在开始收集之前就已完成的题，
-        事件之间的顺序不定）；写出运行记录和 result.json。
+        completed_cases 为已完成题数，case_index 为题集里的位置；同一时刻完成的几道题之间
+        顺序不定，workers=1 时就是题集顺序）；写出运行记录和 result.json。
     """
     raw = cases_file.read_bytes()
     case_set = RetrievalCaseSet.model_validate_json(raw)
@@ -120,47 +112,55 @@ def evaluate_retrieval(cases_file: Path, settings: Settings, *, method: Retrieva
                   config=retrieval_run_config(cases_file, method, rerank, workers)) as context:
         context.event("eval_started", total_cases=len(case_set.cases))
         cases = case_set.cases
-        stop = Event()
-        # 每题一个位置，检索完成后放回自己的位置，报告的顺序就与完成顺序无关。
-        finished: list[tuple[str, RetrievalResult | None] | None] = [None] * len(cases)
+        # 每题一个位置：哪题先检索完都放回自己的位置，报告的顺序就与完成顺序无关
+        records: list[dict | None] = [None] * len(cases)
+        case_versions: list[dict | None] = [None] * len(cases)
+        waiting = iter(enumerate(cases))
+        in_flight = {}
+        completed = 0
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            try:
-                positions = {}
-                for position, case in enumerate(cases):
+            def submit_next() -> None:
+                """还有没提交的题就提交一道；主线程是唯一提交任务的地方。"""
+                queued = next(waiting, None)
+                if queued is not None:
+                    position, case = queued
                     request = RetrievalRequest(query=case.question, scope=case.scope, method=method, rerank=rerank,
                                                top_k=TOP_K)
-                    positions[pool.submit(_retrieve_case, retriever, request, stop)] = position
-                completed = 0
-                for future in as_completed(positions):
-                    outcome, result = future.result()
-                    if outcome == "skipped":
-                        continue
-                    position = positions[future]
-                    finished[position] = (outcome, result)
-                    completed += 1
+                    in_flight[pool.submit(_retrieve_case, retriever, request)] = position
+
+            for _ in range(workers):
+                submit_next()
+            while in_flight:
+                done, _ = wait(in_flight, return_when=FIRST_COMPLETED)
+                # 先把这一批完成的结果都取出来：有致命错误就在这里原样抛出，这一轮不再提交新题。
+                finished = [(in_flight.pop(future), future.result()) for future in done]
+                for position, result in finished:
                     case = cases[position]
+                    outcome = "ok" if result is not None else "input_error"
+                    if result is not None:
+                        case_versions[position] = {
+                            "method": result.method, "embedding_profile_id": result.embedding_profile_id,
+                            "rerank_profile_id": result.rerank_profile_id,
+                            "retrieval_config_version": result.retrieval_config_version
+                        }
+                    # input_error 的题按空的 Hit 列表计分，仍计入分母。耗时取检索结果自己测的值，不含评测的开销
+                    elapsed_ms = result.elapsed_ms if result is not None else None
+                    records[position] = {
+                        "question_id": case.question_id, "db_id": case.db_id, "difficulty": case.difficulty,
+                        "frozen": case.frozen, "outcome": outcome, "elapsed_ms": elapsed_ms,
+                        "scores": _scoring.score_case(case.relevant_tables, case.relevant_columns,
+                                                      result.hits if result is not None else []),
+                    }
+                    completed += 1
                     context.event("eval_case_finished", question_id=case.question_id, case_index=position + 1,
                                   completed_cases=completed, total_cases=len(cases), database_id=case.db_id,
-                                  elapsed_ms=result.elapsed_ms if result else None, status=outcome)
-            finally:
-                # 无论正常结束、出错还是 Ctrl+C，都让还没开始的题跳过；线程池退出时只需等在途的题。
-                stop.set()
-        records, versions = [], []
-        for case, (outcome, result) in zip(cases, finished):
-            if result is not None:
-                version = {"method": result.method, "embedding_profile_id": result.embedding_profile_id,
-                           "rerank_profile_id": result.rerank_profile_id,
-                           "retrieval_config_version": result.retrieval_config_version}
-                if version not in versions:
-                    versions.append(version)
-            # input_error 的题按空的 Hit 列表计分，仍计入分母。耗时取检索结果自己测的值，不含评测的开销。
-            records.append({
-                "question_id": case.question_id, "db_id": case.db_id, "difficulty": case.difficulty,
-                "frozen": case.frozen, "outcome": outcome,
-                "elapsed_ms": result.elapsed_ms if result else None,
-                "scores": _scoring.score_case(case.relevant_tables, case.relevant_columns,
-                                              result.hits if result else []),
-            })
+                                  elapsed_ms=elapsed_ms, status=outcome)
+                    # 这道题处理完了才提交下一道：主线程在这之前出错或被中断，就不会再有新题开始。
+                    submit_next()
+        versions = []
+        for version in case_versions:
+            if version is not None and version not in versions:
+                versions.append(version)
         report = {
             "report_version": "querypilot-retrieval-eval-v1",
             "config": {

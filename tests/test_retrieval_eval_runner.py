@@ -274,63 +274,87 @@ def test_input_error_only_affects_its_own_case_when_cases_run_concurrently(tmp_p
         (1, "ok"), (2, "input_error"), (3, "ok")]
 
 
-def test_fatal_error_lets_the_in_flight_case_finish_then_raises_the_original_error(tmp_path):
-    """输入：两道题同时在检索中（关卡保证），workers=2；第 1 题重排失败，第 2 题在它失败之后才返回。
+def test_fatal_error_starts_no_new_case_and_lets_the_in_flight_case_finish(tmp_path):
+    """输入：workers=2，4 道题；前两题同时在检索中（关卡保证），第 1 题重排失败。
 
-    输出：第 2 题跑完了，但结果被丢弃；抛出的是第 1 题的原始错误，运行记为 failed，没有 result.json。
+    第 2 题要等"运行第 1 题的那个工作线程退出"才返回。线程池只在关闭时才让空闲的工作线程退出，
+    所以第 2 题一定是在评测因为这次失败停止提交之后才完成的。
+    输出：第 3、4 题没有被调用；第 2 题跑完了，结果被丢弃；抛出的是第 1 题的原始错误，
+    运行记为 failed，没有 result.json。
     """
     barrier = threading.Barrier(2, timeout=5)
-    first_failing = threading.Event()
-    returned = []
+    failing_threads, calls, returned = [], [], []
 
     def retriever(request):
-        barrier.wait()
+        calls.append(request.query)
         if request.query == "bad":
-            first_failing.set()
+            failing_threads.append(threading.current_thread())
+            barrier.wait()
             raise KnowledgeRetrievalError("rerank_error")
-        assert first_failing.wait(5)
-        returned.append(request.query)
+        if request.query == "slow":
+            barrier.wait()
+            failing_threads[0].join(5)
+            assert not failing_threads[0].is_alive()
+            returned.append(request.query)
         return _result(request, [_hit(1)])
 
-    cases = [_case(1, question="bad"), _case(2, question="good")]
+    cases = [_case(1, question="bad"), _case(2, question="slow"), _case(3, question="q3"), _case(4, question="q4")]
     with pytest.raises(KnowledgeRetrievalError) as caught:
         evaluate_retrieval(_cases_file(tmp_path, cases), _settings(tmp_path), workers=2, retriever=retriever)
 
-    assert caught.value.error_type == "rerank_error" and returned == ["good"]
+    assert sorted(calls) == ["bad", "slow"] and returned == ["slow"]
+    assert caught.value.error_type == "rerank_error"
     runs = list((tmp_path / "artifacts").glob("runs/evaluation/*/*"))
     record = json.loads((runs[0] / "run.json").read_text(encoding="utf-8"))
     assert (record["status"], record["error_type"]) == ("failed", "rerank_error")
     assert not (runs[0] / "result.json").exists()
 
 
-def test_main_thread_failure_keeps_queued_cases_from_starting(tmp_path):
-    """输入：workers=1，5 道题；主线程在写第 1 题的完成事件时出错。
+def test_main_thread_failure_starts_no_new_case(tmp_path):
+    """输入：workers=2，5 道题；第 1 题立刻完成，第 2 题一直在检索中。主线程在写第 1 题的完成事件时
+    出错，并在出错的那一刻放行第 2 题。Ctrl+C 走的是同一条路径：主线程带着异常离开。
 
-    这时第 2 题可能已经在检索中。测试没有办法知道停止标志是哪一刻置位的，所以让第 2 题之后的检索
-    各停留最多 0.5 秒，给主线程留出置位的时间；这是本文件里唯一依赖时间的地方。
-    输出：抛出主线程的错误；第 3–5 题没有被调用。
+    输出：抛出主线程的错误；只有前两题被调用过，第 3–5 题没有开始。
     """
+    release_second = threading.Event()
     calls = []
 
     def retriever(request):
         calls.append(request.query)
-        if request.query != "q1":
-            threading.Event().wait(0.5)
+        if request.query == "q2":
+            assert release_second.wait(5)
         return _result(request, [_hit(1)])
 
     def broken_event(event, **fields):
         if event == "eval_case_finished":
+            release_second.set()
             raise RuntimeError("main thread failed")
 
     cases_file = _cases_file(tmp_path, [_case(i, question=f"q{i}") for i in range(1, 6)])
     settings = _settings(tmp_path)
     with pytest.raises(RuntimeError, match="main thread failed"):
         with task_run("evaluation", settings, command="retrieval",
-                      config=retrieval_run_config(cases_file)) as context:
+                      config=retrieval_run_config(cases_file, workers=2)) as context:
             context.event = broken_event
-            evaluate_retrieval(cases_file, settings, retriever=retriever, run_context=context)
+            evaluate_retrieval(cases_file, settings, workers=2, retriever=retriever, run_context=context)
 
-    assert calls in (["q1"], ["q1", "q2"])
+    assert sorted(calls) == ["q1", "q2"]
+
+
+def test_one_worker_reports_cases_in_case_set_order_even_when_retrieval_is_instant(tmp_path):
+    """输入：workers=1（默认值），400 道题，检索瞬间返回。
+
+    输出：eval_case_finished 的 case_index 和 completed_cases 都是 1 到 400：只有一个线程时，
+    完成顺序就是题集顺序，和没有并发时一样。
+    """
+    cases = [_case(i, question=f"q{i}") for i in range(1, 401)]
+    evaluate_retrieval(_cases_file(tmp_path, cases), _settings(tmp_path),
+                       retriever=lambda request: _result(request, [_hit(1)]))
+
+    runs = list((tmp_path / "artifacts").glob("runs/evaluation/*/*"))
+    events = [json.loads(line) for line in (runs[0] / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    finished = [(e["case_index"], e["completed_cases"]) for e in events if e["event"] == "eval_case_finished"]
+    assert finished == [(i, i) for i in range(1, 401)]
 
 
 def test_input_error_is_recorded_on_the_case_and_the_batch_continues(tmp_path):
