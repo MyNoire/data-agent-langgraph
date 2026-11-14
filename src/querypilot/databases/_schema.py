@@ -26,6 +26,25 @@ def inspect_sqlite(path: Path) -> dict[str, list[str]]:
         connection.close()
 
 
+def inspect_ddl(path: Path) -> dict[str, str]:
+    """只读取出 SQLite 数据库里每张用户表的建表语句。
+
+    参数:
+        path: SQLite 文件路径。
+    返回:
+        表名到 CREATE TABLE 语句原文的映射，按表名排序；跳过 sqlite_ 内部表，不含索引和视图。
+    异常:
+        sqlite3.DatabaseError: 文件不是可用的 SQLite 数据库。
+    """
+    connection = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
+    try:
+        return dict(connection.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        ).fetchall())
+    finally:
+        connection.close()
+
+
 def format_schema(schema: dict[str, list[str]]) -> str:
     """把表列映射格式化为模型可读的简洁 Schema。
 

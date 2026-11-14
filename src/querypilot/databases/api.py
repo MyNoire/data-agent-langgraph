@@ -1,7 +1,7 @@
 """数据库能力的完整公开操作与必要契约。"""
 
 from ._registry import DatabaseRegistry, RegistryError
-from ._schema import format_schema, inspect_sqlite
+from ._schema import format_schema, inspect_ddl, inspect_sqlite
 from ._guard import SqlRejected, guard_sql
 from dataclasses import asdict
 from pathlib import Path
@@ -18,6 +18,16 @@ def get_schema(database_id: str, settings: Settings) -> dict[str, list[str]]:
     异常：RegistryError/OSError/SQLite 错误；仅只读结构。
     """
     return inspect_sqlite(DatabaseRegistry(settings.data_dir).get(database_id))
+
+
+def get_table_ddl(database_id: str, settings: Settings) -> dict[str, str]:
+    """读取登记源里每张用户表的建表语句。
+
+    参数：database_id 为已登记源，settings 指定数据根。
+    返回：表名 → CREATE TABLE 语句原文，按表名排序；不含 sqlite_ 内部表、索引和视图。
+    异常：RegistryError/OSError/SQLite 错误；仅只读结构。
+    """
+    return inspect_ddl(DatabaseRegistry(settings.data_dir).get(database_id))
 
 
 def validate_sql(sql: str, allowed_tables: set[str], max_rows: int) -> str:
@@ -73,4 +83,4 @@ def execute_readonly(path: Path, sql: str, *, database_id: str, max_rows: int = 
 
 
 __all__ = ["DatabaseRegistry", "RegistryError", "QueryLimitError", "QueryResult", "SqlRejected",
-           "get_schema", "format_schema", "validate_sql", "execute_sql", "inspect_sqlite", "guard_sql", "execute_readonly"]
+           "get_schema", "get_table_ddl", "format_schema", "validate_sql", "execute_sql", "inspect_sqlite", "guard_sql", "execute_readonly"]

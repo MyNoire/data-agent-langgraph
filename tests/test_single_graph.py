@@ -230,3 +230,18 @@ def test_cli_invoke_failure_records_node_and_graph_error(tmp_path, monkeypatch, 
     assert {e["span_name"] for e in errors} == {"validate_sql", "querypilot_single"}
     assert all(e["error_type"] == "SqlRejected" for e in errors)
     assert "DELETE FROM items" not in raw and "PRIVATE QUESTION" not in raw
+
+
+def test_generation_step_reports_token_usage_in_its_state_update(tmp_path):
+    """生成节点的状态增量里带上生成器报告的两项用量；图的最终输出仍然只有 sql 和 result。"""
+    data_dir, _ = _registered_database(tmp_path)
+    graph = build_query_graph(Settings(data_dir=data_dir),
+                              generator=lambda *_: GeneratedSql("SELECT name FROM items", 120, 8))
+
+    updates = {}
+    for part in graph.stream({"database_id": "sample", "question": "List item names"}, stream_mode="updates"):
+        updates.update(part)
+    output = graph.invoke({"database_id": "sample", "question": "List item names"})
+
+    assert (updates["generate_sql"]["prompt_tokens"], updates["generate_sql"]["completion_tokens"]) == (120, 8)
+    assert set(output) == {"sql", "result"}
