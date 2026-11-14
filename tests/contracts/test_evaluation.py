@@ -10,6 +10,7 @@ import pytest
 from querypilot.databases.api import DatabaseRegistry, RegistryError
 from querypilot.evaluation.api import export_public, read_report, run_direct, run_graph
 from querypilot.runtime.api import Settings, task_run
+from querypilot.sql_generation.api import GeneratedSql
 
 
 def _cases(tmp_path, *, missing=False, empty=False):
@@ -31,12 +32,13 @@ def _cases(tmp_path, *, missing=False, empty=False):
 
 
 def test_sql_root_exports_are_identical_to_the_implementation():
-    """无参数；返回无；根出口的八项 SQL 对象须与实现相同，且不暴露生成器替换变量。"""
+    """无参数；返回无；根出口的十项 SQL 对象须与实现相同，且不暴露生成器替换变量。"""
     from querypilot.evaluation import api as evaluation_api
     from querypilot.evaluation.sql import api as sql_api
 
     names = ("run_direct", "run_graph", "read_report", "export_public",
-             "CaseRecord", "CaseOutcome", "EvalReport", "EvalSummary")
+             "CaseRecord", "CaseOutcome", "EvalReport", "EvalSummary",
+             "select_database_cases", "SqlCaseSetError")
     assert set(sql_api.__all__) == set(names)
     assert all(getattr(evaluation_api, name) is getattr(sql_api, name) for name in names)
     assert not hasattr(evaluation_api, "generate_sql")
@@ -47,7 +49,7 @@ def test_sql_library_run_records_category_once(tmp_path, mode):
     """参数为隔离目录和模式；返回无；直接库调用必须只创建一份带 SQL 类别的完整记录。"""
     cases, settings = _cases(tmp_path)
     report = (run_direct(cases, settings, provider="fixture") if mode == "direct" else
-              run_graph(cases, settings, generator=lambda *_: "SELECT id FROM items"))
+              run_graph(cases, settings, generator=lambda *_: GeneratedSql("SELECT id FROM items")))
     runs = list(settings.artifacts_dir.glob("runs/*/*/*"))
     assert len(runs) == 1
     run_dir = runs[0]
@@ -72,7 +74,7 @@ def test_borrowed_sql_context_does_not_rewrite_or_finish_outer_run(tmp_path, mod
         config_path = context.run_dir / "config.json"
         before = config_path.read_bytes()
         report = (run_direct(cases, settings, provider="fixture", run_context=context) if mode == "direct" else
-                  run_graph(cases, settings, generator=lambda *_: "SELECT id FROM items", run_context=context))
+                  run_graph(cases, settings, generator=lambda *_: GeneratedSql("SELECT id FROM items"), run_context=context))
         assert config_path.read_bytes() == before
         assert not (context.run_dir / "private/result.json").exists()
         record = json.loads((context.run_dir / "run.json").read_text(encoding="utf-8"))
@@ -90,7 +92,7 @@ def test_direct_aborts_unknown_database_but_graph_records_and_continues(tmp_path
     cases, settings = _cases(tmp_path, missing=True)
     with pytest.raises(RegistryError):
         run_direct(cases, settings, provider="fixture")
-    result = run_graph(cases, settings, generator=lambda *_: "SELECT id FROM items")
+    result = run_graph(cases, settings, generator=lambda *_: GeneratedSql("SELECT id FROM items"))
     assert [item["outcome"] for item in result["records"]] == ["error", "matched"]
     assert result["summary"]["total"] == 2
     assert result["execution_accuracy"] == .5
@@ -112,8 +114,8 @@ def test_order_is_ignored_but_duplicate_rows_are_retained(tmp_path):
     cases, settings = _cases(tmp_path)
     payload = json.loads(cases.read_text(encoding="utf-8"))[1:]
     cases.write_text(json.dumps(payload), encoding="utf-8")
-    ordered = run_direct(cases, settings, generator=lambda *_: "SELECT id FROM items ORDER BY id DESC")
-    distinct = run_direct(cases, settings, generator=lambda *_: "SELECT DISTINCT id FROM items")
+    ordered = run_direct(cases, settings, generator=lambda *_: GeneratedSql("SELECT id FROM items ORDER BY id DESC"))
+    distinct = run_direct(cases, settings, generator=lambda *_: GeneratedSql("SELECT DISTINCT id FROM items"))
     assert ordered["records"][0]["outcome"] == "matched"
     assert distinct["records"][0]["outcome"] == "mismatched"
 
@@ -125,7 +127,7 @@ def test_column_positions_remain_significant(tmp_path, mode):
     payload = [{"db_id": "tiny", "question": "columns", "SQL": "SELECT 1, 2"}]
     cases.write_text(json.dumps(payload), encoding="utf-8")
     operation = run_direct if mode == "direct" else run_graph
-    report = operation(cases, settings, generator=lambda *_: "SELECT 2, 1")
+    report = operation(cases, settings, generator=lambda *_: GeneratedSql("SELECT 2, 1"))
     assert report["records"][0]["valid_sql"] is True
     assert report["records"][0]["outcome"] == "mismatched"
     assert report["execution_accuracy"] == 0
@@ -148,7 +150,7 @@ def test_schema_failure_aborts_direct_but_graph_continues(tmp_path):
     def generator(question, *_):
         """参数为问题和生成配置；返回固定SQL，并记录实际进入生成的题目。"""
         generated.append(question)
-        return "SELECT id FROM items"
+        return GeneratedSql("SELECT id FROM items")
 
     with pytest.raises(sqlite3.DatabaseError):
         run_direct(cases, settings, generator=generator)
@@ -185,7 +187,7 @@ def test_sql_latency_keeps_original_formula_and_includes_errors(tmp_path, monkey
         clock.now += (index + 1.123456) / 1000
         if index == 19:
             raise ConnectionError("fixed failure")
-        return "SELECT 1"
+        return GeneratedSql("SELECT 1")
 
     operation = run_direct if mode == "direct" else run_graph
     report = operation(cases, settings, generator=generator)
@@ -224,7 +226,7 @@ def test_explicit_old_and_complete_new_reports_and_exclusive_export(tmp_path):
 def test_private_report_preserves_local_text_and_redacts_actual_credentials(tmp_path):
     """默认local占位值不破坏业务SQL，实际密钥与带秘密地址不进入新报告。"""
     cases, settings = _cases(tmp_path)
-    report = run_direct(cases, settings, generator=lambda *_: "SELECT 'local-value'")
+    report = run_direct(cases, settings, generator=lambda *_: GeneratedSql("SELECT 'local-value'"))
     assert report["records"][0]["predicted_sql"] == "SELECT 'local-value'"
     secret_settings = settings.model_copy(update={"model_api_key": "TOP_SECRET",
         "model_base_url": "https://user:URL_PASSWORD@example.test/v1?token=URL_TOKEN#fragment"})

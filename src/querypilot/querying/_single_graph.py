@@ -40,7 +40,7 @@ def build_query_graph(settings: Settings, *, generator: SqlGenerator = generate_
 
     参数:
         settings: 数据目录、模型连接信息及 SQL 执行上限。
-        generator: SQL 生成函数；默认调用真实模型，测试可注入固定结果。
+        generator: SQL 生成函数，返回 GeneratedSql；默认调用真实模型，测试可注入固定结果。
     返回:
         可调用的已编译 LangGraph；输入为 QueryInput，输出为 QueryOutput。
     说明:
@@ -59,17 +59,20 @@ def build_query_graph(settings: Settings, *, generator: SqlGenerator = generate_
         schema = get_schema(state["database_id"], settings)
         return {"schema": format_schema(schema), "allowed_tables": list(schema)}
 
-    def generate(state: QueryState) -> dict[str, str]:
+    def generate(state: QueryState) -> dict[str, Any]:
         """根据问题和 Schema 生成候选 SQL，不注入 oracle evidence。
 
         参数:
             state: 含 question 和 load_schema 产出的 schema 的图状态。
         返回:
-            含 generated_sql 候选语句的状态增量。
+            状态增量：generated_sql 候选语句，以及模型接口报告的 prompt_tokens 和
+            completion_tokens（接口没有返回用量时为 None）。
         异常:
             模型调用失败时向上抛出适配器异常，本阶段不重试。
         """
-        return {"generated_sql": generator(state["question"], state["schema"], "", settings)}
+        generated = generator(state["question"], state["schema"], "", settings)
+        return {"generated_sql": generated.sql, "prompt_tokens": generated.prompt_tokens,
+                "completion_tokens": generated.completion_tokens}
 
     def validate(state: QueryState) -> dict[str, str]:
         """校验候选 SQL 的 AST 并施加行数上限。

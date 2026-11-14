@@ -32,6 +32,8 @@ def run(args, settings) -> int:
         "prompt_version": "direct-v2" if getattr(args, "provider", "model") != "fixture" else None,
         "graph_version": "single-v1" if args.action == "graph" else None,
     }
+    if args.action == "graph":
+        config["workers"] = args.workers
     with task_run("evaluation", settings, command=args.action, private=True, config=config) as context:
         context.attach_stream(sys.stderr)
         if args.action == "export-public":
@@ -43,7 +45,7 @@ def run(args, settings) -> int:
                 result = run_direct(args.cases, settings, provider=args.provider,
                                     evidence_mode=args.evidence_mode, run_context=context)
             else:
-                result = run_graph(args.cases, settings, run_context=context)
+                result = run_graph(args.cases, settings, workers=args.workers, run_context=context)
             context.complete(result)
             summary = json.dumps({"output_file": str(context.run_dir / "private/result.json"),
                                   "event_file": str(context.run_dir / "events.jsonl"),

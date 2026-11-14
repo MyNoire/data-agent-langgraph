@@ -42,6 +42,8 @@ def create_parser() -> argparse.ArgumentParser:
         if name == "direct":
             command.add_argument("--provider", choices=("model", "fixture"), default="model")
             command.add_argument("--evidence-mode", choices=("none", "oracle"), default="none")
+        else:
+            command.add_argument("--workers", type=_positive_int, default=1, help="同时在跑的题数，至少为 1，默认 1")
         command.set_defaults(command=f"eval.{name}")
     retrieval = _artifacts(eval_actions.add_parser("retrieval", help="对检索题集跑一次检索评测"))
     retrieval.add_argument("--cases", type=Path, required=True)
@@ -134,6 +136,12 @@ def create_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--database-source", type=Path, required=True)
     prepare.add_argument("--manifest", type=Path, default=Path("evals/bird_final100_manifest.json"))
     prepare.set_defaults(command="data.bird.prepare-final100")
+    databases = _artifacts(bird_actions.add_parser("select-databases", help="取指定数据库的全部题目，生成 SQL 题集"))
+    databases.add_argument("--source", type=Path, default=Path("data/bird/mini_dev_sqlite-00000-of-00001.json"))
+    databases.add_argument("--frozen-manifest", type=Path, default=Path("evals/bird_final100_manifest.json"))
+    databases.add_argument("--database-id", action="append", required=True)
+    databases.add_argument("--output", type=Path, required=True)
+    databases.set_defaults(command="data.bird.select-databases")
     return parser
 
 

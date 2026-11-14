@@ -8,8 +8,9 @@
 
 - **12 题开发集**：日常调试用，`evals/bird_smoke_manifest.json`；
 - **冻结的 100 题**：最终验证用，`evals/bird_final100_manifest.json`。
+- **两库 88 题**：toxicology（40 题）和 student_club（48 题）在 Mini-Dev 里的全部题，`evals/bird_toxicology_student_club_manifest.json`。知识库目前只有这两个库，所以检索接入查询图之后的对比（R5）都在这份题集上做；题号与[检索评测](retrieval-evaluation.md)的 88 题相同。其中 16 道属于冻结集，每题带 `frozen` 标记，评测的逐题记录里原样带上：冻结题一起计分，失败分析只看其余 72 道。
 
-仓库里只提交 manifest，记录题号、来源 URL 和各文件的 sha256；原题和数据库放在 Git 忽略的 `data/` 下，用 `querypilot data bird ...` 命令准备。冻结题的使用规则见 [ADR 0001](../adr/0001-frozen-set-for-component-eval.md)。
+仓库里只提交 manifest，记录题号、来源 URL 和各文件的 sha256；原题和数据库放在 Git 忽略的 `data/` 下，用 `querypilot data bird ...` 命令准备。两库题集用 `querypilot data bird select-databases --database-id toxicology --database-id student_club --output evals/bird_toxicology_student_club.json` 生成：来源文件的 sha256 必须和冻结 manifest 记录的一致，题集文件留在本地，旁边的 manifest 提交。冻结题的使用规则见 [ADR 0001](../adr/0001-frozen-set-for-component-eval.md)。
 
 ## 两种跑法
 
@@ -18,6 +19,8 @@
 | `eval direct --provider model` | 问题加完整 Schema，直接让模型生成 SQL | 模型基线 |
 | `eval direct --provider fixture` | 把金标准 SQL 当作预测 | **只用来验证评测管线**，分数不能当成模型能力 |
 | `eval graph` | 走 LangGraph 四节点查询图：读结构 → 生成 → 安全检查 → 只读执行 | 和线上查询同一条链路 |
+
+`eval graph --workers N` 同时跑 N 道题（默认 1）：工作线程里只跑查询图和金标准 SQL，结果比对、逐题记录和进度事件都在主线程，报告仍按题集顺序。单题出错照常记为 error 并继续；主线程出错或被 Ctrl+C 中断后不再开始新题。图评测每题的耗时从这道题开始跑图量到金标准 SQL 执行完，不含排队和结果比对；`workers` 大于 1 时会被同时进行的请求拉高，**耗时只在线程数相同的运行之间比较**；线程数记在运行配置和报告里。
 
 `--evidence-mode oracle` 会把 BIRD 的人工提示（evidence）交给模型。这是隔离实验，不代表系统真实的能力，默认为 `none`。
 
@@ -36,7 +39,8 @@
 ## 报告与可追溯
 
 - 报告记录题集 sha256、模型、提示词版本（`direct-v2`）、图版本（`single-v1`）、evidence 模式、执行上限、逐题结果，以及 P50/P95 耗时。
-- 详细结果包含问题和预测 SQL，放在运行目录的 `private/` 下。`eval export-public` 按字段白名单导出一份可以分享的副本，但里面仍然有 `predicted_sql`，分享前要检查。
+- **token 用量**取自模型接口的返回，不另外用 tokenizer 估算：逐题记录里的 `prompt_tokens`（提示词）和 `completion_tokens`（模型输出，推理模型的推理 token 也算在内），报告的 `token_usage` 给出两项各自的题数、总数、平均数和中位数。只对有值的题统计：fixture 不调用模型，没有用量；接口没返回用量的题记为空。
+- 详细结果包含问题和预测 SQL，放在运行目录的 `private/` 下。`eval export-public` 按字段白名单导出一份可以分享的副本（包括线程数、token 用量和每题的冻结标记），但里面仍然有 `predicted_sql`，分享前要检查。
 - 对比实验要固定题目、数据库快照、模型、提示词、检索配置和评测器，并保存逐题结果。只靠 12 题，不能支撑准确率结论。
 
 ## 已有结果

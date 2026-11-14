@@ -30,6 +30,7 @@ except SystemExit as exc:
 from querypilot.runtime.api import Settings
 from querypilot.databases.api import DatabaseRegistry, execute_sql
 from querypilot.querying.api import ask
+from querypilot.sql_generation.api import GeneratedSql
 from querypilot.evaluation.api import run_direct
 from querypilot.entrypoints.http import create_app
 from fastapi.testclient import TestClient
@@ -43,7 +44,7 @@ with sqlite3.connect(path) as connection:
 DatabaseRegistry(data).register("tiny", path)
 settings = Settings(_env_file=None, data_dir=data, artifacts_dir=root / "artifacts")
 assert execute_sql("tiny", "SELECT id FROM items", settings).row_count == 1
-assert ask("tiny", "count", settings, generator=lambda *_: "SELECT id FROM items")["result"]["row_count"] == 1
+assert ask("tiny", "count", settings, generator=lambda *_: GeneratedSql("SELECT id FROM items"))["result"]["row_count"] == 1
 cases = root / "cases.json"
 cases.write_text(json.dumps([{"db_id": "tiny", "question": "count", "SQL": "SELECT id FROM items"}]), encoding="utf-8")
 assert run_direct(cases, settings, provider="fixture")["summary"]["success"] == 1

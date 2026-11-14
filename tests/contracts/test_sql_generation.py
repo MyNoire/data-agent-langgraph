@@ -23,7 +23,8 @@ def test_client_request_and_original_cleanup(monkeypatch, temperature):
     def complete(**request):
         """记录请求并返回带原有围栏的固定 SQL，无服务调用。"""
         captured.update(request)
-        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="```sql\nSELECT 1\n```"))])
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="```sql\nSELECT 1\n```"))],
+                               usage=None)
 
     def client(**options):
         """记录客户端选项，返回受控完成方法。"""
@@ -32,8 +33,40 @@ def test_client_request_and_original_cleanup(monkeypatch, temperature):
 
     monkeypatch.setattr("querypilot.sql_generation._model.OpenAI", client)
     value = generate_sql("count", "items(id)", "", Settings(_env_file=None, model_temperature=temperature))
-    assert value == "SELECT 1"
+    assert value.sql == "SELECT 1"
     assert captured["timeout"] == 60
     assert len(captured["messages"]) == 1
     assert captured["messages"][0] == {"role": "user", "content": direct_prompt("count", "items(id)")}
     assert ("temperature" in captured) == (temperature is not None)
+
+
+def _client_returning(response):
+    """替身 OpenAI 客户端工厂：任何请求都返回同一个响应，不联网。"""
+    def client(**_options):
+        return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **_request: response)))
+    return client
+
+
+def test_generated_sql_carries_the_token_usage_reported_by_the_service(monkeypatch):
+    """接口返回用量时，结果带上 prompt_tokens 和 completion_tokens。"""
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="SELECT 1"))],
+        usage=SimpleNamespace(prompt_tokens=321, completion_tokens=45, total_tokens=366),
+    )
+    monkeypatch.setattr("querypilot.sql_generation._model.OpenAI", _client_returning(response))
+
+    generated = generate_sql("count", "items(id)", "", Settings(_env_file=None))
+
+    assert generated.sql == "SELECT 1"
+    assert (generated.prompt_tokens, generated.completion_tokens) == (321, 45)
+
+
+def test_generated_sql_has_empty_usage_when_the_service_reports_none(monkeypatch):
+    """接口没有返回用量时，两项用量为空，SQL 照常返回。"""
+    response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="SELECT 1"))], usage=None)
+    monkeypatch.setattr("querypilot.sql_generation._model.OpenAI", _client_returning(response))
+
+    generated = generate_sql("count", "items(id)", "", Settings(_env_file=None))
+
+    assert generated.sql == "SELECT 1"
+    assert (generated.prompt_tokens, generated.completion_tokens) == (None, None)

@@ -12,6 +12,7 @@ from querypilot.databases.api import DatabaseRegistry, RegistryError
 from querypilot.querying.api import build_query_graph, query_result_row_count
 from querypilot.runtime.api import graph_logging
 from querypilot.databases.api import SqlRejected
+from querypilot.sql_generation.api import GeneratedSql
 
 
 def _registered_database(tmp_path):
@@ -55,7 +56,7 @@ def test_linear_graph_generates_validates_and_executes(tmp_path):
             固定的 SELECT 语句。
         """
         calls.append((question, schema, evidence, settings.max_rows))
-        return "SELECT name FROM items ORDER BY id"
+        return GeneratedSql("SELECT name FROM items ORDER BY id")
 
     graph = build_query_graph(Settings(data_dir=data_dir, max_rows=1), generator=fake_generator)
     output = graph.invoke({"database_id": "sample", "question": "List item names"})
@@ -78,7 +79,7 @@ def test_guard_rejects_model_write_before_execution(tmp_path):
     data_dir, path = _registered_database(tmp_path)
     graph = build_query_graph(
         Settings(data_dir=data_dir),
-        generator=lambda *_: "DELETE FROM items",
+        generator=lambda *_: GeneratedSql("DELETE FROM items"),
     )
 
     with pytest.raises(SqlRejected):
@@ -120,7 +121,7 @@ def test_graph_progress_events_cover_nodes_without_query_content(tmp_path):
     """
     data_dir, _ = _registered_database(tmp_path)
     graph = build_query_graph(
-        Settings(data_dir=data_dir), generator=lambda *_: "SELECT name FROM items",
+        Settings(data_dir=data_dir), generator=lambda *_: GeneratedSql("SELECT name FROM items"),
     )
     path = tmp_path / "graph.events.jsonl"
     with graph_logging(path, stream=StringIO(), row_count=query_result_row_count) as logs:
@@ -151,7 +152,7 @@ def test_graph_failure_logs_node_and_error_type(tmp_path):
     返回：None；检查节点与根调用各自的错误事件。
     """
     data_dir, _ = _registered_database(tmp_path)
-    graph = build_query_graph(Settings(data_dir=data_dir), generator=lambda *_: "DELETE FROM items")
+    graph = build_query_graph(Settings(data_dir=data_dir), generator=lambda *_: GeneratedSql("DELETE FROM items"))
     path = tmp_path / "rejected.events.jsonl"
     with graph_logging(path, stream=StringIO()) as logs:
         with pytest.raises(SqlRejected):
@@ -177,11 +178,11 @@ def test_cli_invoke_preserves_answer_and_progress_log(tmp_path, monkeypatch, cap
 
     data_dir, _ = _registered_database(tmp_path)
     graph = build_query_graph(
-        Settings(data_dir=data_dir), generator=lambda *_: "SELECT name FROM items ORDER BY id",
+        Settings(data_dir=data_dir), generator=lambda *_: GeneratedSql("SELECT name FROM items ORDER BY id"),
     )
     monkeypatch.setattr(cli, "get_settings", lambda: Settings(data_dir=data_dir, artifacts_dir=tmp_path / "artifacts"))
     monkeypatch.setattr(querying_api, "build_query_graph", lambda _settings, **kwargs: build_query_graph(
-        _settings, generator=lambda *_: "SELECT name FROM items ORDER BY id", run_context=kwargs.get("run_context")))
+        _settings, generator=lambda *_: GeneratedSql("SELECT name FROM items ORDER BY id"), run_context=kwargs.get("run_context")))
     monkeypatch.setattr(sys, "argv", ["ask_graph.py", "--database-id", "sample",
                                     "--question", "PRIVATE QUESTION"])
     monkeypatch.chdir(tmp_path)
@@ -212,10 +213,10 @@ def test_cli_invoke_failure_records_node_and_graph_error(tmp_path, monkeypatch, 
     from querypilot.querying import api as querying_api
 
     data_dir, _ = _registered_database(tmp_path)
-    graph = build_query_graph(Settings(data_dir=data_dir), generator=lambda *_: "DELETE FROM items")
+    graph = build_query_graph(Settings(data_dir=data_dir), generator=lambda *_: GeneratedSql("DELETE FROM items"))
     monkeypatch.setattr(cli, "get_settings", lambda: Settings(data_dir=data_dir, artifacts_dir=tmp_path / "artifacts"))
     monkeypatch.setattr(querying_api, "build_query_graph", lambda _settings, **kwargs: build_query_graph(
-        _settings, generator=lambda *_: "DELETE FROM items", run_context=kwargs.get("run_context")))
+        _settings, generator=lambda *_: GeneratedSql("DELETE FROM items"), run_context=kwargs.get("run_context")))
     monkeypatch.setattr(sys, "argv", ["ask_graph.py", "--database-id", "sample",
                                     "--question", "PRIVATE QUESTION"])
     monkeypatch.chdir(tmp_path)

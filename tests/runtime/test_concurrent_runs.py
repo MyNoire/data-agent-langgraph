@@ -7,6 +7,7 @@ import threading
 
 from querypilot.querying.api import ask
 from querypilot.runtime.api import read_run_result
+from querypilot.sql_generation.api import GeneratedSql
 from test_task_runs import registered_settings
 
 
@@ -22,7 +23,7 @@ def test_overlapping_public_queries_are_isolated(tmp_path):
         def generate(*_):
             """两任务同时进入生成阶段，返回不同的固定只读 SQL。"""
             barrier.wait(timeout=10)
-            return f"SELECT {value} AS value"
+            return GeneratedSql(f"SELECT {value} AS value")
         return ask("demo", f"private-{value}", settings, generator=generate)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -84,7 +85,7 @@ def test_overlapping_direct_storage_and_http_keep_own_run_files(tmp_path, r2_cor
     def generate(*_):
         """替代模型，与三个不同操作同时进入主要执行阶段。"""
         barrier.wait(timeout=15)
-        return "SELECT 31 AS value"
+        return GeneratedSql("SELECT 31 AS value")
 
     original_execute = http.execute_sql
 

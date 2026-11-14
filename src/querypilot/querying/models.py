@@ -22,6 +22,8 @@ class QueryState(QueryInput):
     schema: NotRequired[str]
     allowed_tables: NotRequired[list[str]]
     generated_sql: NotRequired[str]
+    prompt_tokens: NotRequired[int | None]
+    completion_tokens: NotRequired[int | None]
     sql: NotRequired[str]
     result: NotRequired[dict[str, Any]]
 

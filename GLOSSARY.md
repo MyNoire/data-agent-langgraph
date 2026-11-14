@@ -66,7 +66,7 @@ _避免_：精排配置、rerank config
 _避免_：result、match
 
 **Retrieval Context（检索上下文）**：
-由 Hit 展开、去重得到的 Documents，交给 SQL 生成使用。
+把 Hit 按所属的表归拢得到的内容：每张被命中的表带上这张表的表级知识，再加上命中的列和关系。它渲染成 Schema 后交给 SQL 生成；没被命中的列只出现列名，不带说明。
 _避免_：evidence、context（单独使用时）
 
 ## 查询
@@ -74,6 +74,10 @@ _避免_：evidence、context（单独使用时）
 **Schema（结构文本）**：
 提供给 SQL 生成的数据库结构文本。
 _避免_：用 schema 指代 Catalog
+
+**Context Source（上下文来源）**：
+SQL 生成所用的 Schema 取自哪里：裸表列名、全部建表语句、全量知识，或检索得到的 Retrieval Context。对比不同的 Context Source 是 SQL 评测的一部分。
+_避免_：模式、上下文模式
 
 ## 评测
 
