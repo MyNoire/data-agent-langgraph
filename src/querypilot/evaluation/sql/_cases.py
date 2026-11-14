@@ -43,7 +43,8 @@ def select_database_cases(source: Path, database_ids: list[str], frozen_manifest
     if {case["db_id"] for case in cases} != set(database_ids):
         raise SqlCaseSetError("data_input_invalid", "case set input is invalid")
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(cases, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 固定用 LF：manifest 记了题集文件的 sha256，换行符随系统变会让同一份来源得到不同的值。
+    output.write_text(json.dumps(cases, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
 
     question_ids: dict[str, list[int]] = {database_id: [] for database_id in database_ids}
     for case in cases:
@@ -58,7 +59,8 @@ def select_database_cases(source: Path, database_ids: list[str], frozen_manifest
         "frozen_question_ids": [case["question_id"] for case in cases if case["frozen"]],
     }
     manifest_file = output.with_name(f"{output.stem}_manifest.json")
-    manifest_file.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    manifest_file.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
+                             newline="\n")
     return {"count": len(cases), "databases": dict(Counter(case["db_id"] for case in cases)),
             "frozen": sum(case["frozen"] for case in cases),
             "output": str(output), "manifest": str(manifest_file)}

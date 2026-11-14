@@ -113,7 +113,7 @@ def build_report(*, cases_path: Path, case_bytes: bytes, settings: Settings,
         prompt_version: 实际使用的 Prompt 版本；fixture 为 None。
         graph_version: 单图实现版本；其他模式为空。
     返回:
-        与现有原始评测 JSON 兼容的 EvalReport，另含 token_usage（两项用量的汇总）。没有任何预测时模型
+        EvalReport，其中 token_usage 是两项用量的汇总。没有任何预测时模型
         准确率和有效 SQL 率为 None，避免把服务不可用算成 0%。
     """
     summary = summarize_records(records)

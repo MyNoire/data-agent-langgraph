@@ -21,3 +21,7 @@
 - 约 40 处返回字符串的假生成器改成返回 `GeneratedSql(...)`，断言没有改。另有两个假的模型响应补了 `usage` 字段：真实的响应对象一定有这个属性（值可以为空），所以没有在代码里为"没有这个属性"做兼容。
 - 测试：`tests/contracts/test_sql_generation.py` 新增 2 个（有用量、没有用量），`tests/test_graph_eval.py` 新增 1 个（逐题和汇总，含用量为空的题），`tests/test_eval.py` 新增 1 个（direct 的 model 与 fixture）。
 - 没验证：真实接口返回的用量数值。新模型是否返回 `usage`、推理 token 占多少，要到工单 07 先跑 ① 一组时才知道。
+- 审查后修改（2026-11-14）：`generate_sql` 里用量为空时改成显式判断，不再用 `getattr` 兜底；两处带历史措辞的 docstring 改成只描述现在的行为。
+- 审查后撤回：`token_usage`、`prompt_tokens`、`completion_tokens` 不再加进 `export-public` 的字段白名单，理由同工单 01。私有报告里照常有这些字段。
+- 审查的结论，没有改：两项用量在 7 处成对出现，加第三项要改 7 个文件；现在只有两项，先不为它建类型。
+- 没有图一级的直接断言：用量进图状态这件事只由图评测读流间接覆盖。直接在 `build_query_graph` 上测属于规格的 Seam 3，还没和用户确认，留到工单 04。

@@ -64,5 +64,7 @@ def generate_sql(question: str, schema: str, evidence: str, settings: Settings) 
     response = client.chat.completions.create(**request)
     sql = (response.choices[0].message.content or "").strip().removeprefix("```sql").removesuffix("```").strip()
     usage = response.usage
-    return GeneratedSql(sql, getattr(usage, "prompt_tokens", None), getattr(usage, "completion_tokens", None))
+    if usage is None:
+        return GeneratedSql(sql)
+    return GeneratedSql(sql, usage.prompt_tokens, usage.completion_tokens)
 

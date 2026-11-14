@@ -120,3 +120,14 @@ def test_command_writes_the_case_set_and_prints_counts(tmp_path, capsys):
     assert (tmp_path / "cases_manifest.json").is_file()
     assert "3" in printed and "alpha" in printed and "beta" in printed
     assert "原创问题" not in printed
+
+
+def test_case_set_and_manifest_are_written_with_unix_line_endings(tmp_path):
+    """题集和 manifest 都只用换行符 LF：manifest 记了题集文件的 sha256，同一份来源在任何系统上重新生成都要得到同一个值。"""
+    source, frozen = _fixture(tmp_path)
+    output = tmp_path / "cases.json"
+
+    select_database_cases(source, ["alpha", "beta"], frozen, output)
+
+    assert b"\r" not in output.read_bytes()
+    assert b"\r" not in (tmp_path / "cases_manifest.json").read_bytes()

@@ -67,6 +67,26 @@ def _run_case(graph, config, case: dict, settings: Settings, run_context) -> _Ca
     return run
 
 
+def _case_record(position: int, case: dict, run: _CaseRun, graph_run_id: str) -> CaseRecord:
+    """把一道题跑出来的原始结果比对、定类，写成逐题记录；在主线程里调用。
+
+    图执行成功就算有效 SQL；之后金标准 SQL 出错的题仍记为 error，但保留已经拿到的预测、行数和用量。
+    """
+    record = new_case_record(position, case, evidence_used=False, graph_run_id=graph_run_id)
+    if run.predicted_sql is not None:
+        record["predicted_sql"] = run.predicted_sql
+        record.update(run.token_usage)
+    if run.result is not None:
+        record["valid_sql"] = True
+        record["row_count"] = run.result["row_count"]
+    if run.error is not None:
+        record["error_type"] = type(run.error).__name__
+        record["error"] = f"{type(run.error).__name__}: {run.error}"
+    else:
+        record["execution_match"] = normalized_rows(run.result["rows"]) == normalized_rows(run.gold_rows)
+    return finish_case_record(record, run.started, finished=run.finished)
+
+
 def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator = generate_sql,
               workers: int = 1, run_context) -> EvalReport:
     """对一份题集逐题运行查询图并计分，返回报告。
@@ -76,8 +96,8 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator =
         settings：数据目录、模型和 SQL 执行上限。
         generator：SQL 生成函数；测试可注入固定结果。workers 大于 1 时会被多个线程同时调用。
         workers：同时在跑的题数，默认 1。工作线程里只跑查询图和金标准 SQL；结果比对、逐题记录
-            和进度事件都在调用方的线程里。大于 1 时每题的 latency_ms 会被同时进行的请求拉高，
-            耗时只在线程数相同的运行之间比较。
+            和进度事件都在调用方的线程里。每题的 latency_ms 从这道题开始跑图量到金标准 SQL 执行完，
+            不含排队和结果比对；大于 1 时会被同时进行的请求拉高，耗时只在线程数相同的运行之间比较。
         run_context：外层运行上下文，事件和 SQL 审计都写进它；由调用方发布结果和关闭。
     返回：
         EvalReport。records 按题集顺序排列，与哪题先跑完无关。
@@ -139,23 +159,11 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator =
             submit_next()
         while in_flight:
             done, _ = wait(in_flight, return_when=FIRST_COMPLETED)
+            # 先把这一批完成的结果都取出来：工作线程里有非题内的异常时在这里原样抛出，这一轮不再提交新题。
             finished = [(in_flight.pop(future), future.result()) for future in done]
             for position, run in finished:
                 fields = case_fields(position)
-                record = new_case_record(position, cases[position], evidence_used=False,
-                                         graph_run_id=fields["graph_run_id"])
-                if run.predicted_sql is not None:
-                    record["predicted_sql"] = run.predicted_sql
-                    record.update(run.token_usage)
-                if run.result is not None:
-                    record["valid_sql"] = True
-                    record["row_count"] = run.result["row_count"]
-                if run.error is not None:
-                    record["error_type"] = type(run.error).__name__
-                    record["error"] = f"{type(run.error).__name__}: {run.error}"
-                else:
-                    record["execution_match"] = normalized_rows(run.result["rows"]) == normalized_rows(run.gold_rows)
-                finish_case_record(record, run.started, finished=run.finished)
+                record = _case_record(position, cases[position], run, fields["graph_run_id"])
                 records[position] = record
                 completed += 1
                 success_count += int(record["execution_match"])

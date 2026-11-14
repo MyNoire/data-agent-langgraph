@@ -4,7 +4,7 @@
   "source_url": "https://huggingface.co/datasets/birdsql/bird_mini_dev/resolve/f65faf4/data/mini_dev_sqlite-00000-of-00001.json",
   "source_sha256": "88ceb0710163cae46a256ecea8f0a8c98286599530b60587fda5c3cfe57d45d2",
   "case_set_file": "bird_toxicology_student_club.json",
-  "case_set_sha256": "fbd95e3011794bac0284e259ddfc14d743357c774e1e7ef46039fcbc40780928",
+  "case_set_sha256": "673c8a45844bf92de6eda1604c6e22c912c963b442e88e93b97ebb1a7d436201",
   "selection": "来源文件中指定数据库的全部题目，按来源文件里的顺序；frozen 标记题号在冻结清单里的题。",
   "question_ids": {
     "toxicology": [

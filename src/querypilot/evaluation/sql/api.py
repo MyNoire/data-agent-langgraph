@@ -60,7 +60,7 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator |
     """完整运行单图评测并保存私有报告。
 
     参数：题集、配置、固定或真实生成器、同时在跑的题数 workers（默认 1）及可选外层上下文。
-    返回：原 EvalReport，records 按题集顺序；逐题错误继续、无预测时比率为 None；不增加检索或修复。
+    返回：EvalReport，records 按题集顺序；题内的错误记在那一题上并继续，一道预测都没有时两个比率为 None。
     副作用：读取 SQLite，可调用模型；一个批次一份运行，子题不另建根。
     """
     from ._graph import run_graph as perform

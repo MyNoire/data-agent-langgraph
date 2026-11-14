@@ -162,7 +162,7 @@ retrieval: load_schema → retrieve       → build_context → 同上
   - 检索配置的默认值（hybrid、重排、`top_k=10`）和编译时覆盖；
   - AST 检查仍允许没被检索到的表。
 - **Seam 4：知识读取**，真实 PG 加原创小 Corpus，沿用检索集成测试的夹具（`--require-postgres`）。覆盖：按表名取表 Chunk；取全部 Chunk 的顺序固定；只读到当前 Scope 的内容。
-- **Seam 5：评测运行器**，假图依赖。覆盖：参数写进运行配置和报告；逐题的 token 用量和"表是否拿全"；按"拿全 / 没拿全"的汇总；`workers` 为 1 和大于 1 时报告相同；某题出错后不再开始新题。
+- **Seam 5：评测运行器**，假图依赖。覆盖：参数写进运行配置和报告；逐题的 token 用量和"表是否拿全"；按"拿全 / 没拿全"的汇总；`workers` 为 1 和大于 1 时报告相同；单题出错后记为 error 并继续；主线程出错或被中断后不再开始新题。
 - **Seam 6：题集生成**，小的假 BIRD 文件。覆盖：只取指定的库；冻结标记；manifest 的 hash。
 - 模块边界测试继续守住依赖方向：querying 从 retrieval 和 databases 的 `api.py` 导入。
 
