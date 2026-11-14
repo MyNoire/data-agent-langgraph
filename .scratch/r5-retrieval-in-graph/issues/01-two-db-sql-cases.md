@@ -29,3 +29,4 @@
 - 测试：`pytest tests/test_bird_database_cases.py`（6 个）和 `tests/test_graph_eval.py` 里冻结标记的 1 个。
 - 审查后修改（2026-11-14）：题集和 manifest 固定用 LF 写出。原来在 Windows 上写成 CRLF，而 manifest 记了题集文件的 sha256，同一份来源在别的系统上重新生成会得到不同的值。加了一个测试守住。真实题集已重新生成，题目内容不变，sha256 从 `fbd95e30…` 变为 `673c8a45…`；fixture 管线重跑仍是 88/88，运行目录 `artifacts/runs/evaluation/2026-11-14/3890c2b21b2a4a14914c861ce72ba6d9/`。上面几条 Comments 和工单 02 里提到的三个运行目录用的是旧的 `fbd95e30…`。
 - 审查后撤回：最初顺手把 `frozen` 加进了 `export-public` 的字段白名单，工单没有要求，属于公开导出内容的变化，已恢复原样，等用户决定。
+- 用户决定（2026-11-14）：`export-public` 导出 `frozen`。已加回白名单，并有测试。

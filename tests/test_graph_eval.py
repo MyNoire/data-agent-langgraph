@@ -12,7 +12,7 @@ import pytest
 
 from querypilot.runtime.api import Settings
 from querypilot.databases.api import DatabaseRegistry
-from querypilot.evaluation.api import run_graph
+from querypilot.evaluation.api import export_public, run_graph
 from querypilot.runtime.api import task_run
 from querypilot.querying.api import query_result_row_count
 from querypilot.runtime.api import graph_logging
@@ -435,3 +435,24 @@ def test_graph_eval_records_token_usage_per_case_and_in_total(tmp_path):
         "prompt_tokens": {"count": 2, "total": 300, "mean": 150.0, "median": 150.0},
         "completion_tokens": {"count": 2, "total": 40, "mean": 20.0, "median": 20.0},
     }
+
+
+def test_public_export_keeps_run_shape_and_token_usage_but_no_question_text(tmp_path):
+    """输入：一次 workers=2 的图评测，题目带 frozen，假生成器报告用量 (100, 10)。
+
+    输出：公开导出里有线程数、token 用量汇总，以及逐题的 frozen 和两项用量；仍然没有问题原文和模型地址。
+    """
+    cases, settings = _sample_run(tmp_path, [
+        {"question_id": 1, "db_id": "sample", "question": "PRIVATE QUESTION", "SQL": MATCHING_SQL, "frozen": True},
+    ])
+    result = run_graph(cases, settings, generator=lambda *_: GeneratedSql(MATCHING_SQL, 100, 10), workers=2)
+    run_dir = next(path for path in settings.artifacts_dir.glob("runs/evaluation/*/*") if path.name == result["run_id"])
+
+    public = export_public(run_dir, tmp_path / "public.json")
+
+    assert public["workers"] == 2
+    assert public["token_usage"]["prompt_tokens"] == {"count": 1, "total": 100, "mean": 100.0, "median": 100.0}
+    record = public["records"][0]
+    assert (record["frozen"], record["prompt_tokens"], record["completion_tokens"]) == (True, 100, 10)
+    assert "question" not in record and "model_base_url" not in public
+    assert "PRIVATE QUESTION" not in (tmp_path / "public.json").read_text(encoding="utf-8")

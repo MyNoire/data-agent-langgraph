@@ -25,3 +25,4 @@
 - 审查后撤回：`token_usage`、`prompt_tokens`、`completion_tokens` 不再加进 `export-public` 的字段白名单，理由同工单 01。私有报告里照常有这些字段。
 - 审查的结论，没有改：两项用量在 7 处成对出现，加第三项要改 7 个文件；现在只有两项，先不为它建类型。
 - 没有图一级的直接断言：用量进图状态这件事只由图评测读流间接覆盖。直接在 `build_query_graph` 上测属于规格的 Seam 3，还没和用户确认，留到工单 04。
+- 用户决定（2026-11-14）：`export-public` 导出 `token_usage` 和逐题的两项用量。已加回白名单，并有测试（`tests/test_graph_eval.py`，同时断言导出里仍然没有问题原文和模型地址）。
