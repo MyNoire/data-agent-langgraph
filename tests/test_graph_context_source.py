@@ -2,7 +2,9 @@
 
 import sqlite3
 
-from querypilot.databases.api import DatabaseRegistry
+import pytest
+
+from querypilot.databases.api import DatabaseRegistry, SqlRejected
 from querypilot.querying.api import build_query_graph
 from querypilot.runtime.api import Settings
 from querypilot.sql_generation.api import GeneratedSql
@@ -50,3 +52,30 @@ def test_ddl_source_gives_the_model_every_create_table_statement(tmp_path):
 
     assert schemas == [CUSTOMERS_DDL + "\n\n" + ORDERS_DDL]
     assert output["result"]["rows"] == [["Ada"]]
+
+
+def test_ddl_source_still_rejects_sql_on_tables_outside_the_database(tmp_path):
+    """输入：context_source="ddl"，模型写出读取 SQLite 内部表 sqlite_master 的 SQL。
+
+    输出：安全检查拒绝这条 SQL（SqlRejected），不执行。建表语句本身就存在 sqlite_master 里，
+    但换了 Context Source 不能让它变成可查询的表：允许范围仍是这个库的用户表。
+    """
+    graph = build_query_graph(_shop(tmp_path), context_source="ddl",
+                              generator=_recording_generator([], "SELECT sql FROM sqlite_master"))
+
+    with pytest.raises(SqlRejected):
+        graph.invoke({"database_id": "shop", "question": "Show the table definitions"})
+
+
+def test_unknown_context_source_is_rejected_when_the_graph_is_compiled(tmp_path):
+    """输入：context_source 拼错成 "dll"。
+
+    输出：编译图时就报 ValueError，而不是悄悄按默认的裸表列名运行；生成器一次都没被调用。
+    """
+    schemas = []
+
+    with pytest.raises(ValueError):
+        build_query_graph(_shop(tmp_path), context_source="dll",
+                          generator=_recording_generator(schemas, "SELECT name FROM customers"))
+
+    assert schemas == []

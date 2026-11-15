@@ -5,23 +5,17 @@
 """
 
 from dataclasses import asdict
-import logging
-import time
-from typing import Any, Callable, NotRequired, TypedDict
-from uuid import uuid4
+from typing import Any, Literal
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from querypilot.databases.api import execute_sql, format_schema, get_schema, get_table_ddl, validate_sql
 from querypilot.runtime.api import Settings
-from querypilot.databases.api import execute_sql, format_schema, get_schema
-from querypilot.sql_generation.api import generate_sql
-from querypilot.databases.api import validate_sql
-from querypilot.databases.api import get_table_ddl
-
+from querypilot.sql_generation.api import SqlGenerator, generate_sql
 
 from .models import QueryInput, QueryOutput, QueryState
-from querypilot.sql_generation.api import SqlGenerator
+
 
 def query_result_row_count(output: Any) -> int | None:
     """从 QueryPilot 输出中只提取安全的行数。
@@ -36,33 +30,59 @@ def query_result_row_count(output: Any) -> int | None:
     count = result.get("row_count") if isinstance(result, dict) else None
     return count if type(count) is int and count >= 0 else None
 
-def build_query_graph(settings: Settings, *, generator: SqlGenerator = generate_sql, run_context=None, context_source="schema") -> CompiledStateGraph:
+
+def build_query_graph(
+    settings: Settings,
+    *,
+    generator: SqlGenerator = generate_sql,
+    run_context=None,
+    context_source: Literal["schema", "ddl"] = "schema",
+) -> CompiledStateGraph:
     """编译 Schema → 模型 → SQL 校验 → 只读执行的线性图。
 
     参数:
         settings: 数据目录、模型连接信息及 SQL 执行上限。
         generator: SQL 生成函数，返回 GeneratedSql；默认调用真实模型，测试可注入固定结果。
+        run_context: 传给只读执行器的运行上下文；为 None 时每次执行各自开一次运行记录。
+        context_source: 模型收到的 Schema 来源，编译时选定。"schema" 为每张表的表名和列名，
+            "ddl" 为每张表的 CREATE TABLE 原文。
     返回:
         可调用的已编译 LangGraph；输入为 QueryInput，输出为 QueryOutput。
+    异常:
+        ValueError: context_source 不是上面列出的取值。
     说明:
         凭据和数据库路径留在节点闭包内，不写入图状态。
     """
-    def load_schema(state: QueryState) -> dict[str, Any]:
-        """读取已登记数据库的当前表列信息。
+    def load_columns(state: QueryState) -> dict[str, Any]:
+        """读取已登记数据库每张表的表名和列名。
 
         参数:
             state: 至少包含 database_id 的图状态。
         返回:
-            含 schema 文本及 allowed_tables 表名列表的状态增量。
+            状态增量：schema 为 format_schema 的文本，allowed_tables 为表名列表。
         异常:
             RegistryError: database_id 未登记或登记路径无效。
         """
-        if context_source == "ddl":
-            table_ddl = get_table_ddl(state["database_id"], settings)
-            return {"schema": "\n\n".join(table_ddl.values()), "allowed_tables": list(table_ddl)}
-        else:
-            schema = get_schema(state["database_id"], settings)
-            return {"schema": format_schema(schema), "allowed_tables": list(schema)}
+        schema = get_schema(state["database_id"], settings)
+        return {"schema": format_schema(schema), "allowed_tables": list(schema)}
+
+    def load_ddl(state: QueryState) -> dict[str, Any]:
+        """读取已登记数据库每张用户表的建表语句。
+
+        参数:
+            state: 至少包含 database_id 的图状态。
+        返回:
+            状态增量：schema 为按表名排序、以空行分隔的 CREATE TABLE 原文，
+            allowed_tables 为表名列表（不含 sqlite_ 内部表）。
+        异常:
+            RegistryError: database_id 未登记或登记路径无效。
+        """
+        table_ddl = get_table_ddl(state["database_id"], settings)
+        return {"schema": "\n\n".join(table_ddl.values()), "allowed_tables": list(table_ddl)}
+
+    loaders = {"schema": load_columns, "ddl": load_ddl}
+    if context_source not in loaders:
+        raise ValueError(f"unknown context_source {context_source!r}; expected one of {sorted(loaders)}")
 
     def generate(state: QueryState) -> dict[str, Any]:
         """根据问题和 Schema 生成候选 SQL，不注入 oracle evidence。
@@ -106,7 +126,7 @@ def build_query_graph(settings: Settings, *, generator: SqlGenerator = generate_
         return {"result": asdict(result)}
 
     builder = StateGraph(QueryState, input_schema=QueryInput, output_schema=QueryOutput)
-    builder.add_node("load_schema", load_schema)
+    builder.add_node("load_schema", loaders[context_source])
     builder.add_node("generate_sql", generate)
     builder.add_node("validate_sql", validate)
     builder.add_node("execute_sql", execute)
