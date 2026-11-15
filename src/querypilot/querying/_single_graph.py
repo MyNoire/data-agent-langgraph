@@ -17,6 +17,7 @@ from querypilot.runtime.api import Settings
 from querypilot.databases.api import execute_sql, format_schema, get_schema
 from querypilot.sql_generation.api import generate_sql
 from querypilot.databases.api import validate_sql
+from querypilot.databases.api import get_table_ddl
 
 
 from .models import QueryInput, QueryOutput, QueryState
@@ -35,7 +36,7 @@ def query_result_row_count(output: Any) -> int | None:
     count = result.get("row_count") if isinstance(result, dict) else None
     return count if type(count) is int and count >= 0 else None
 
-def build_query_graph(settings: Settings, *, generator: SqlGenerator = generate_sql, run_context=None) -> CompiledStateGraph:
+def build_query_graph(settings: Settings, *, generator: SqlGenerator = generate_sql, run_context=None, context_source="schema") -> CompiledStateGraph:
     """编译 Schema → 模型 → SQL 校验 → 只读执行的线性图。
 
     参数:
@@ -56,8 +57,12 @@ def build_query_graph(settings: Settings, *, generator: SqlGenerator = generate_
         异常:
             RegistryError: database_id 未登记或登记路径无效。
         """
-        schema = get_schema(state["database_id"], settings)
-        return {"schema": format_schema(schema), "allowed_tables": list(schema)}
+        if context_source == "ddl":
+            table_ddl = get_table_ddl(state["database_id"], settings)
+            return {"schema": "\n\n".join(table_ddl.values()), "allowed_tables": list(table_ddl)}
+        else:
+            schema = get_schema(state["database_id"], settings)
+            return {"schema": format_schema(schema), "allowed_tables": list(schema)}
 
     def generate(state: QueryState) -> dict[str, Any]:
         """根据问题和 Schema 生成候选 SQL，不注入 oracle evidence。
