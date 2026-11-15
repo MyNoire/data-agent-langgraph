@@ -67,4 +67,5 @@ class EvalReport(TypedDict):
     token_usage: NotRequired[dict[str, dict]]
     graph_version: NotRequired[str]
     workers: NotRequired[int]
+    context_source: NotRequired[str]
 

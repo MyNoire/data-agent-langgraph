@@ -32,13 +32,13 @@ def _cases(tmp_path, *, missing=False, empty=False):
 
 
 def test_sql_root_exports_are_identical_to_the_implementation():
-    """无参数；返回无；根出口的十项 SQL 对象须与实现相同，且不暴露生成器替换变量。"""
+    """无参数；返回无；根出口的十一项 SQL 对象须与实现相同，且不暴露生成器替换变量。"""
     from querypilot.evaluation import api as evaluation_api
     from querypilot.evaluation.sql import api as sql_api
 
     names = ("run_direct", "run_graph", "read_report", "export_public",
              "CaseRecord", "CaseOutcome", "EvalReport", "EvalSummary",
-             "select_database_cases", "SqlCaseSetError")
+             "select_database_cases", "sql_run_config", "SqlCaseSetError")
     assert set(sql_api.__all__) == set(names)
     assert all(getattr(evaluation_api, name) is getattr(sql_api, name) for name in names)
     assert not hasattr(evaluation_api, "generate_sql")

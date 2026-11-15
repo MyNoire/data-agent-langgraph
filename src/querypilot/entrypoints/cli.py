@@ -44,6 +44,9 @@ def create_parser() -> argparse.ArgumentParser:
             command.add_argument("--evidence-mode", choices=("none", "oracle"), default="none")
         else:
             command.add_argument("--workers", type=_positive_int, default=1, help="同时在跑的题数，至少为 1，默认 1")
+            # 取值与 querying 的 ContextSource 相同（有测试比对）；这里不导入 querying，解析参数时不加载模型和图。
+            command.add_argument("--context-source", choices=("schema", "ddl"), default="schema",
+                                 help="模型收到的 Schema 来源：schema 为表名和列名（默认），ddl 为建表语句")
         command.set_defaults(command=f"eval.{name}")
     retrieval = _artifacts(eval_actions.add_parser("retrieval", help="对检索题集跑一次检索评测"))
     retrieval.add_argument("--cases", type=Path, required=True)

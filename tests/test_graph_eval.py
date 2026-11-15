@@ -70,7 +70,7 @@ def test_graph_eval_records_match_mismatch_and_guard_failure(tmp_path, monkeypat
     output = run_dir / "private/result.json"
     events_path = run_dir / "events.jsonl"
     assert result["provider"] == "graph"
-    assert result["graph_version"] == "single-v1"
+    assert result["graph_version"] == "single-v2"
     assert result["summary"] == {
         "total": 3, "success": 1, "failure": 2, "mismatch": 1,
         "error": 1, "no_prediction": 0, "valid_sql": 2,
@@ -115,7 +115,7 @@ def test_graph_eval_records_match_mismatch_and_guard_failure(tmp_path, monkeypat
     assert main(["--artifacts-dir", str(tmp_path / "exports"), "eval", "export-public", "--input", str(output), "--output", str(public_path)]) == 0
     assert str(public_path) in capsys.readouterr().out
     public = json.loads(public_path.read_text(encoding="utf-8"))
-    assert public["graph_version"] == "single-v1"
+    assert public["graph_version"] == "single-v2"
     assert public["records"][0]["graph_run_id"] == f"{batch_id}:case:1"
     assert "model_base_url" not in public
     assert "question" not in public["records"][0]
@@ -456,3 +456,97 @@ def test_public_export_keeps_run_shape_and_token_usage_but_no_question_text(tmp_
     assert (record["frozen"], record["prompt_tokens"], record["completion_tokens"]) == (True, 100, 10)
     assert "question" not in record and "model_base_url" not in public
     assert "PRIVATE QUESTION" not in (tmp_path / "public.json").read_text(encoding="utf-8")
+
+
+ITEMS_DDL = "CREATE TABLE items (id INTEGER, name TEXT)"
+
+
+def test_context_source_reaches_the_graph_and_is_recorded_in_the_report_and_the_run_config(tmp_path):
+    """输入：同一份题集跑两次，一次不传 context_source，一次 context_source="ddl"。
+
+    输出：ddl 那次假生成器收到的是 items 的建表语句；两份报告和运行配置分别记下 schema 和 ddl，
+    图版本都是 single-v2；公开导出也带上 Context Source。运行目录里的任何文件都不含建表语句。
+    """
+    schemas = {"schema": [], "ddl": []}
+
+    def generator_for(source):
+        def generator(question, schema, *_):
+            schemas[source].append(schema)
+            return GeneratedSql(MATCHING_SQL)
+        return generator
+
+    cases, settings = _sample_run(tmp_path, _cases(1))
+
+    default = run_graph(cases, settings, generator=generator_for("schema"))
+    ddl = run_graph(cases, settings, generator=generator_for("ddl"), context_source="ddl")
+
+    assert schemas["ddl"] == [ITEMS_DDL]
+    assert schemas["schema"] != [ITEMS_DDL]
+    assert (default["context_source"], ddl["context_source"]) == ("schema", "ddl")
+    assert default["graph_version"] == ddl["graph_version"] == "single-v2"
+    assert _run_config(settings, default["run_id"])["context_source"] == "schema"
+    assert _run_config(settings, ddl["run_id"])["context_source"] == "ddl"
+    ddl_run_dir = next(path for path in settings.artifacts_dir.glob("runs/evaluation/*/*") if path.name == ddl["run_id"])
+    assert export_public(ddl_run_dir, tmp_path / "public.json")["context_source"] == "ddl"
+    assert not [path for path in ddl_run_dir.rglob("*")
+                if path.is_file() and "CREATE TABLE" in path.read_text(encoding="utf-8")]
+
+
+def test_cli_context_source_flag_reaches_the_graph_and_the_run_config_matches_the_runner(tmp_path, monkeypatch, capsys):
+    """输入：eval graph --context-source ddl；再用同样的参数直接调用 run_graph。
+
+    输出：假生成器收到建表语句，打印的摘要记下 ddl；命令行写下的运行配置与直接调用 run_graph
+    写下的完全相同（同一份题集、同一份配置），图版本是 single-v2。
+    """
+    from querypilot.entrypoints import cli
+    from querypilot.evaluation.sql import api as evaluation_api
+
+    schemas = []
+
+    def generator(question, schema, *_):
+        schemas.append(schema)
+        return GeneratedSql(MATCHING_SQL)
+
+    cases, settings = _sample_run(tmp_path, _cases(1))
+    monkeypatch.setattr(evaluation_api, "generate_sql", generator)
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+
+    assert cli.main(["eval", "graph", "--cases", str(cases), "--context-source", "ddl"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    direct = run_graph(cases, settings, generator=generator, context_source="ddl")
+
+    assert schemas == [ITEMS_DDL, ITEMS_DDL]
+    assert summary["context_source"] == "ddl"
+    cli_config = _run_config(settings, summary["run_id"])
+    assert cli_config == _run_config(settings, direct["run_id"])
+    assert cli_config["graph_version"] == "single-v2"
+
+
+def test_cli_accepts_every_context_source_the_graph_knows():
+    """输入：查询图认识的每一种 ContextSource；输出：命令行都接受，原样传下去。
+
+    命令行为了解析快不导入 querying，自己写了一份取值；这个测试在图加了新来源、命令行忘了加时报错。
+    """
+    from typing import get_args
+
+    from querypilot.entrypoints.cli import create_parser
+    from querypilot.querying.api import ContextSource
+
+    parser = create_parser()
+    parsed = [parser.parse_args(["eval", "graph", "--context-source", source]).context_source
+              for source in get_args(ContextSource)]
+
+    assert parsed == list(get_args(ContextSource))
+
+
+def test_cli_rejects_an_unknown_context_source_before_any_run_is_recorded(tmp_path, monkeypatch):
+    """输入：--context-source dll（拼错）；输出：参数解析阶段就退出，没有建立任何运行记录。"""
+    from querypilot.entrypoints import cli
+
+    cases, settings = _sample_run(tmp_path, _cases(1))
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+
+    with pytest.raises(SystemExit):
+        cli.main(["eval", "graph", "--cases", str(cases), "--context-source", "dll"])
+
+    assert not (tmp_path / "artifacts").exists()

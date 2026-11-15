@@ -3,11 +3,10 @@
 import json
 import sys
 from collections import Counter
-from hashlib import sha256
 
 from querypilot.evaluation.api import (
     RetrievalCaseError, evaluate_retrieval, export_public, prepare_retrieval_cases, retrieval_run_config,
-    run_direct, run_graph,
+    run_direct, run_graph, sql_run_config,
 )
 from querypilot.runtime.api import task_run
 
@@ -24,16 +23,13 @@ def run(args, settings) -> int:
         return _retrieval_cases(args)
     if args.action == "retrieval":
         return _retrieval(args, settings)
-    config = {"mode": "sql"} if args.action == "export-public" else {
-        "mode": "sql",
-        "provider": getattr(args, "provider", "graph"),
-        "evidence_mode": getattr(args, "evidence_mode", "none"),
-        "dataset_sha256": sha256(args.cases.read_bytes()).hexdigest(),
-        "prompt_version": "direct-v2" if getattr(args, "provider", "model") != "fixture" else None,
-        "graph_version": "single-v1" if args.action == "graph" else None,
-    }
-    if args.action == "graph":
-        config["workers"] = args.workers
+    if args.action == "export-public":
+        config = {"mode": "sql"}
+    elif args.action == "direct":
+        config = sql_run_config(args.cases, settings, args.provider, args.evidence_mode)
+    else:
+        config = sql_run_config(args.cases, settings, "graph", "none", workers=args.workers,
+                                context_source=args.context_source)
     with task_run("evaluation", settings, command=args.action, private=True, config=config) as context:
         context.attach_stream(sys.stderr)
         if args.action == "export-public":
@@ -45,7 +41,8 @@ def run(args, settings) -> int:
                 result = run_direct(args.cases, settings, provider=args.provider,
                                     evidence_mode=args.evidence_mode, run_context=context)
             else:
-                result = run_graph(args.cases, settings, workers=args.workers, run_context=context)
+                result = run_graph(args.cases, settings, workers=args.workers,
+                                   context_source=args.context_source, run_context=context)
             context.complete(result)
             summary = json.dumps({"output_file": str(context.run_dir / "private/result.json"),
                                   "event_file": str(context.run_dir / "events.jsonl"),

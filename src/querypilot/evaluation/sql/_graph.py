@@ -13,10 +13,9 @@ from ._compare import normalized_rows
 from ._results import (
     CaseRecord, EvalReport, build_report, finish_case_record, new_case_record,
 )
-from querypilot.querying.api import SqlGenerator, build_query_graph, query_result_row_count
-
-
-GRAPH_VERSION = "single-v1"
+from querypilot.querying.api import (
+    GRAPH_VERSION, ContextSource, SqlGenerator, build_query_graph, query_result_row_count,
+)
 
 
 @dataclass
@@ -88,7 +87,7 @@ def _case_record(position: int, case: dict, run: _CaseRun, graph_run_id: str) ->
 
 
 def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator = generate_sql,
-              workers: int = 1, run_context) -> EvalReport:
+              workers: int = 1, context_source: ContextSource = "schema", run_context) -> EvalReport:
     """对一份题集逐题运行查询图并计分，返回报告。
 
     参数：
@@ -98,6 +97,7 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator =
         workers：同时在跑的题数，默认 1。工作线程里只跑查询图和金标准 SQL；结果比对、逐题记录
             和进度事件都在调用方的线程里。每题的 latency_ms 从这道题开始跑图量到金标准 SQL 执行完，
             不含排队和结果比对；大于 1 时会被同时进行的请求拉高，耗时只在线程数相同的运行之间比较。
+        context_source：编译查询图时选的 Schema 来源，默认 schema；记进报告。
         run_context：外层运行上下文，事件和 SQL 审计都写进它；由调用方发布结果和关闭。
     返回：
         EvalReport。records 按题集顺序排列，与哪题先跑完无关。
@@ -114,7 +114,7 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator =
     if not isinstance(cases, list):
         raise ValueError("evaluation cases must be a JSON list")
     batch_run_id = run_context.run_id
-    graph = build_query_graph(settings, generator=generator, run_context=run_context)
+    graph = build_query_graph(settings, generator=generator, run_context=run_context, context_source=context_source)
     middleware = run_context.graph_middleware(row_count=query_result_row_count)
     progress = middleware.logger
     run_started = time.monotonic()
@@ -187,6 +187,7 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator =
         graph_version=GRAPH_VERSION,
     )
     result["workers"] = workers
+    result["context_source"] = context_source
     summary = result["summary"]
     progress.info("eval_finished", extra={
         "run_id": batch_run_id, "component": "evaluation", "provider": "graph",

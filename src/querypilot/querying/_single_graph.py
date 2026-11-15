@@ -16,6 +16,12 @@ from querypilot.sql_generation.api import SqlGenerator, generate_sql
 
 from .models import QueryInput, QueryOutput, QueryState
 
+GRAPH_VERSION = "single-v2"
+"""查询图的实现版本，写进运行配置和评测报告；图的路径或节点职责变了就升版本。"""
+
+ContextSource = Literal["schema", "ddl"]
+"""模型收到的 Schema 来源，编译图时选定；取值含义见 build_query_graph。"""
+
 
 def query_result_row_count(output: Any) -> int | None:
     """从 QueryPilot 输出中只提取安全的行数。
@@ -36,7 +42,7 @@ def build_query_graph(
     *,
     generator: SqlGenerator = generate_sql,
     run_context=None,
-    context_source: Literal["schema", "ddl"] = "schema",
+    context_source: ContextSource = "schema",
 ) -> CompiledStateGraph:
     """编译 Schema → 模型 → SQL 校验 → 只读执行的线性图。
 

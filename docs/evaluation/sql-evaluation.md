@@ -22,6 +22,8 @@
 
 `eval graph --workers N` 同时跑 N 道题（默认 1）：工作线程里只跑查询图和金标准 SQL，结果比对、逐题记录和进度事件都在主线程，报告仍按题集顺序。单题出错照常记为 error 并继续；主线程出错或被 Ctrl+C 中断后不再开始新题。图评测每题的耗时从这道题开始跑图量到金标准 SQL 执行完，不含排队和结果比对；`workers` 大于 1 时会被同时进行的请求拉高，**耗时只在线程数相同的运行之间比较**；线程数记在运行配置和报告里。
 
+`eval graph --context-source` 选模型收到的 Schema 从哪里来（Context Source，编译图时选定，见 [GLOSSARY](../../GLOSSARY.md)）：`schema`（默认）是每张表的表名和列名；`ddl` 是这个库全部用户表的 CREATE TABLE 原文，按表名排序、空一行分隔，从 SQLite 的 `sqlite_master` 现场读取。两种来源下安全检查允许的都是这个库的全部用户表。Context Source 记在运行配置和报告里，建表语句本身不写进日志和运行记录。
+
 `--evidence-mode oracle` 会把 BIRD 的人工提示（evidence）交给模型。这是隔离实验，不代表系统真实的能力，默认为 `none`。
 
 ## 计分
@@ -38,9 +40,9 @@
 
 ## 报告与可追溯
 
-- 报告记录题集 sha256、模型、提示词版本（`direct-v2`）、图版本（`single-v1`）、evidence 模式、执行上限、逐题结果，以及 P50/P95 耗时。
+- 报告记录题集 sha256、模型、提示词版本（`direct-v2`）、图版本（`single-v2`，`schema` 来源的行为与 `single-v1` 相同）、Context Source、evidence 模式、执行上限、逐题结果，以及 P50/P95 耗时。
 - **token 用量**取自模型接口的返回，不另外用 tokenizer 估算：逐题记录里的 `prompt_tokens`（提示词）和 `completion_tokens`（模型输出，推理模型的推理 token 也算在内），报告的 `token_usage` 给出两项各自的题数、总数、平均数和中位数。只对有值的题统计：fixture 不调用模型，没有用量；接口没返回用量的题记为空。
-- 详细结果包含问题和预测 SQL，放在运行目录的 `private/` 下。`eval export-public` 按字段白名单导出一份可以分享的副本（包括线程数、token 用量和每题的冻结标记），但里面仍然有 `predicted_sql`，分享前要检查。
+- 详细结果包含问题和预测 SQL，放在运行目录的 `private/` 下。`eval export-public` 按字段白名单导出一份可以分享的副本（包括线程数、Context Source、token 用量和每题的冻结标记），但里面仍然有 `predicted_sql`，分享前要检查。
 - 对比实验要固定题目、数据库快照、模型、提示词、检索配置和评测器，并保存逐题结果。只靠 12 题，不能支撑准确率结论。
 
 ## 已有结果
