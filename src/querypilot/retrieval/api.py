@@ -19,6 +19,7 @@ from .models import (
     RetrievalRequest,
     RetrievalResult,
     ScopeFile,
+    hit_table,
 )
 
 
@@ -120,6 +121,7 @@ __all__ = [
     "RetrievalMethod",
     "RetrievalResult",
     "RetrievalHit",
+    "hit_table",
     "KnowledgeRetrievalError",
     "Reranker",
     "RerankError",
