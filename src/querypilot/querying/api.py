@@ -3,6 +3,7 @@
 from querypilot.runtime.api import Settings
 from querypilot.sql_generation.api import PROMPT_VERSION, SqlGenerator, generate_sql
 from .models import QueryInput, QueryOutput, QueryState
+from ._context import TableContext, assemble_context
 from ._single_graph import GRAPH_VERSION, ContextSource, build_query_graph, query_result_row_count
 
 
@@ -30,4 +31,4 @@ def ask(database_id: str, question: str, settings: Settings, *, generator: SqlGe
         return result
 
 
-__all__ = ["ask", "build_query_graph", "GRAPH_VERSION", "ContextSource", "QueryInput", "QueryOutput", "QueryState", "SqlGenerator", "query_result_row_count"]
+__all__ = ["ask", "build_query_graph", "GRAPH_VERSION", "ContextSource", "TableContext", "assemble_context", "QueryInput", "QueryOutput", "QueryState", "SqlGenerator", "query_result_row_count"]
