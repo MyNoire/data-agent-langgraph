@@ -31,8 +31,11 @@ def assemble_context(hits: list[RetrievalHit], table_chunks: dict[str, str]) -> 
     tables: dict[str, TableContext] = {}
     for hit in sorted(hits, key=lambda hit: hit.rank):
         table_name = hit_table(hit)
-        if table_name not in tables:
-            tables[table_name] = TableContext(table=table_name, table_chunk=table_chunks[table_name], columns=[hit], relationships=[])
-        else:
-            tables[table_name].columns.append(hit)
+        table = tables.setdefault(table_name, TableContext(
+            table=table_name, table_chunk=table_chunks[table_name], columns=[], relationships=[]))
+        # 表 Hit 不追加：它的正文就是 table_chunk。
+        if hit.knowledge_type == "relationship":
+            table.relationships.append(hit)
+        elif hit.knowledge_type == "column":
+            table.columns.append(hit)
     return list(tables.values())
