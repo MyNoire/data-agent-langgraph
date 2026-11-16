@@ -1,6 +1,7 @@
 """渲染 Retrieval Context：用两个库的真实 Chunk 正文验证每一项"保留"和"去掉"，以及两种结构写法。"""
 
 import json
+import pytest
 from uuid import NAMESPACE_URL, uuid5
 
 from querypilot.querying.api import TableContext, render_context
@@ -58,7 +59,6 @@ TOXICOLOGY_COLUMNS = f'''表 "atom"
     • te: tellurium
     • ca: Calcium
   列 "atom_id" TEXT: the unique id of atoms
-    展示名: atom id
   关系 "atom"."molecule_id" → "molecule"."molecule_id": 原子属于该分子；可将原子元素组成与分子的致癌性标签关联分析。
 
 表 "connected"
@@ -78,8 +78,9 @@ def test_columns_format_keeps_structure_knowledge_and_clues_and_drops_the_rest()
 
     输出（逐字相同）：
     - 表：保留表用途、记录粒度、字段目录、主键、出向外键；去掉"数据库: toxicology"一行和所有 "main". 前缀。
-    - 列：保留列名、声明类型、字段解释；element 的 15 行取值解释完整保留；atom_id 有展示名所以放上；
-      去掉 not_null / 主键位置 / hidden 一行、默认 SQL 表达式，以及值为"来源未说明"的展示名和取值解释。
+    - 列：保留列名、声明类型、字段解释；element 的 15 行取值解释完整保留；去掉 not_null / 主键位置 / hidden
+      一行、默认 SQL 表达式、值为"来源未说明"的展示名和取值解释，以及只是列名换个写法的展示名（atom_id 的
+      "atom id"）。
     - 关系：保留字段对、关联语义，以及同表两条外键都指向 atom 时的角色区别；去掉引用方向、候选 JOIN 和
       ON UPDATE / DELETE / MATCH。
     - 每张表里列在前、关系在后，各自保持组装给出的顺序；表之间空一行。
@@ -140,3 +141,23 @@ def test_ddl_format_replaces_only_the_structure_lines_with_the_create_table_stat
 
     assert rendered == expected
     assert "bond_id TEXT)" not in rendered
+
+
+@pytest.mark.parametrize(("column", "display_name", "kept"), [
+    ("atom_id", "atom id", False),
+    ("atom_id", "Atom ID", False),
+    ("atom_id2", "atom id 2", False),
+    ("atom_id", "Atom identifier", True),
+])
+def test_display_name_is_kept_only_when_it_says_more_than_the_column_name(column, display_name, kept):
+    """输入：atom_id 列的真实正文，列名和展示名换成几种组合（atom_id2 → "atom id 2" 是 toxicology 的真实写法）。
+
+    输出：展示名去掉空格和下划线、忽略大小写后与列名相同就不放；否则放在列行下面。
+    """
+    content = chunks.TOXICOLOGY_ATOM_ATOM_ID.replace("展示名: atom id", f"展示名: {display_name}")
+    context = [TableContext(table="atom", table_chunk=chunks.TOXICOLOGY_ATOM_TABLE,
+                            columns=[_hit(1, "column", content, "atom", column)], relationships=[])]
+
+    rendered = render_context(context, structure_format="columns")
+
+    assert (f"    展示名: {display_name}" in rendered) is kept

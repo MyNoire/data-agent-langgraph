@@ -42,6 +42,13 @@ def _indented(label: str, value: str, indent: str) -> list[str]:
     return [f"{indent}{label}: {first}", *(indent + line for line in rest)]
 
 
+def _restates(display_name: str, column_name: str) -> bool:
+    """展示名是否只是列名换个写法：去掉空格和下划线、忽略大小写后相同（如 atom_id2 与 "atom id 2"）。"""
+    def bare(name: str) -> str:
+        return name.replace(" ", "").replace("_", "").lower()
+    return bare(display_name) == bare(column_name)
+
+
 def _table_lines(table: TableContext, structure_format: StructureFormat, table_ddl: dict[str, str] | None) -> list[str]:
     """一张表的全部行：表头、表用途、记录粒度、结构，然后是命中的列和关系。"""
     fields = _fields(table.table_chunk, TABLE_LABELS)
@@ -56,9 +63,10 @@ def _table_lines(table: TableContext, structure_format: StructureFormat, table_d
         column = _fields(hit.content, COLUMN_LABELS)
         explanation = column["字段解释"]
         lines.append(f'  列 "{hit.column_name}" {column["声明类型"]}' + ("" if explanation == UNKNOWN else f": {explanation}"))
-        for label in ("展示名", "取值解释"):
-            if column[label] != UNKNOWN:
-                lines += _indented(label, column[label], "    ")
+        if column["展示名"] != UNKNOWN and not _restates(column["展示名"], hit.column_name):
+            lines += _indented("展示名", column["展示名"], "    ")
+        if column["取值解释"] != UNKNOWN:
+            lines += _indented("取值解释", column["取值解释"], "    ")
     for hit in table.relationships:
         relationship = _fields(hit.content, RELATIONSHIP_LABELS)
         lines.append(f"  关系 {relationship['同一条外键的有序字段对']}: {relationship['关联语义']}")
@@ -77,7 +85,8 @@ def render_context(context: list[TableContext], *, structure_format: StructureFo
         table_ddl: 表名 → 建表语句；ddl 写法必须提供，且包含 context 里的每张表。
     返回:
         每张表一段、段间空一行的文本。只放有用的结构、知识和线索：去掉数据库名、"main". 前缀、
-        声明标志、默认值、值为"来源未说明"的字段、引用方向、候选 JOIN 和 ON UPDATE / DELETE / MATCH。
+        声明标志、默认值、值为"来源未说明"的字段、只是列名换个写法的展示名、引用方向、候选 JOIN 和
+        ON UPDATE / DELETE / MATCH。
     """
     sections = ["\n".join(_table_lines(table, structure_format, table_ddl)) for table in context]
     return "\n\n".join(sections).replace('"main".', "")
