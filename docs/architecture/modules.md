@@ -35,6 +35,7 @@ tests/architecture/test_module_boundaries.py 检查方向、跨模块私有访�
 | --- | --- | --- |
 | querying.api | ask(database_id, question, settings, *, generator=..., run_context=None) → 原 sql/result | 创建查询记录；模型和数据库错误保留；没有检索、修复、重试 |
 | querying.api | build_query_graph(settings, *, generator=..., run_context=None, context_source="schema") → 编译图；GRAPH_VERSION 为图版本，ContextSource 为可选的 Schema 来源（schema / ddl） | 编译不建运行目录；手动执行时提供任务上下文；不认识的 context_source 在编译时抛 ValueError |
+| querying.api | assemble_context(hits, table_chunks) → list[TableContext]；render_context(context, *, structure_format, table_ddl=None) → Schema 文本（规则版本 SCHEMA_RENDER_VERSION） | 都是纯函数：前者把 Hit 按所属的表归拢成 Retrieval Context（关系归源表），后者按行标签筛选 Chunk 正文，columns / ddl 两种结构写法；还没有接进图 |
 | sql_generation.api | direct_prompt → 文本；generate_sql(question, schema, evidence, settings) → GeneratedSql（SQL 和接口报告的 token 用量） | 前者纯计算，后者请求模型；direct-v2、超时与客户端参数保持 |
 | databases.api | DatabaseRegistry(data_dir).list/register/get → 登记映射或路径 | 注册写索引；不接受 data_dir 以外的源 |
 | databases.api | get_schema(database_id, settings) → 表名到列名；format_schema → 文本；get_table_ddl(database_id, settings) → 表名到 CREATE TABLE 原文 | 自行定位；未知 ID 抛 RegistryError；结构读取不建任务 |
