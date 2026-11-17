@@ -1,4 +1,4 @@
-"""检索的 SQL：BM25 搜索、向量搜索，以及读出一个 Scope 的全部 Chunk。
+"""检索的 SQL：BM25 搜索、向量搜索，以及读出一个 Scope 的全部 Chunk 或指定表的表 Chunk。
 
 可检索字段必须与知识存储里 BM25 索引的定义一致；两边是否一致由真实 PG 集成测试保证。
 """
@@ -175,4 +175,28 @@ def scope_chunks(session: ReadSession) -> list[dict]:
     scope = session.scope
     return session.fetch_rows(SCOPE_CHUNKS_SQL, {
         "corpus_id": scope.corpus_id, "database_id": scope.database_id, "schema_version": scope.schema_version,
+    })
+
+
+TABLE_CHUNKS_SQL = """
+    SELECT c.table_name, c.content
+    FROM querypilot_kb.knowledge_chunks AS c
+    WHERE c.corpus_id = %(corpus_id)s
+        AND c.database_id = %(database_id)s
+        AND c.schema_version = %(schema_version)s
+        AND c.knowledge_type = 'table'
+        AND c.table_name = ANY(%(tables)s::text[])
+    ORDER BY c.table_name COLLATE "C" ASC
+"""
+
+
+def table_chunks(session: ReadSession, tables: list[str]) -> list[dict]:
+    """读出 session 的 Knowledge Scope 下这些表的表 Chunk，每行含 table_name 和 content。
+
+    Scope 里没有的表名不返回；行数和字节数受读取层的上限约束。
+    """
+    scope = session.scope
+    return session.fetch_rows(TABLE_CHUNKS_SQL, {
+        "corpus_id": scope.corpus_id, "database_id": scope.database_id, "schema_version": scope.schema_version,
+        "tables": list(tables),
     })

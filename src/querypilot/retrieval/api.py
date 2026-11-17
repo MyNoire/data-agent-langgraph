@@ -1,4 +1,4 @@
-"""检索的公开入口：retrieve_knowledge，以及 knowledge 来源用的 load_scope_chunks。"""
+"""检索的公开入口：retrieve_knowledge，以及查询图读知识用的 load_scope_chunks 和 load_table_chunks。"""
 
 from hashlib import sha256
 import time
@@ -137,9 +137,35 @@ def load_scope_chunks(scope: KnowledgeScope, settings: KnowledgeStorageSettings 
     return [RetrievalHit(rank=i, score=0.0, **row) for i, row in enumerate(rows, start=1)]
 
 
+def load_table_chunks(scope: KnowledgeScope, tables: list[str],
+                      settings: KnowledgeStorageSettings | None = None) -> dict[str, str]:
+    """读出一个 Knowledge Scope 下这些表的表 Chunk，给查询图的 retrieval 来源补齐表级知识。
+
+    列 Hit 和关系 Hit 所属的表，它自己的表 Chunk 不一定也被检索到，所以按表名再读一次。
+
+    参数：
+        scope：要读的 Knowledge Scope；只当作数据，不是授权依据。
+        tables：表名，写法与 Chunk 的 table_name 相同。
+        settings：知识存储的读取配置（使用只读账号）；没传时按 QUERYPILOT_KNOWLEDGE_* 配置创建。
+    返回：
+        表名 → 表 Chunk 正文；Scope 里没有的表名不出现。
+    异常：
+        KnowledgeRetrievalError：沿用读取层的错误类别。
+    副作用：
+        只读访问知识库一次；不调用 Embedding 或 Rerank 服务。
+    """
+    try:
+        with open_read_scope(scope, settings or KnowledgeStorageSettings()) as session:
+            rows = _search.table_chunks(session, tables)
+    except KnowledgeReadError as exc:
+        raise KnowledgeRetrievalError(exc.error_type, str(exc)) from exc
+    return {row["table_name"]: row["content"] for row in rows}
+
+
 __all__ = [
     "retrieve_knowledge",
     "load_scope_chunks",
+    "load_table_chunks",
     "RetrievalRequest",
     "RetrievalMethod",
     "RetrievalResult",

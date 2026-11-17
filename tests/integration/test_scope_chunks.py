@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 from querypilot.knowledge.api import KnowledgeScope, import_corpus, load_corpus
-from querypilot.retrieval.api import KnowledgeRetrievalError, load_scope_chunks
+from querypilot.retrieval.api import KnowledgeRetrievalError, load_scope_chunks, load_table_chunks
 
 
 def _import(settings, factory, name: str):
@@ -51,3 +51,18 @@ def test_unknown_scope_is_a_retrieval_error(pg_search_database, r3_corpus_factor
         load_scope_chunks(KnowledgeScope(**{**scope.model_dump(), "corpus_id": "0" * 64}), pg_search_database)
 
     assert caught.value.error_type == "scope_not_found"
+
+
+def test_table_chunks_are_read_by_table_name_within_the_scope_only(pg_search_database, r3_corpus_factory):
+    """输入：两份 Corpus 的表名相同（都来自同一个原创构建），读其中一份 Scope 的 items 表，外加一个不存在的表名。
+
+    输出：只有 items 一项，正文与这份 Corpus 的 items 表 Chunk 相同；不存在的表名不出现，另一份 Corpus 的
+    同名表不会混进来。
+    """
+    source, scope = _import(pg_search_database, r3_corpus_factory, "first")
+    _import(pg_search_database, r3_corpus_factory, "second")
+
+    chunks = load_table_chunks(scope, ["items", "no_such_table"], pg_search_database)
+
+    expected = next(chunk for chunk in source.chunks if chunk.knowledge_type == "table" and chunk.table_name == "items")
+    assert chunks == {"items": expected.content}
