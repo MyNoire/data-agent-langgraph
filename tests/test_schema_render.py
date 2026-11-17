@@ -161,3 +161,79 @@ def test_display_name_is_kept_only_when_it_says_more_than_the_column_name(column
     rendered = render_context(context, structure_format="columns")
 
     assert (f"    展示名: {display_name}" in rendered) is kept
+
+
+def _composite_relationship(tmp_path, *, meaning: str | None) -> list[TableContext]:
+    """用真实的 Corpus 构建流程生成原创库 demo 的复合外键 events(tenant_ref, item_ref) → items。
+
+    meaning 为 None 时语义摘要不覆盖这条外键，模板写"端点含义"而不写"关联语义"。
+    """
+    from conftest import _curated, _write_json
+
+    from querypilot.knowledge.api import load_corpus
+    from querypilot.knowledge.knowledge_corpus._corpus import build_knowledge_corpus
+
+    semantic = tmp_path / "config" / "semantics.json"
+    semantic.parent.mkdir()
+    relationships = [] if meaning is None else [{
+        "source_table": "events", "source_columns": ["tenant_ref", "item_ref"], "target_table": "items",
+        "target_columns": ["tenant_id", "item_id"], "meaning": meaning}]
+    _write_json(semantic, {"database_id": "demo", "version": "t", "author": "原创测试",
+                           "tables": {"items": {"purpose": "租户内物品。", "row_grain": "一件物品。"},
+                                      "events": {"purpose": "物品事件。", "row_grain": "一次事件。"}},
+                           "relationships": relationships})
+    build_knowledge_corpus(_curated(tmp_path), semantic, tmp_path / "corpus", "demo")
+    chunks = load_corpus(tmp_path / "corpus").chunks
+    table = next(c for c in chunks if c.knowledge_type == "table" and c.table_name == "events")
+    relationship = next(c for c in chunks if c.knowledge_type == "relationship")
+    return [TableContext(table="events", table_chunk=table.content, columns=[],
+                         relationships=[_hit(1, "relationship", relationship.content)])]
+
+
+EVENTS_HEADER = '''表 "events"
+  表用途: 物品事件。
+  记录粒度: 一次事件。
+  字段目录: "item_ref", "tenant_ref"
+  主键: 未声明
+  外键: "tenant_ref", "item_ref" → "items" ("tenant_id", "item_id")
+  关系 "events"."tenant_ref" → "items"."tenant_id"; "events"."item_ref" → "items"."item_id"'''
+COMPOSITE = "    复合外键: 上述字段对共同构成一条关系，JOIN 必须保留全部 AND 条件。"
+
+
+def test_composite_foreign_key_keeps_the_keep_every_and_condition_line(tmp_path):
+    """输入：带关联语义的复合外键（两个字段对）。
+
+    输出：关系行带关联语义，下面保留"复合外键：JOIN 必须保留全部 AND 条件"——它提醒模型别只写一半的
+    ON 条件，不能和候选 JOIN 一起丢掉。
+    """
+    rendered = render_context(_composite_relationship(tmp_path, meaning="事件关联同租户物品。"),
+                              structure_format="columns")
+
+    assert rendered == EVENTS_HEADER + ": 事件关联同租户物品。\n" + COMPOSITE
+
+
+def test_relationship_without_semantics_shows_each_endpoint_meaning(tmp_path):
+    """输入：语义摘要没有覆盖的复合外键，模板对每个字段对写一行"端点含义"，没有"关联语义"。
+
+    输出：关系行只有字段对，下面是两行端点含义（一行都不少）和复合外键提醒；不因缺关联语义而报错。
+    """
+    rendered = render_context(_composite_relationship(tmp_path, meaning=None), structure_format="columns")
+
+    assert rendered == EVENTS_HEADER + "\n" + "\n".join([
+        '    端点含义: "tenant_ref"（含义: referenced tenant identifier） → "tenant_id"（含义: tenant identifier）',
+        '    端点含义: "item_ref"（含义: referenced item identifier） → "item_id"（含义: item identifier）',
+        COMPOSITE])
+
+
+def test_a_line_the_renderer_does_not_know_fails_loudly_instead_of_being_swallowed():
+    """输入：关系 Chunk 里多出一行模板新加的标签（这里用"新标签"模拟）。
+
+    输出：ValueError。只有取值解释和角色区别允许续行；别处出现不认识的行说明模板变了，要同步改渲染规则，
+    不能把它悄悄接到上一行后面再随上一行丢掉。
+    """
+    content = chunks.TOXICOLOGY_ATOM_FK0.replace("ON UPDATE", "新标签: 模板新增的内容\nON UPDATE")
+    context = [TableContext(table="atom", table_chunk=chunks.TOXICOLOGY_ATOM_TABLE, columns=[],
+                            relationships=[_hit(1, "relationship", content)])]
+
+    with pytest.raises(ValueError):
+        render_context(context, structure_format="columns")
