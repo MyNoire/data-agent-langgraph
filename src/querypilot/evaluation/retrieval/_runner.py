@@ -7,10 +7,8 @@ from math import ceil
 from pathlib import Path
 from statistics import median
 
-from querypilot.knowledge.api import EmbeddingSettings, KnowledgeStorageSettings, OpenAIEmbedder
 from querypilot.retrieval.api import (
-    KnowledgeRetrievalError, RerankSettings, RetrievalMethod, RetrievalRequest, RetrievalResult,
-    SiliconFlowReranker, retrieve_knowledge,
+    KnowledgeRetrievalError, RetrievalMethod, RetrievalRequest, RetrievalResult, shared_retriever,
 )
 from querypilot.runtime.api import Settings, task_run
 
@@ -29,19 +27,6 @@ def retrieval_run_config(cases_file: Path, method: RetrievalMethod = "lexical", 
     """检索评测运行记录的安全配置：评测类别、题集 hash、检索方法、是否重排和线程数。CLI 建外层运行时也用这一份。"""
     return {"mode": "retrieval", "dataset_sha256": sha256(cases_file.read_bytes()).hexdigest(), "method": method,
             "rerank": rerank, "workers": workers}
-
-
-def _default_retriever(method: RetrievalMethod, rerank: bool) -> Retriever:
-    """用 .env 中的知识库只读配置调用 retrieve_knowledge。
-
-    vector 和 hybrid 在这里按 QUERYPILOT_EMBEDDING_* 创建一个 Embedder，所有题共用同一个客户端；
-    lexical 不创建，不需要 Embedding 配置。开启重排时按 QUERYPILOT_RERANK_* 创建一个 Reranker，
-    所有题共用；不开时不创建，不需要 Reranker 配置。
-    """
-    storage = KnowledgeStorageSettings()
-    embedder = None if method == "lexical" else OpenAIEmbedder(EmbeddingSettings())
-    reranker = SiliconFlowReranker(RerankSettings()) if rerank else None
-    return lambda request: retrieve_knowledge(request, storage, embedder, reranker)
 
 
 def _summarize(records: list[dict]) -> dict:
@@ -106,7 +91,7 @@ def evaluate_retrieval(cases_file: Path, settings: Settings, *, method: Retrieva
     raw = cases_file.read_bytes()
     case_set = RetrievalCaseSet.model_validate_json(raw)
     dataset_sha256 = sha256(raw).hexdigest()
-    retriever = retriever or _default_retriever(method, rerank)
+    retriever = retriever or shared_retriever(method, rerank)
     owned = run_context is None
     with task_run("evaluation", settings, run_context=run_context, command="retrieval",
                   config=retrieval_run_config(cases_file, method, rerank, workers)) as context:

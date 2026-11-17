@@ -28,11 +28,12 @@ def run(args, settings) -> int:
     elif args.action == "direct":
         config = sql_run_config(args.cases, settings, args.provider, args.evidence_mode)
     else:
-        # knowledge 来源的 Scope 来自检索题集；其他来源不读它。
+        # knowledge / retrieval 来源的 Scope 来自检索题集；其他来源不读它。
         knowledge_scopes = (knowledge_scopes_from_cases(args.retrieval_cases)
-                            if args.context_source == "knowledge" else None)
+                            if args.context_source in ("knowledge", "retrieval") else None)
         graph_options = {"workers": args.workers, "context_source": args.context_source,
-                         "structure_format": args.structure_format, "knowledge_scopes": knowledge_scopes}
+                         "structure_format": args.structure_format, "knowledge_scopes": knowledge_scopes,
+                         "method": args.method, "rerank": args.rerank}
         config = sql_run_config(args.cases, settings, "graph", "none", **graph_options)
     with task_run("evaluation", settings, command=args.action, private=True, config=config) as context:
         context.attach_stream(sys.stderr)

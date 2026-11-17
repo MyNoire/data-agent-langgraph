@@ -71,4 +71,8 @@ class EvalReport(TypedDict):
     structure_format: NotRequired[str]
     schema_render_version: NotRequired[str]
     knowledge_scopes: NotRequired[dict[str, dict[str, str]]]
+    method: NotRequired[str]
+    rerank: NotRequired[bool]
+    top_k: NotRequired[int]
+    retrieval: NotRequired[list[dict[str, str | None]]]
 

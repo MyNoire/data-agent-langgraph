@@ -4,6 +4,7 @@ from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -18,7 +19,10 @@ from querypilot.querying.api import (
     GRAPH_VERSION, ContextSource, QueryContext, SqlGenerator, StructureFormat, build_query_graph,
     query_result_row_count,
 )
-from querypilot.retrieval.api import KnowledgeScope, RetrievalHit, load_scope_chunks
+from querypilot.retrieval.api import (
+    KnowledgeScope, RetrievalHit, RetrievalMethod, RetrievalRequest, RetrievalResult, load_scope_chunks,
+    load_table_chunks, retrieve_knowledge,
+)
 
 
 @dataclass
@@ -82,7 +86,8 @@ def _case_record(position: int, case: dict, run: _CaseRun, graph_run_id: str) ->
         record["valid_sql"] = True
         record["row_count"] = run.result["row_count"]
     if run.error is not None:
-        record["error_type"] = type(run.error).__name__
+        # 带类别的错误（检索、知识读取）记类别，否则记异常类名。
+        record["error_type"] = getattr(run.error, "error_type", None) or type(run.error).__name__
         record["error"] = f"{type(run.error).__name__}: {run.error}"
     else:
         record["execution_match"] = normalized_rows(run.result["rows"]) == normalized_rows(run.gold_rows)
@@ -94,6 +99,9 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator =
               structure_format: StructureFormat = "columns",
               knowledge_scopes: dict[str, KnowledgeScope] | None = None,
               knowledge_reader: Callable[[KnowledgeScope], list[RetrievalHit]] = load_scope_chunks,
+              method: RetrievalMethod = "hybrid", rerank: bool = True,
+              retriever: Callable[[RetrievalRequest], RetrievalResult] | None = None,
+              table_chunk_reader: Callable[[KnowledgeScope, list[str]], dict[str, str]] = load_table_chunks,
               run_context) -> EvalReport:
     """对一份题集逐题运行查询图并计分，返回报告。
 
@@ -109,6 +117,8 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator =
         knowledge_scopes：每题调用查询图时作为运行时 context 传入的"db_id → Knowledge Scope"对照表；
             只有 knowledge 来源会用。
         knowledge_reader：knowledge 来源读出一个 Scope 全部 Chunk 的函数，默认读知识库。
+        method、rerank、retriever、table_chunk_reader：retrieval 来源的检索配置、检索函数（None 时为
+            retrieve_knowledge）和表 Chunk 读取函数，编译查询图时传入。
         run_context：外层运行上下文，事件和 SQL 审计都写进它；由调用方发布结果和关闭。
     返回：
         EvalReport。records 按题集顺序排列，与哪题先跑完无关。
@@ -125,8 +135,26 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator =
     if not isinstance(cases, list):
         raise ValueError("evaluation cases must be a JSON list")
     batch_run_id = run_context.run_id
+    # 记下每次检索实际用到的版本（方法、两个 Profile、检索配置版本），不同的才记；工作线程会同时写。
+    retrieval_versions: list[dict] = []
+    versions_lock = threading.Lock()
+    base_retriever = retriever or retrieve_knowledge
+
+    def recording_retriever(request: RetrievalRequest) -> RetrievalResult:
+        """调用检索函数，把结果里的版本信息记进 retrieval_versions；不记 Hit 或查询原文。"""
+        result = base_retriever(request)
+        version = {"method": result.method, "embedding_profile_id": result.embedding_profile_id,
+                   "rerank_profile_id": result.rerank_profile_id,
+                   "retrieval_config_version": result.retrieval_config_version}
+        with versions_lock:
+            if version not in retrieval_versions:
+                retrieval_versions.append(version)
+        return result
+
     graph = build_query_graph(settings, generator=generator, run_context=run_context, context_source=context_source,
-                              structure_format=structure_format, knowledge_reader=knowledge_reader)
+                              structure_format=structure_format, knowledge_reader=knowledge_reader,
+                              retriever=recording_retriever, table_chunk_reader=table_chunk_reader,
+                              method=method, rerank=rerank)
     query_context = QueryContext(knowledge_scopes=knowledge_scopes or {})
     middleware = run_context.graph_middleware(row_count=query_result_row_count)
     progress = middleware.logger
@@ -201,6 +229,8 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator =
     )
     result["workers"] = workers
     result["context_source"] = context_source
+    if context_source == "retrieval":
+        result["retrieval"] = retrieval_versions
     summary = result["summary"]
     progress.info("eval_finished", extra={
         "run_id": batch_run_id, "component": "evaluation", "provider": "graph",

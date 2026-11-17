@@ -1,5 +1,6 @@
 """检索的公开入口：retrieve_knowledge，以及查询图读知识用的 load_scope_chunks 和 load_table_chunks。"""
 
+from collections.abc import Callable
 from hashlib import sha256
 import time
 from uuid import uuid4
@@ -37,7 +38,7 @@ def _vector_rows(session: ReadSession, request: RetrievalRequest, embedder: Embe
     return _search.vector_chunks(session, request, embedder.profile_id, query_vector, limit)
 
 
-def retrieve_knowledge(request: RetrievalRequest, settings: KnowledgeStorageSettings,
+def retrieve_knowledge(request: RetrievalRequest, settings: KnowledgeStorageSettings | None = None,
                        embedder: Embedder | None = None, reranker: Reranker | None = None) -> RetrievalResult:
     """在 request.scope 指定的 Corpus 中按 request.method 做一次检索，request.rerank 为真时再重排。
 
@@ -51,7 +52,7 @@ def retrieve_knowledge(request: RetrievalRequest, settings: KnowledgeStorageSett
 
     参数：
         request：查询原文、Knowledge Scope、检索方法、是否重排、top_k 和知识类型。
-        settings：知识存储的读取配置（使用只读账号）。
+        settings：知识存储的读取配置（使用只读账号）；没传时按 QUERYPILOT_KNOWLEDGE_* 配置创建。
         embedder：vector 和 hybrid 使用的 Embedder，决定 Embedding Profile。没传时按
             QUERYPILOT_EMBEDDING_* 配置创建 OpenAIEmbedder；lexical 不创建也不调用。批量调用时
             应由调用方创建一个并传入，复用同一个客户端。
@@ -82,7 +83,7 @@ def retrieve_knowledge(request: RetrievalRequest, settings: KnowledgeStorageSett
             reranker = SiliconFlowReranker(RerankSettings())
         # 开启重排时先取固定数量的候选，重排后再截到 top_k。
         limit = _rerank.RERANK_CANDIDATES if request.rerank else request.top_k
-        with open_read_scope(request.scope, settings) as session:
+        with open_read_scope(request.scope, settings or KnowledgeStorageSettings()) as session:
             if request.method == "lexical":
                 rows = _search.search_chunks(session, request, terms, limit)
             elif request.method == "vector":
@@ -162,8 +163,23 @@ def load_table_chunks(scope: KnowledgeScope, tables: list[str],
     return {row["table_name"]: row["content"] for row in rows}
 
 
+def shared_retriever(method: RetrievalMethod, rerank: bool,
+                     settings: KnowledgeStorageSettings | None = None) -> Callable[[RetrievalRequest], RetrievalResult]:
+    """一次批量运行共用的检索函数：按 .env 的配置调用 retrieve_knowledge，所有请求共用同一组客户端。
+
+    vector 和 hybrid 在这里按 QUERYPILOT_EMBEDDING_* 创建一个 Embedder；lexical 不创建，不需要 Embedding
+    配置。开启重排时按 QUERYPILOT_RERANK_* 创建一个 Reranker；不开时不创建。客户端会被多个线程同时使用。
+    请求里的 method 和 rerank 应与这里的一致，否则没有对应的客户端时 retrieve_knowledge 会自己再建一个。
+    """
+    storage = settings or KnowledgeStorageSettings()
+    embedder = None if method == "lexical" else OpenAIEmbedder(EmbeddingSettings())
+    reranker = SiliconFlowReranker(RerankSettings()) if rerank else None
+    return lambda request: retrieve_knowledge(request, storage, embedder, reranker)
+
+
 __all__ = [
     "retrieve_knowledge",
+    "shared_retriever",
     "load_scope_chunks",
     "load_table_chunks",
     "RetrievalRequest",

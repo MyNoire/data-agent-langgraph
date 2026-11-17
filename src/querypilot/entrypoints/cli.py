@@ -46,14 +46,22 @@ def create_parser() -> argparse.ArgumentParser:
             command.add_argument("--workers", type=_positive_int, default=1, help="同时在跑的题数，至少为 1，默认 1")
             # 取值与 querying 的 ContextSource、StructureFormat 相同（有测试比对）；这里不导入 querying，
             # 解析参数时不加载模型和图。
-            command.add_argument("--context-source", choices=("schema", "ddl", "knowledge"), default="schema",
+            command.add_argument("--context-source", choices=("schema", "ddl", "knowledge", "retrieval"),
+                                 default="schema",
                                  help="模型收到的 Schema 来源：schema 为表名和列名（默认），ddl 为建表语句，"
-                                      "knowledge 为这个库的全部知识（需要 --retrieval-cases）")
+                                      "knowledge 为这个库的全部知识，retrieval 为用问题检索到的知识"
+                                      "（后两种需要 --retrieval-cases）")
             command.add_argument("--structure-format", choices=("columns", "ddl"), default="columns",
-                                 help="knowledge 来源里表结构的写法：columns 为字段目录、主键、外键（默认），"
-                                      "ddl 为建表语句；其他来源忽略")
+                                 help="knowledge / retrieval 来源里表结构的写法：columns 为字段目录、主键、外键"
+                                      "（默认），ddl 为建表语句；其他来源忽略")
             command.add_argument("--retrieval-cases", type=Path,
-                                 help="检索题集文件，knowledge 来源从中取各库的 Knowledge Scope")
+                                 help="检索题集文件，knowledge / retrieval 来源从中取各库的 Knowledge Scope")
+            command.add_argument("--method", choices=("lexical", "vector", "hybrid"), default="hybrid",
+                                 help="retrieval 来源的检索方法（默认 hybrid，与查询图相同）；vector 和 hybrid "
+                                      "会调用 Embedding 服务，产生费用")
+            command.add_argument("--rerank", action=argparse.BooleanOptionalAction, default=True,
+                                 help="retrieval 来源检索后是否重排（默认开启，与查询图相同）；会调用 Reranker "
+                                      "服务，产生费用")
         command.set_defaults(command=f"eval.{name}")
     retrieval = _artifacts(eval_actions.add_parser("retrieval", help="对检索题集跑一次检索评测"))
     retrieval.add_argument("--cases", type=Path, required=True)
@@ -163,8 +171,8 @@ def main(argv: list[str] | None = None) -> int:
     """
     parser = create_parser()
     args = parser.parse_args(argv)
-    if getattr(args, "context_source", None) == "knowledge" and args.retrieval_cases is None:
-        parser.error("--context-source knowledge 需要 --retrieval-cases")
+    if getattr(args, "context_source", None) in ("knowledge", "retrieval") and args.retrieval_cases is None:
+        parser.error(f"--context-source {args.context_source} 需要 --retrieval-cases")
     try:
         settings = get_settings()
         if hasattr(args, "artifacts_dir"):
