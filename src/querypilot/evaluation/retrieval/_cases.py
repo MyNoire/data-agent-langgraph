@@ -73,6 +73,18 @@ def knowledge_scopes_from_cases(cases_file: Path) -> dict[str, KnowledgeScope]:
     return scopes
 
 
+def relevant_tables_from_cases(cases_file: Path) -> dict[int, list[str]]:
+    """从检索题集读出每道题 Relevant Set 的表，给 SQL 评测的 retrieval 来源判断"表是否拿全"。
+
+    参数：
+        cases_file：prepare_retrieval_cases 写出的检索题集。
+    返回：
+        题号 → Relevant Set 的表（Corpus 里的写法）。
+    """
+    case_set = RetrievalCaseSet.model_validate_json(cases_file.read_bytes())
+    return {case.question_id: case.relevant_tables for case in case_set.cases}
+
+
 def _corpus_schema(corpus_dir: Path) -> _CorpusSchema:
     """读取并校验一份 Corpus，取出它的 Knowledge Scope 和全部列 Chunk 的表列名称。"""
     corpus = load_corpus(corpus_dir)

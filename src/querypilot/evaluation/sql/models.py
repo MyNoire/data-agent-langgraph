@@ -27,6 +27,7 @@ class CaseRecord(TypedDict):
     frozen: NotRequired[bool]
     prompt_tokens: NotRequired[int | None]
     completion_tokens: NotRequired[int | None]
+    tables_complete: NotRequired[bool]
 
 
 class EvalSummary(TypedDict):
@@ -75,4 +76,5 @@ class EvalReport(TypedDict):
     rerank: NotRequired[bool]
     top_k: NotRequired[int]
     retrieval: NotRequired[list[dict[str, str | None]]]
+    tables_complete: NotRequired[dict[str, dict]]
 

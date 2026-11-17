@@ -41,22 +41,29 @@ def sql_run_config(cases_path: Path, settings: Settings, provider: str, evidence
                    workers: int | None = None, context_source: ContextSource | None = None,
                    structure_format: StructureFormat = "columns",
                    knowledge_scopes: dict[str, KnowledgeScope] | None = None,
-                   method: RetrievalMethod = "hybrid", rerank: bool = True) -> dict:
+                   method: RetrievalMethod = "hybrid", rerank: bool = True,
+                   relevant_tables: dict[int, list[str]] | None = None) -> dict:
     """SQL 评测写进运行配置的参数；命令行和 run_direct/run_graph 用同一份。
 
     参数：cases_path 为题集路径，settings 为运行配置，provider 和 evidence_mode 为评测模式；
         workers 和 context_source 只有图评测传（direct 评测不传，配置里也就没有这两项）；
         structure_format 和 knowledge_scopes 只在 context_source 为 knowledge 或 retrieval 时记下，另加渲染
-        版本；method、rerank 只在 retrieval 时记下，另加 top_k。
+        版本；method、rerank 只在 retrieval 时记下，另加 top_k。relevant_tables（题号 → Relevant Set 的表）
+        只用来检查 retrieval 的每道题都有 Relevant Set，不写进配置。
     返回：不含题目、SQL 或完整设置的配置字典；读取题集计算摘要，I/O 错误原样传播。
-    异常：ValueError：knowledge 或 retrieval 来源下对照表缺了题集用到的库。命令行和 run_graph 都在建立运行
-        记录之前调用这里，所以缺 Scope 时不会留下运行记录。
+    异常：ValueError：knowledge 或 retrieval 来源下对照表缺了题集用到的库，或 retrieval 来源下有题号在
+        relevant_tables 里找不到。命令行和 run_graph 都在建立运行记录之前调用这里，所以缺了时不会留下运行记录。
     """
     case_bytes = cases_path.read_bytes()
     if context_source in KNOWLEDGE_SOURCES:
         missing = sorted({case["db_id"] for case in json.loads(case_bytes)} - set(knowledge_scopes or {}))
         if missing:
             raise ValueError(f"no knowledge scope for databases {missing}")
+    if context_source == "retrieval":
+        missing_cases = [case["question_id"] for case in json.loads(case_bytes)
+                         if case["question_id"] not in (relevant_tables or {})]
+        if missing_cases:
+            raise ValueError(f"no relevant set for questions {missing_cases}")
     return {"mode": "sql", "dataset_sha256": sha256(case_bytes).hexdigest(), "provider": provider,
             "evidence_mode": evidence_mode if provider != "fixture" else None,
             "prompt_version": PROMPT_VERSION if provider != "fixture" else None,
@@ -104,6 +111,7 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator |
               method: RetrievalMethod = "hybrid", rerank: bool = True,
               retriever: Callable[[RetrievalRequest], RetrievalResult] | None = None,
               table_chunk_reader: Callable[[KnowledgeScope, list[str]], dict[str, str]] | None = None,
+              relevant_tables: dict[int, list[str]] | None = None,
               run_context=None) -> EvalReport:
     """完整运行单图评测并保存私有报告。
 
@@ -111,12 +119,12 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator |
         context_source（默认 schema）和 structure_format（默认 columns，只对 knowledge 有效），
         knowledge / retrieval 来源要的"db_id → Knowledge Scope"对照表和知识读取函数（默认读知识库），
         retrieval 来源的检索方法、是否重排（默认 hybrid + 重排）、检索函数（默认整次运行共用一组 Embedder
-        和 Reranker）和表 Chunk 读取函数，及可选外层上下文。
+        和 Reranker）、表 Chunk 读取函数和每道题 Relevant Set 的表（题号 → 表），及可选外层上下文。
     返回：EvalReport，records 按题集顺序；题内的错误记在那一题上并继续，一道预测都没有时两个比率为 None。
         knowledge / retrieval 来源另记结构写法、渲染版本和各库的 Scope；retrieval 另记 method、rerank、
-        top_k，以及实际用到的检索版本（retrieval）。
-    异常：ValueError：knowledge / retrieval 来源下对照表缺了题集用到的库；在建立运行记录之前报出（见
-        sql_run_config）。
+        top_k、实际用到的检索版本（retrieval），以及逐题和汇总的"表是否拿全"（tables_complete）。
+    异常：ValueError：knowledge / retrieval 来源下对照表缺了题集用到的库，或 retrieval 来源下有题没有
+        Relevant Set；在建立运行记录之前报出（见 sql_run_config）。
     副作用：读取 SQLite，可调用模型，knowledge 来源每题读一次知识库；一个批次一份运行，子题不另建根。
     """
     from ._graph import run_graph as perform
@@ -125,8 +133,8 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator |
     with task_run("evaluation", settings, run_context=run_context, command="graph", private=True,
                   config=sql_run_config(cases_path, settings, "graph", "none", workers=workers,
                                         context_source=context_source, structure_format=structure_format,
-                                        knowledge_scopes=knowledge_scopes, method=method,
-                                        rerank=rerank)) as context:
+                                        knowledge_scopes=knowledge_scopes, method=method, rerank=rerank,
+                                        relevant_tables=relevant_tables)) as context:
         # 只有 retrieval 才建检索客户端：其他来源不需要 Embedding / Rerank 配置。
         if context_source == "retrieval" and retriever is None:
             retriever = shared_retriever(method, rerank)
@@ -135,7 +143,7 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator |
                          knowledge_scopes=knowledge_scopes or {},
                          knowledge_reader=knowledge_reader or load_scope_chunks, method=method, rerank=rerank,
                          retriever=retriever, table_chunk_reader=table_chunk_reader or load_table_chunks,
-                         run_context=context)
+                         relevant_tables=relevant_tables, run_context=context)
         result.update(_knowledge_fields(context_source, structure_format, knowledge_scopes, method, rerank))
         secrets = (settings.model_api_key,) if settings.model_api_key != "local" else ()
         result = sanitize_private(result, secrets=secrets)

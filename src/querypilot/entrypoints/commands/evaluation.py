@@ -6,7 +6,7 @@ from collections import Counter
 
 from querypilot.evaluation.api import (
     RetrievalCaseError, evaluate_retrieval, export_public, knowledge_scopes_from_cases, prepare_retrieval_cases,
-    retrieval_run_config, run_direct, run_graph, sql_run_config,
+    relevant_tables_from_cases, retrieval_run_config, run_direct, run_graph, sql_run_config,
 )
 from querypilot.runtime.api import task_run
 
@@ -33,7 +33,10 @@ def run(args, settings) -> int:
                             if args.context_source in ("knowledge", "retrieval") else None)
         graph_options = {"workers": args.workers, "context_source": args.context_source,
                          "structure_format": args.structure_format, "knowledge_scopes": knowledge_scopes,
-                         "method": args.method, "rerank": args.rerank}
+                         "method": args.method, "rerank": args.rerank,
+                         # retrieval 来源按 Relevant Set 判断每题的表是否拿全。
+                         "relevant_tables": (relevant_tables_from_cases(args.retrieval_cases)
+                                             if args.context_source == "retrieval" else None)}
         config = sql_run_config(args.cases, settings, "graph", "none", **graph_options)
     with task_run("evaluation", settings, command=args.action, private=True, config=config) as context:
         context.attach_stream(sys.stderr)

@@ -20,8 +20,8 @@ from querypilot.querying.api import (
     query_result_row_count,
 )
 from querypilot.retrieval.api import (
-    KnowledgeScope, RetrievalHit, RetrievalMethod, RetrievalRequest, RetrievalResult, load_scope_chunks,
-    load_table_chunks, retrieve_knowledge,
+    KnowledgeScope, RetrievalHit, RetrievalMethod, RetrievalRequest, RetrievalResult, hit_table,
+    load_scope_chunks, load_table_chunks, retrieve_knowledge,
 )
 
 
@@ -32,6 +32,7 @@ class _CaseRun:
     token_usage 是生成这一步报告的两项用量（没走到生成时为 None）；result 是图的执行结果，
     gold_rows 是金标准 SQL 的结果行；题内出错时 error 是那个异常，
     出错之前已经拿到的部分照常保留。started 和 finished 是这道题在工作线程里的起止时刻。
+    hit_tables 是 retrieval 来源下 Hit 所属的表（没走到检索或检索失败时为 None），只留表名不留 Hit。
     """
 
     started: float
@@ -41,6 +42,7 @@ class _CaseRun:
     result: dict | None = None
     gold_rows: list | None = None
     error: Exception | None = None
+    hit_tables: set[str] | None = None
 
 
 def _run_case(graph, config, query_context: QueryContext, case: dict, settings: Settings, run_context) -> _CaseRun:
@@ -56,6 +58,8 @@ def _run_case(graph, config, query_context: QueryContext, case: dict, settings: 
             for delta in part["data"].values():
                 if not isinstance(delta, dict):
                     continue
+                if "hits" in delta:
+                    run.hit_tables = {hit_table(hit) for hit in delta["hits"]}
                 if "generated_sql" in delta:
                     run.predicted_sql = delta["generated_sql"]
                     run.token_usage = {key: delta[key] for key in ("prompt_tokens", "completion_tokens")}
@@ -73,12 +77,17 @@ def _run_case(graph, config, query_context: QueryContext, case: dict, settings: 
     return run
 
 
-def _case_record(position: int, case: dict, run: _CaseRun, graph_run_id: str) -> CaseRecord:
+def _case_record(position: int, case: dict, run: _CaseRun, graph_run_id: str,
+                 relevant_tables: list[str] | None = None) -> CaseRecord:
     """把一道题跑出来的原始结果比对、定类，写成逐题记录；在主线程里调用。
 
     图执行成功就算有效 SQL；之后金标准 SQL 出错的题仍记为 error，但保留已经拿到的预测、行数和用量。
+    relevant_tables 不为 None 时（retrieval 来源）另记 tables_complete：Relevant Set 的表是否都在 Hit 所属的
+    表里；检索失败的题没有 Hit，记为 False。
     """
     record = new_case_record(position, case, evidence_used=False, graph_run_id=graph_run_id)
+    if relevant_tables is not None:
+        record["tables_complete"] = run.hit_tables is not None and set(relevant_tables) <= run.hit_tables
     if run.predicted_sql is not None:
         record["predicted_sql"] = run.predicted_sql
         record.update(run.token_usage)
@@ -94,6 +103,24 @@ def _case_record(position: int, case: dict, run: _CaseRun, graph_run_id: str) ->
     return finish_case_record(record, run.started, finished=run.finished)
 
 
+def _split(records: list[CaseRecord]) -> dict:
+    """一组记录按 tables_complete 分成拿全 / 没拿全，各给题数、执行匹配数和比例（没有题时比例为 None）。"""
+    split = {}
+    for name, complete in (("complete", True), ("incomplete", False)):
+        group = [record for record in records if record["tables_complete"] is complete]
+        matched = sum(record["execution_match"] for record in group)
+        split[name] = {"cases": len(group), "matched": matched, "rate": matched / len(group) if group else None}
+    return split
+
+
+def _tables_complete_summary(records: list[CaseRecord]) -> dict:
+    """retrieval 来源的"表是否拿全"汇总：整体一份，每个库一份（按库在题集里第一次出现的顺序）。"""
+    databases = list(dict.fromkeys(record["database_id"] for record in records))
+    return {"overall": _split(records),
+            "by_database": {database: _split([r for r in records if r["database_id"] == database])
+                            for database in databases}}
+
+
 def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator = generate_sql,
               workers: int = 1, context_source: ContextSource = "schema",
               structure_format: StructureFormat = "columns",
@@ -102,6 +129,7 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator =
               method: RetrievalMethod = "hybrid", rerank: bool = True,
               retriever: Callable[[RetrievalRequest], RetrievalResult] | None = None,
               table_chunk_reader: Callable[[KnowledgeScope, list[str]], dict[str, str]] = load_table_chunks,
+              relevant_tables: dict[int, list[str]] | None = None,
               run_context) -> EvalReport:
     """对一份题集逐题运行查询图并计分，返回报告。
 
@@ -119,6 +147,7 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator =
         knowledge_reader：knowledge 来源读出一个 Scope 全部 Chunk 的函数，默认读知识库。
         method、rerank、retriever、table_chunk_reader：retrieval 来源的检索配置、检索函数（None 时为
             retrieve_knowledge）和表 Chunk 读取函数，编译查询图时传入。
+        relevant_tables：retrieval 来源下题号 → Relevant Set 的表，用来记逐题的 tables_complete。
         run_context：外层运行上下文，事件和 SQL 审计都写进它；由调用方发布结果和关闭。
     返回：
         EvalReport。records 按题集顺序排列，与哪题先跑完无关。
@@ -204,7 +233,10 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator =
             finished = [(in_flight.pop(future), future.result()) for future in done]
             for position, run in finished:
                 fields = case_fields(position)
-                record = _case_record(position, cases[position], run, fields["graph_run_id"])
+                record = _case_record(
+                    position, cases[position], run, fields["graph_run_id"],
+                    relevant_tables=(relevant_tables or {}).get(cases[position]["question_id"], [])
+                    if context_source == "retrieval" else None)
                 records[position] = record
                 completed += 1
                 success_count += int(record["execution_match"])
@@ -231,6 +263,7 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator =
     result["context_source"] = context_source
     if context_source == "retrieval":
         result["retrieval"] = retrieval_versions
+        result["tables_complete"] = _tables_complete_summary(records)
     summary = result["summary"]
     progress.info("eval_finished", extra={
         "run_id": batch_run_id, "component": "evaluation", "provider": "graph",

@@ -58,8 +58,8 @@ def test_retrieval_run_records_retrieval_config_and_the_versions_that_actually_r
     cases, settings = _sample_run(tmp_path, _cases(1))
 
     report = run_graph(cases, settings, generator=generator, context_source="retrieval",
-                       knowledge_scopes={"sample": SAMPLE_SCOPE}, retriever=_fake_retriever(requests),
-                       table_chunk_reader=_table_reader(reads))
+                       knowledge_scopes={"sample": SAMPLE_SCOPE}, relevant_tables={1: ["items"]},
+                       retriever=_fake_retriever(requests), table_chunk_reader=_table_reader(reads))
 
     assert [(r.method, r.rerank, r.top_k) for r in requests] == [("hybrid", True, 10)]
     assert reads == [["items"]]
@@ -93,7 +93,7 @@ def test_retrieval_failure_is_recorded_on_its_case_with_its_category_and_the_run
     cases, settings = _sample_run(tmp_path, _cases(2))
 
     report = run_graph(cases, settings, generator=lambda *_: GeneratedSql(MATCHING_SQL), context_source="retrieval",
-                       knowledge_scopes={"sample": SAMPLE_SCOPE},
+                       knowledge_scopes={"sample": SAMPLE_SCOPE}, relevant_tables={1: ["items"], 2: ["items"]},
                        retriever=_fake_retriever([], fail={"q1": "embedding_error"}),
                        table_chunk_reader=_table_reader([]))
 
@@ -139,7 +139,8 @@ def test_cli_retrieval_flags_reach_the_graph_and_the_run_config_matches_the_runn
     summary = json.loads(capsys.readouterr().out)
     direct = run_graph(cases, settings, generator=lambda *_: GeneratedSql(MATCHING_SQL), context_source="retrieval",
                        method="lexical", rerank=False, knowledge_scopes={"sample": SAMPLE_SCOPE},
-                       retriever=_fake_retriever(requests), table_chunk_reader=_table_reader([]))
+                       relevant_tables={1: []}, retriever=_fake_retriever(requests),
+                       table_chunk_reader=_table_reader([]))
 
     assert built == [("lexical", False)]
     assert [(r.method, r.rerank) for r in requests] == [("lexical", False), ("lexical", False)]
@@ -166,3 +167,72 @@ def test_cli_retrieval_source_without_retrieval_cases_exits_before_any_run_is_re
         cli.main(["eval", "graph", "--cases", str(cases), "--context-source", "retrieval"])
 
     assert not (tmp_path / "artifacts").exists()
+
+
+def test_each_retrieval_case_records_whether_its_relevant_tables_were_all_retrieved(tmp_path):
+    """输入：三道题，检索都只命中 items；
+    - q1 的 Relevant Set 是 [items]：拿全；
+    - q2 的 Relevant Set 是 [items, orders]：缺 orders，没拿全；
+    - q3 的检索报 no_match：没有 Hit，记为没拿全。
+
+    输出：逐题记录的 tables_complete 分别为 True / False / False；汇总按"拿全 / 没拿全"分别给出题数、执行
+    匹配数和比例，整体和分库各一份。
+    """
+    cases, settings = _sample_run(tmp_path, _cases(3))
+
+    report = run_graph(cases, settings, generator=lambda *_: GeneratedSql(MATCHING_SQL), context_source="retrieval",
+                       knowledge_scopes={"sample": SAMPLE_SCOPE},
+                       relevant_tables={1: ["items"], 2: ["items", "orders"], 3: ["items"]},
+                       retriever=_fake_retriever([], fail={"q3": "no_match"}), table_chunk_reader=_table_reader([]))
+
+    assert [record["tables_complete"] for record in report["records"]] == [True, False, False]
+    split = {"complete": {"cases": 1, "matched": 1, "rate": 1.0},
+             "incomplete": {"cases": 2, "matched": 1, "rate": 0.5}}
+    assert report["tables_complete"] == {"overall": split, "by_database": {"sample": split}}
+
+
+def test_retrieval_run_fails_before_any_run_is_recorded_when_a_case_has_no_relevant_set(tmp_path):
+    """输入：SQL 题集有题号 1 和 2，Relevant Set 只给了 1。输出：ValueError，没有运行记录。"""
+    cases, settings = _sample_run(tmp_path, _cases(2))
+
+    with pytest.raises(ValueError):
+        run_graph(cases, settings, generator=lambda *_: GeneratedSql(MATCHING_SQL), context_source="retrieval",
+                  knowledge_scopes={"sample": SAMPLE_SCOPE}, relevant_tables={1: ["items"]},
+                  retriever=_fake_retriever([]), table_chunk_reader=_table_reader([]))
+
+    assert not (tmp_path / "artifacts").exists()
+
+
+def test_tables_complete_is_exported_and_absent_from_other_sources(tmp_path):
+    """输入：一次 retrieval 运行和一次 knowledge 运行。
+
+    输出：retrieval 的公开导出带逐题 tables_complete 和汇总；knowledge 的报告和记录里都没有这一项。
+    """
+    cases, settings = _sample_run(tmp_path, _cases(1))
+    retrieval = run_graph(cases, settings, generator=lambda *_: GeneratedSql(MATCHING_SQL), context_source="retrieval",
+                          knowledge_scopes={"sample": SAMPLE_SCOPE}, relevant_tables={1: ["items"]},
+                          retriever=_fake_retriever([]), table_chunk_reader=_table_reader([]))
+    knowledge = run_graph(cases, settings, generator=lambda *_: GeneratedSql(MATCHING_SQL), context_source="knowledge",
+                          knowledge_scopes={"sample": SAMPLE_SCOPE}, knowledge_reader=lambda scope: SAMPLE_CHUNKS)
+
+    run_dir = next(path for path in settings.artifacts_dir.glob("runs/evaluation/*/*") if path.name == retrieval["run_id"])
+    public = export_public(run_dir, tmp_path / "public.json")
+    assert public["records"][0]["tables_complete"] is True
+    assert public["tables_complete"] == retrieval["tables_complete"]
+    assert "tables_complete" not in knowledge
+    assert "tables_complete" not in knowledge["records"][0]
+
+
+def test_relevant_tables_come_from_the_retrieval_case_set(tmp_path):
+    """输入：检索题集两道题（题号 1、2）。输出：题号 → Relevant Set 的表。"""
+    from querypilot.evaluation.api import RetrievalCase, RetrievalCaseSet, relevant_tables_from_cases
+
+    path = tmp_path / "retrieval_cases.json"
+    path.write_text(RetrievalCaseSet(cases=[
+        RetrievalCase(question_id=1, db_id="sample", difficulty="simple", question="r1", frozen=False,
+                      scope=SAMPLE_SCOPE, relevant_tables=["items"], relevant_columns=[]),
+        RetrievalCase(question_id=2, db_id="sample", difficulty="simple", question="r2", frozen=False,
+                      scope=SAMPLE_SCOPE, relevant_tables=["items", "orders"], relevant_columns=[]),
+    ]).model_dump_json(), encoding="utf-8")
+
+    assert relevant_tables_from_cases(path) == {1: ["items"], 2: ["items", "orders"]}
