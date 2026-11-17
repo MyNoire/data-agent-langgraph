@@ -24,6 +24,10 @@ def _positive_int(value: str) -> int:
     return number
 
 
+KNOWLEDGE_SOURCES = ("knowledge", "retrieval")
+"""要 --retrieval-cases 的 Context Source；与 querying.api.KNOWLEDGE_SOURCES 相同（有测试比对），这里不导入 querying。"""
+
+
 def create_parser() -> argparse.ArgumentParser:
     """构造明确命令的参数树，返回解析器；不读取配置、不产生业务副作用。"""
     parser = _artifacts(SafeArgumentParser(prog="querypilot", description="QueryPilot 查询、知识准备与评测"))
@@ -171,7 +175,7 @@ def main(argv: list[str] | None = None) -> int:
     """
     parser = create_parser()
     args = parser.parse_args(argv)
-    if getattr(args, "context_source", None) in ("knowledge", "retrieval") and args.retrieval_cases is None:
+    if getattr(args, "context_source", None) in KNOWLEDGE_SOURCES and args.retrieval_cases is None:
         parser.error(f"--context-source {args.context_source} 需要 --retrieval-cases")
     try:
         settings = get_settings()

@@ -70,7 +70,7 @@ def test_retrieval_run_records_retrieval_config_and_the_versions_that_actually_r
   主键: 未声明
   外键: 未声明
   列 "name" TEXT: 物品名称''']
-    expected = {"context_source": "retrieval", "structure_format": "columns", "schema_render_version": "r5-schema-v1",
+    expected = {"context_source": "retrieval", "structure_format": "columns", "schema_render_version": "r5-schema-v2",
                 "knowledge_scopes": {"sample": SAMPLE_SCOPE.model_dump()}, "method": "hybrid", "rerank": True,
                 "top_k": 10}
     config = _run_config(settings, report["run_id"])
@@ -236,3 +236,33 @@ def test_relevant_tables_come_from_the_retrieval_case_set(tmp_path):
     ]).model_dump_json(), encoding="utf-8")
 
     assert relevant_tables_from_cases(path) == {1: ["items"], 2: ["items", "orders"]}
+
+
+def test_runner_itself_refuses_a_case_without_a_relevant_set(tmp_path):
+    """输入：绕过 run_graph 的入口检查，直接调用评测运行器，Relevant Set 少了题号 2。
+
+    输出：开始前 ValueError，模型一次都没被调用。不能把缺 Relevant Set 的题当作"拿全"（空集合是任何集合的
+    子集），那会抬高"拿全"那一组的匹配率。
+    """
+    from querypilot.evaluation.sql._graph import run_graph as run_cases
+    from querypilot.runtime.api import task_run
+
+    calls = []
+    cases, settings = _sample_run(tmp_path, _cases(2))
+
+    with pytest.raises(ValueError):
+        with task_run("evaluation", settings, command="graph", private=True) as context:
+            run_cases(cases, settings, generator=lambda question, *_: calls.append(question) or GeneratedSql(MATCHING_SQL),
+                      context_source="retrieval", knowledge_scopes={"sample": SAMPLE_SCOPE},
+                      relevant_tables={1: ["items"]}, retriever=_fake_retriever([]),
+                      table_chunk_reader=_table_reader([]), run_context=context)
+
+    assert calls == []
+
+
+def test_cli_and_graph_agree_on_which_sources_need_retrieval_cases():
+    """命令行为了解析快不导入 querying，自己写了一份"读知识库的来源"；图加了新来源、命令行忘了加时这里报错。"""
+    from querypilot.entrypoints import cli
+    from querypilot.querying.api import KNOWLEDGE_SOURCES
+
+    assert cli.KNOWLEDGE_SOURCES == KNOWLEDGE_SOURCES

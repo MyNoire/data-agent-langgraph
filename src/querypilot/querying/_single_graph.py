@@ -31,6 +31,9 @@ GRAPH_VERSION = "single-v2"
 ContextSource = Literal["schema", "ddl", "knowledge", "retrieval"]
 """模型收到的 Schema 来源，编译图时选定；取值含义见 build_query_graph。"""
 
+KNOWLEDGE_SOURCES: tuple[ContextSource, ...] = ("knowledge", "retrieval")
+"""读知识库的来源：调用图时要在运行时 context 里给出 Knowledge Scope，评测要给检索题集。"""
+
 RETRIEVAL_TOP_K = 10
 """retrieval 来源每次检索取的 Hit 数，固定不变，写进评测报告。"""
 

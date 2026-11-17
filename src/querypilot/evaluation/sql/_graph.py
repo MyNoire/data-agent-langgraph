@@ -127,7 +127,7 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator =
               knowledge_scopes: dict[str, KnowledgeScope] | None = None,
               knowledge_reader: Callable[[KnowledgeScope], list[RetrievalHit]] = load_scope_chunks,
               method: RetrievalMethod = "hybrid", rerank: bool = True,
-              retriever: Callable[[RetrievalRequest], RetrievalResult] | None = None,
+              retriever: Callable[[RetrievalRequest], RetrievalResult] = retrieve_knowledge,
               table_chunk_reader: Callable[[KnowledgeScope, list[str]], dict[str, str]] = load_table_chunks,
               relevant_tables: dict[int, list[str]] | None = None,
               run_context) -> EvalReport:
@@ -145,9 +145,10 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator =
         knowledge_scopes：每题调用查询图时作为运行时 context 传入的"db_id → Knowledge Scope"对照表；
             只有 knowledge 来源会用。
         knowledge_reader：knowledge 来源读出一个 Scope 全部 Chunk 的函数，默认读知识库。
-        method、rerank、retriever、table_chunk_reader：retrieval 来源的检索配置、检索函数（None 时为
-            retrieve_knowledge）和表 Chunk 读取函数，编译查询图时传入。
-        relevant_tables：retrieval 来源下题号 → Relevant Set 的表，用来记逐题的 tables_complete。
+        method、rerank、retriever、table_chunk_reader：retrieval 来源的检索配置、检索函数和表 Chunk 读取
+            函数，编译查询图时传入；批量运行应传入共用客户端的检索函数（api.run_graph 传 shared_retriever）。
+        relevant_tables：retrieval 来源下题号 → Relevant Set 的表，用来记逐题的 tables_complete；有题缺了时
+            在开始前报 ValueError。
         run_context：外层运行上下文，事件和 SQL 审计都写进它；由调用方发布结果和关闭。
     返回：
         EvalReport。records 按题集顺序排列，与哪题先跑完无关。
@@ -167,7 +168,7 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator =
     # 记下每次检索实际用到的版本（方法、两个 Profile、检索配置版本），不同的才记；工作线程会同时写。
     retrieval_versions: list[dict] = []
     versions_lock = threading.Lock()
-    base_retriever = retriever or retrieve_knowledge
+    base_retriever = retriever
 
     def recording_retriever(request: RetrievalRequest) -> RetrievalResult:
         """调用检索函数，把结果里的版本信息记进 retrieval_versions；不记 Hit 或查询原文。"""
@@ -185,6 +186,11 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator =
                               retriever=recording_retriever, table_chunk_reader=table_chunk_reader,
                               method=method, rerank=rerank)
     query_context = QueryContext(knowledge_scopes=knowledge_scopes or {})
+    # 缺 Relevant Set 的题不能按空集合判成"拿全"：开始前就拒绝。
+    if context_source == "retrieval":
+        missing = [case["question_id"] for case in cases if case["question_id"] not in (relevant_tables or {})]
+        if missing:
+            raise ValueError(f"no relevant set for questions {missing}")
     middleware = run_context.graph_middleware(row_count=query_result_row_count)
     progress = middleware.logger
     run_started = time.monotonic()
@@ -235,7 +241,7 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator =
                 fields = case_fields(position)
                 record = _case_record(
                     position, cases[position], run, fields["graph_run_id"],
-                    relevant_tables=(relevant_tables or {}).get(cases[position]["question_id"], [])
+                    relevant_tables=relevant_tables[cases[position]["question_id"]]
                     if context_source == "retrieval" else None)
                 records[position] = record
                 completed += 1

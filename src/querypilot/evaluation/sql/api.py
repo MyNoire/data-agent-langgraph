@@ -6,21 +6,17 @@ import json
 from pathlib import Path
 
 from querypilot.querying.api import (
-    GRAPH_VERSION, RETRIEVAL_TOP_K, SCHEMA_RENDER_VERSION, ContextSource, StructureFormat,
+    GRAPH_VERSION, KNOWLEDGE_SOURCES, RETRIEVAL_TOP_K, SCHEMA_RENDER_VERSION, ContextSource, StructureFormat,
 )
 from querypilot.retrieval.api import (
     KnowledgeScope, RetrievalHit, RetrievalMethod, RetrievalRequest, RetrievalResult, load_scope_chunks,
-    load_table_chunks, shared_retriever,
+    load_table_chunks, retrieve_knowledge, shared_retriever,
 )
 from querypilot.runtime.api import Settings, sanitize_private, task_run
 from querypilot.sql_generation.api import PROMPT_VERSION, SqlGenerator, generate_sql
 from .models import CaseRecord, CaseOutcome, EvalReport, EvalSummary
 from ._cases import SqlCaseSetError, select_database_cases
 from ._reports import export_public, read_report
-
-
-KNOWLEDGE_SOURCES = ("knowledge", "retrieval")
-"""读知识库的 Context Source：需要各库的 Knowledge Scope，记结构写法和渲染版本。"""
 
 
 def _knowledge_fields(context_source: ContextSource | None, structure_format: StructureFormat,
@@ -135,9 +131,9 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator |
                                         context_source=context_source, structure_format=structure_format,
                                         knowledge_scopes=knowledge_scopes, method=method, rerank=rerank,
                                         relevant_tables=relevant_tables)) as context:
-        # 只有 retrieval 才建检索客户端：其他来源不需要 Embedding / Rerank 配置。
-        if context_source == "retrieval" and retriever is None:
-            retriever = shared_retriever(method, rerank)
+        # 只有 retrieval 才建检索客户端：其他来源不需要 Embedding / Rerank 配置，也不会调用检索函数。
+        if retriever is None:
+            retriever = shared_retriever(method, rerank) if context_source == "retrieval" else retrieve_knowledge
         result = perform(cases_path, settings, generator=generator or generate_sql, workers=workers,
                          context_source=context_source, structure_format=structure_format,
                          knowledge_scopes=knowledge_scopes or {},

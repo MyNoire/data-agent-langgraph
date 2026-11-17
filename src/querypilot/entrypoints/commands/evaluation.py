@@ -8,6 +8,7 @@ from querypilot.evaluation.api import (
     RetrievalCaseError, evaluate_retrieval, export_public, knowledge_scopes_from_cases, prepare_retrieval_cases,
     relevant_tables_from_cases, retrieval_run_config, run_direct, run_graph, sql_run_config,
 )
+from querypilot.querying.api import KNOWLEDGE_SOURCES
 from querypilot.runtime.api import task_run
 
 
@@ -30,7 +31,7 @@ def run(args, settings) -> int:
     else:
         # knowledge / retrieval 来源的 Scope 来自检索题集；其他来源不读它。
         knowledge_scopes = (knowledge_scopes_from_cases(args.retrieval_cases)
-                            if args.context_source in ("knowledge", "retrieval") else None)
+                            if args.context_source in KNOWLEDGE_SOURCES else None)
         graph_options = {"workers": args.workers, "context_source": args.context_source,
                          "structure_format": args.structure_format, "knowledge_scopes": knowledge_scopes,
                          "method": args.method, "rerank": args.rerank,
