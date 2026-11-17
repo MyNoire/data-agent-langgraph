@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import asdict
 from typing import Any, Literal
 
+import langsmith
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
@@ -84,8 +85,12 @@ def build_query_graph(
         ValueError: context_source 不是上面列出的取值。
     说明:
         凭据和数据库路径留在节点闭包内，不写入图状态；Knowledge Scope 只经运行时 context 传入，
-        也不写入图状态。
+        也不写入图状态。编译时关闭本进程的 LangSmith 追踪，见下面的注释。
     """
+    # LangGraph 每次运行都会按 LANGCHAIN_TRACING_V2 等环境变量决定是否把每个节点的输入、状态和输出上传到
+    # LangSmith，其中有问题原文、Schema、Hit 正文、SQL 和结果行；这些不能发到外部服务。这里用 langsmith
+    # 的全局开关关掉追踪：它优先于环境变量，对之后的所有线程都有效。
+    langsmith.configure(enabled=False)
     def load_columns(state: QueryState) -> dict[str, Any]:
         """读取已登记数据库每张表的表名和列名。
 
