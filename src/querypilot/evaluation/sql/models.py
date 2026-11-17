@@ -68,4 +68,7 @@ class EvalReport(TypedDict):
     graph_version: NotRequired[str]
     workers: NotRequired[int]
     context_source: NotRequired[str]
+    structure_format: NotRequired[str]
+    schema_render_version: NotRequired[str]
+    knowledge_scopes: NotRequired[dict[str, dict[str, str]]]
 

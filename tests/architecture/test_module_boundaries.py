@@ -26,7 +26,7 @@ ALLOWED_DEPENDENCIES = {
     "sql_generation": {"runtime"},
     "databases": {"runtime"},
     "evaluation": {"evaluation.sql", "evaluation.retrieval"},
-    "evaluation.sql": {"querying", "sql_generation", "databases", "runtime"},
+    "evaluation.sql": {"querying", "retrieval", "sql_generation", "databases", "runtime"},
     "evaluation.retrieval": {"retrieval", "knowledge", "runtime"},
     "evaluation.datasets": {"databases", "runtime"},
     "knowledge": {*(f"knowledge.{part}" for part in KNOWLEDGE_PARTS), "runtime"},

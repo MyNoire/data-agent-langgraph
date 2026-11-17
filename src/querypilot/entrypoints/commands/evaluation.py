@@ -5,8 +5,8 @@ import sys
 from collections import Counter
 
 from querypilot.evaluation.api import (
-    RetrievalCaseError, evaluate_retrieval, export_public, prepare_retrieval_cases, retrieval_run_config,
-    run_direct, run_graph, sql_run_config,
+    RetrievalCaseError, evaluate_retrieval, export_public, knowledge_scopes_from_cases, prepare_retrieval_cases,
+    retrieval_run_config, run_direct, run_graph, sql_run_config,
 )
 from querypilot.runtime.api import task_run
 
@@ -28,8 +28,12 @@ def run(args, settings) -> int:
     elif args.action == "direct":
         config = sql_run_config(args.cases, settings, args.provider, args.evidence_mode)
     else:
-        config = sql_run_config(args.cases, settings, "graph", "none", workers=args.workers,
-                                context_source=args.context_source)
+        # knowledge 来源的 Scope 来自检索题集；其他来源不读它。
+        knowledge_scopes = (knowledge_scopes_from_cases(args.retrieval_cases)
+                            if args.context_source == "knowledge" else None)
+        graph_options = {"workers": args.workers, "context_source": args.context_source,
+                         "structure_format": args.structure_format, "knowledge_scopes": knowledge_scopes}
+        config = sql_run_config(args.cases, settings, "graph", "none", **graph_options)
     with task_run("evaluation", settings, command=args.action, private=True, config=config) as context:
         context.attach_stream(sys.stderr)
         if args.action == "export-public":
@@ -41,8 +45,7 @@ def run(args, settings) -> int:
                 result = run_direct(args.cases, settings, provider=args.provider,
                                     evidence_mode=args.evidence_mode, run_context=context)
             else:
-                result = run_graph(args.cases, settings, workers=args.workers,
-                                   context_source=args.context_source, run_context=context)
+                result = run_graph(args.cases, settings, **graph_options, run_context=context)
             context.complete(result)
             summary = json.dumps({"output_file": str(context.run_dir / "private/result.json"),
                                   "event_file": str(context.run_dir / "events.jsonl"),

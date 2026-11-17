@@ -22,7 +22,7 @@
 
 `eval graph --workers N` 同时跑 N 道题（默认 1）：工作线程里只跑查询图和金标准 SQL，结果比对、逐题记录和进度事件都在主线程，报告仍按题集顺序。单题出错照常记为 error 并继续；主线程出错或被 Ctrl+C 中断后不再开始新题。图评测每题的耗时从这道题开始跑图量到金标准 SQL 执行完，不含排队和结果比对；`workers` 大于 1 时会被同时进行的请求拉高，**耗时只在线程数相同的运行之间比较**；线程数记在运行配置和报告里。
 
-`eval graph --context-source` 选模型收到的 Schema 从哪里来（Context Source，编译图时选定，见 [GLOSSARY](../../GLOSSARY.md)）：`schema`（默认）是每张表的表名和列名；`ddl` 是这个库全部用户表的 CREATE TABLE 原文，按表名排序、空一行分隔，从 SQLite 的 `sqlite_master` 现场读取。两种来源下安全检查允许的都是这个库的全部用户表。Context Source 记在运行配置和报告里，建表语句本身不写进日志和运行记录。
+`eval graph --context-source` 选模型收到的 Schema 从哪里来（Context Source，编译图时选定，见 [GLOSSARY](../../GLOSSARY.md)）：`schema`（默认）是每张表的表名和列名；`ddl` 是这个库全部用户表的 CREATE TABLE 原文，按表名排序、空一行分隔，从 SQLite 的 `sqlite_master` 现场读取。`knowledge` 是这个库在知识库里的全部知识，经组装和渲染（规则版本 `r5-schema-v1`）后交给模型，`--structure-format columns`（默认）把表结构写成字段目录、主键、外键三行，`ddl` 换成建表语句原文；它需要 `--retrieval-cases <检索题集>`，从中取各库的 Knowledge Scope，题集用到的库缺 Scope 时在开始前报错。所有来源下安全检查允许的都是这个库的全部用户表。Context Source 记在运行配置和报告里，`knowledge` 另记结构写法、渲染版本和各库的 Scope；建表语句和知识正文本身不写进日志和运行记录。
 
 `--evidence-mode oracle` 会把 BIRD 的人工提示（evidence）交给模型。这是隔离实验，不代表系统真实的能力，默认为 `none`。
 

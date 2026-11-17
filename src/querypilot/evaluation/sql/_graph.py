@@ -1,5 +1,6 @@
 """逐题运行单图的 Text2SQL 评测；与 direct-prompt baseline 分开保存。"""
 
+from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 import json
@@ -14,8 +15,10 @@ from ._results import (
     CaseRecord, EvalReport, build_report, finish_case_record, new_case_record,
 )
 from querypilot.querying.api import (
-    GRAPH_VERSION, ContextSource, SqlGenerator, build_query_graph, query_result_row_count,
+    GRAPH_VERSION, ContextSource, QueryContext, SqlGenerator, StructureFormat, build_query_graph,
+    query_result_row_count,
 )
+from querypilot.retrieval.api import KnowledgeScope, RetrievalHit, load_scope_chunks
 
 
 @dataclass
@@ -36,14 +39,14 @@ class _CaseRun:
     error: Exception | None = None
 
 
-def _run_case(graph, config, case: dict, settings: Settings, run_context) -> _CaseRun:
+def _run_case(graph, config, query_context: QueryContext, case: dict, settings: Settings, run_context) -> _CaseRun:
     """在工作线程里跑一道题：先走查询图，再执行金标准 SQL。题内的错误记在返回值里，不抛出。"""
     run = _CaseRun(started=time.monotonic())
     database_id = case["db_id"]
     try:
         answer: dict[str, object] = {}
         for part in graph.stream({"database_id": database_id, "question": case["question"]},
-                                 config=config, stream_mode="updates", version="v2"):
+                                 config=config, context=query_context, stream_mode="updates", version="v2"):
             if part["type"] != "updates":
                 continue
             for delta in part["data"].values():
@@ -87,7 +90,11 @@ def _case_record(position: int, case: dict, run: _CaseRun, graph_run_id: str) ->
 
 
 def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator = generate_sql,
-              workers: int = 1, context_source: ContextSource = "schema", run_context) -> EvalReport:
+              workers: int = 1, context_source: ContextSource = "schema",
+              structure_format: StructureFormat = "columns",
+              knowledge_scopes: dict[str, KnowledgeScope] | None = None,
+              knowledge_reader: Callable[[KnowledgeScope], list[RetrievalHit]] = load_scope_chunks,
+              run_context) -> EvalReport:
     """对一份题集逐题运行查询图并计分，返回报告。
 
     参数：
@@ -98,6 +105,10 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator =
             和进度事件都在调用方的线程里。每题的 latency_ms 从这道题开始跑图量到金标准 SQL 执行完，
             不含排队和结果比对；大于 1 时会被同时进行的请求拉高，耗时只在线程数相同的运行之间比较。
         context_source：编译查询图时选的 Schema 来源，默认 schema；记进报告。
+        structure_format：knowledge 来源里表结构的写法，编译查询图时传入。
+        knowledge_scopes：每题调用查询图时作为运行时 context 传入的"db_id → Knowledge Scope"对照表；
+            只有 knowledge 来源会用。
+        knowledge_reader：knowledge 来源读出一个 Scope 全部 Chunk 的函数，默认读知识库。
         run_context：外层运行上下文，事件和 SQL 审计都写进它；由调用方发布结果和关闭。
     返回：
         EvalReport。records 按题集顺序排列，与哪题先跑完无关。
@@ -114,7 +125,9 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator =
     if not isinstance(cases, list):
         raise ValueError("evaluation cases must be a JSON list")
     batch_run_id = run_context.run_id
-    graph = build_query_graph(settings, generator=generator, run_context=run_context, context_source=context_source)
+    graph = build_query_graph(settings, generator=generator, run_context=run_context, context_source=context_source,
+                              structure_format=structure_format, knowledge_reader=knowledge_reader)
+    query_context = QueryContext(knowledge_scopes=knowledge_scopes or {})
     middleware = run_context.graph_middleware(row_count=query_result_row_count)
     progress = middleware.logger
     run_started = time.monotonic()
@@ -153,7 +166,7 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator =
                 run_id=fields["graph_run_id"], parent_run_id=batch_run_id, database_id=case["db_id"],
                 question_id=case.get("question_id"), case_index=position + 1,
             )
-            in_flight[pool.submit(_run_case, graph, config, case, settings, run_context)] = position
+            in_flight[pool.submit(_run_case, graph, config, query_context, case, settings, run_context)] = position
 
         for _ in range(workers):
             submit_next()

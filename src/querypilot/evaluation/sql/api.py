@@ -1,9 +1,12 @@
 """SQL 评测完整操作：明确选择模式，保留领域报告，不包含模型策略。"""
 
+from collections.abc import Callable
 from hashlib import sha256
+import json
 from pathlib import Path
 
-from querypilot.querying.api import GRAPH_VERSION, ContextSource
+from querypilot.querying.api import GRAPH_VERSION, SCHEMA_RENDER_VERSION, ContextSource, StructureFormat
+from querypilot.retrieval.api import KnowledgeScope, RetrievalHit, load_scope_chunks
 from querypilot.runtime.api import Settings, sanitize_private, task_run
 from querypilot.sql_generation.api import PROMPT_VERSION, SqlGenerator, generate_sql
 from .models import CaseRecord, CaseOutcome, EvalReport, EvalSummary
@@ -11,15 +14,34 @@ from ._cases import SqlCaseSetError, select_database_cases
 from ._reports import export_public, read_report
 
 
+def _knowledge_fields(context_source: ContextSource | None, structure_format: StructureFormat,
+                      knowledge_scopes: dict[str, KnowledgeScope] | None) -> dict:
+    """用到知识的来源才记的三项：结构写法、渲染版本和各库的 Scope；其他来源返回空字典。"""
+    if context_source != "knowledge":
+        return {}
+    return {"structure_format": structure_format, "schema_render_version": SCHEMA_RENDER_VERSION,
+            "knowledge_scopes": {database_id: scope.model_dump() for database_id, scope in knowledge_scopes.items()}}
+
+
 def sql_run_config(cases_path: Path, settings: Settings, provider: str, evidence_mode: str, *,
-                   workers: int | None = None, context_source: ContextSource | None = None) -> dict:
+                   workers: int | None = None, context_source: ContextSource | None = None,
+                   structure_format: StructureFormat = "columns",
+                   knowledge_scopes: dict[str, KnowledgeScope] | None = None) -> dict:
     """SQL 评测写进运行配置的参数；命令行和 run_direct/run_graph 用同一份。
 
     参数：cases_path 为题集路径，settings 为运行配置，provider 和 evidence_mode 为评测模式；
-        workers 和 context_source 只有图评测传（direct 评测不传，配置里也就没有这两项）。
+        workers 和 context_source 只有图评测传（direct 评测不传，配置里也就没有这两项）；
+        structure_format 和 knowledge_scopes 只在 context_source 为 knowledge 时记下，另加渲染版本。
     返回：不含题目、SQL 或完整设置的配置字典；读取题集计算摘要，I/O 错误原样传播。
+    异常：ValueError：knowledge 来源下对照表缺了题集用到的库。命令行和 run_graph 都在建立运行记录之前
+        调用这里，所以缺 Scope 时不会留下运行记录。
     """
-    return {"mode": "sql", "dataset_sha256": sha256(cases_path.read_bytes()).hexdigest(), "provider": provider,
+    case_bytes = cases_path.read_bytes()
+    if context_source == "knowledge":
+        missing = sorted({case["db_id"] for case in json.loads(case_bytes)} - set(knowledge_scopes or {}))
+        if missing:
+            raise ValueError(f"no knowledge scope for databases {missing}")
+    return {"mode": "sql", "dataset_sha256": sha256(case_bytes).hexdigest(), "provider": provider,
             "evidence_mode": evidence_mode if provider != "fixture" else None,
             "prompt_version": PROMPT_VERSION if provider != "fixture" else None,
             "graph_version": GRAPH_VERSION if provider == "graph" else None,
@@ -29,7 +51,8 @@ def sql_run_config(cases_path: Path, settings: Settings, provider: str, evidence
             "max_rows": settings.max_rows, "query_timeout_ms": settings.query_timeout_ms,
             "max_response_bytes": settings.max_response_bytes,
             **({} if workers is None else {"workers": workers}),
-            **({} if context_source is None else {"context_source": context_source})}
+            **({} if context_source is None else {"context_source": context_source}),
+            **_knowledge_fields(context_source, structure_format, knowledge_scopes)}
 
 
 def run_direct(cases_path: Path, settings: Settings, *, provider: str = "model",
@@ -58,22 +81,33 @@ def run_direct(cases_path: Path, settings: Settings, *, provider: str = "model",
 
 
 def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator | None = None,
-              workers: int = 1, context_source: ContextSource = "schema", run_context=None) -> EvalReport:
+              workers: int = 1, context_source: ContextSource = "schema",
+              structure_format: StructureFormat = "columns",
+              knowledge_scopes: dict[str, KnowledgeScope] | None = None,
+              knowledge_reader: Callable[[KnowledgeScope], list[RetrievalHit]] | None = None,
+              run_context=None) -> EvalReport:
     """完整运行单图评测并保存私有报告。
 
     参数：题集、配置、固定或真实生成器、同时在跑的题数 workers（默认 1）、编译查询图用的
-        context_source（默认 schema）及可选外层上下文。
+        context_source（默认 schema）和 structure_format（默认 columns，只对 knowledge 有效），
+        knowledge 来源要的"db_id → Knowledge Scope"对照表和知识读取函数（默认读知识库），及可选外层上下文。
     返回：EvalReport，records 按题集顺序；题内的错误记在那一题上并继续，一道预测都没有时两个比率为 None。
-    副作用：读取 SQLite，可调用模型；一个批次一份运行，子题不另建根。
+        knowledge 来源另记结构写法、渲染版本和各库的 Scope。
+    异常：ValueError：knowledge 来源下对照表缺了题集用到的库；在建立运行记录之前报出（见 sql_run_config）。
+    副作用：读取 SQLite，可调用模型，knowledge 来源每题读一次知识库；一个批次一份运行，子题不另建根。
     """
     from ._graph import run_graph as perform
 
     owned = run_context is None
     with task_run("evaluation", settings, run_context=run_context, command="graph", private=True,
                   config=sql_run_config(cases_path, settings, "graph", "none", workers=workers,
-                                        context_source=context_source)) as context:
+                                        context_source=context_source, structure_format=structure_format,
+                                        knowledge_scopes=knowledge_scopes)) as context:
         result = perform(cases_path, settings, generator=generator or generate_sql, workers=workers,
-                         context_source=context_source, run_context=context)
+                         context_source=context_source, structure_format=structure_format,
+                         knowledge_scopes=knowledge_scopes or {},
+                         knowledge_reader=knowledge_reader or load_scope_chunks, run_context=context)
+        result.update(_knowledge_fields(context_source, structure_format, knowledge_scopes))
         secrets = (settings.model_api_key,) if settings.model_api_key != "local" else ()
         result = sanitize_private(result, secrets=secrets)
         if owned:
