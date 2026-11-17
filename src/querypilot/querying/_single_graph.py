@@ -13,7 +13,10 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
 
 from querypilot.databases.api import execute_sql, format_schema, get_schema, get_table_ddl, validate_sql
-from querypilot.retrieval.api import KnowledgeScope, RetrievalHit, load_scope_chunks
+from querypilot.retrieval.api import (
+    KnowledgeRetrievalError, KnowledgeScope, RetrievalHit, RetrievalMethod, RetrievalRequest, RetrievalResult,
+    hit_table, load_scope_chunks, load_table_chunks, retrieve_knowledge,
+)
 from querypilot.runtime.api import Settings
 from querypilot.sql_generation.api import SqlGenerator, generate_sql
 
@@ -24,8 +27,11 @@ from .models import QueryContext, QueryInput, QueryOutput, QueryState
 GRAPH_VERSION = "single-v2"
 """查询图的实现版本，写进运行配置和评测报告；图的路径或节点职责变了就升版本。"""
 
-ContextSource = Literal["schema", "ddl", "knowledge"]
+ContextSource = Literal["schema", "ddl", "knowledge", "retrieval"]
 """模型收到的 Schema 来源，编译图时选定；取值含义见 build_query_graph。"""
+
+RETRIEVAL_TOP_K = 10
+"""retrieval 来源每次检索取的 Hit 数，固定不变，写进评测报告。"""
 
 
 def query_result_row_count(output: Any) -> int | None:
@@ -50,6 +56,10 @@ def build_query_graph(
     context_source: ContextSource = "schema",
     knowledge_reader: Callable[[KnowledgeScope], list[RetrievalHit]] = load_scope_chunks,
     structure_format: StructureFormat = "columns",
+    retriever: Callable[[RetrievalRequest], RetrievalResult] = retrieve_knowledge,
+    table_chunk_reader: Callable[[KnowledgeScope, list[str]], dict[str, str]] = load_table_chunks,
+    method: RetrievalMethod = "hybrid",
+    rerank: bool = True,
 ) -> CompiledStateGraph:
     """编译 Schema → 模型 → SQL 校验 → 只读执行的线性图。
 
@@ -58,13 +68,18 @@ def build_query_graph(
         generator: SQL 生成函数，返回 GeneratedSql；默认调用真实模型，测试可注入固定结果。
         run_context: 传给只读执行器的运行上下文；为 None 时每次执行各自开一次运行记录。
         context_source: 模型收到的 Schema 来源，编译时选定。"schema" 为每张表的表名和列名，
-            "ddl" 为每张表的 CREATE TABLE 原文，"knowledge" 为这个库的全部知识经组装和渲染的文本。
+            "ddl" 为每张表的 CREATE TABLE 原文，"knowledge" 为这个库的全部知识经组装和渲染的文本，
+            "retrieval" 为用问题原文检索一次、只含被命中的表的文本。
         knowledge_reader: knowledge 来源读出一个 Knowledge Scope 下全部 Chunk 的函数；默认读知识库，
             测试可注入固定结果。其他来源不调用。
-        structure_format: knowledge 来源里表结构的写法，见 StructureFormat；其他来源忽略。
+        structure_format: knowledge 和 retrieval 来源里表结构的写法，见 StructureFormat；其他来源忽略。
+        retriever: retrieval 来源的检索函数，收一个 RetrievalRequest、返回 RetrievalResult；默认
+            retrieve_knowledge（每次按配置新建 Embedder 和 Reranker），评测可传入共用客户端的版本。
+        table_chunk_reader: retrieval 来源按表名读表 Chunk 的函数，参数为 (Scope, 表名列表)。
+        method, rerank: retrieval 来源的检索方法和是否重排，默认 hybrid + 重排；top_k 固定为 RETRIEVAL_TOP_K。
     返回:
-        可调用的已编译 LangGraph；输入为 QueryInput，输出为 QueryOutput。knowledge 来源调用时要传
-        context=QueryContext(knowledge_scopes=...)，其他来源不需要。
+        可调用的已编译 LangGraph；输入为 QueryInput，输出为 QueryOutput。knowledge 和 retrieval 来源
+        调用时要传 context=QueryContext(knowledge_scopes=...)，其他来源不需要。
     异常:
         ValueError: context_source 不是上面列出的取值。
     说明:
@@ -115,6 +130,29 @@ def build_query_graph(
         hits = knowledge_reader(read_scope)
         table_chunks = {hit.table_name: hit.content for hit in hits if hit.knowledge_type == "table"}
         return {"hits": hits, "table_chunks": table_chunks}
+
+    def retrieve(state: QueryState, runtime: Runtime[QueryContext]) -> dict[str, Any]:
+        """用问题原文在当前库的 Knowledge Scope 里检索一次，再读出 Hit 所属各表的表 Chunk。
+
+        参数:
+            state: 含 database_id 和 question 的图状态。
+            runtime: context 为 QueryContext，提供"database_id → Knowledge Scope"对照表。
+        返回:
+            状态增量：hits 为检索命中的 Hit，table_chunks 为它们所属各表的表名 → 表 Chunk 正文。
+            Scope 本身不写入状态。
+        异常:
+            KeyError: 对照表里没有当前库；此时不检索、不调用模型。
+            KnowledgeRetrievalError: 没有命中（no_match），或检索失败（input_error、embedding_error、
+                rerank_error 及读取层的类别）。都让请求失败，不退回其他来源。
+        """
+        scope = runtime.context.knowledge_scopes[state["database_id"]]
+        result = retriever(RetrievalRequest(query=state["question"], scope=scope, method=method, rerank=rerank,
+                                            top_k=RETRIEVAL_TOP_K))
+        if result.outcome == "no_match":
+            raise KnowledgeRetrievalError("no_match", "检索没有命中任何知识")
+        # 按第一次出现的顺序去重：一张表的多个 Hit 只读一次表 Chunk。
+        tables = list(dict.fromkeys(hit_table(hit) for hit in result.hits))
+        return {"hits": result.hits, "table_chunks": table_chunk_reader(scope, tables)}
 
     def build_context(state: QueryState) -> dict[str, str]:
         """把 Hit 组装成 Retrieval Context，按编译时的结构写法渲染成给模型的 Schema。
@@ -174,6 +212,7 @@ def build_query_graph(
         "schema": [("load_schema", load_columns)],
         "ddl": [("load_schema", load_ddl)],
         "knowledge": [("load_schema", load_ddl), ("load_knowledge", load_knowledge), ("build_context", build_context)],
+        "retrieval": [("load_schema", load_ddl), ("retrieve", retrieve), ("build_context", build_context)],
     }
     if context_source not in prefix:
         raise ValueError(f"unknown context_source {context_source!r}; expected one of {sorted(prefix)}")
