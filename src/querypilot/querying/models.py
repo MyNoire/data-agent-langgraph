@@ -1,6 +1,10 @@
-"""原单图输入、输出与状态；不包含路径或运行上下文。"""
+"""单图的输入、输出、状态和运行时 context。"""
 
+from dataclasses import dataclass
 from typing import Any, NotRequired, TypedDict
+
+from querypilot.retrieval.api import KnowledgeScope, RetrievalHit
+
 
 class QueryInput(TypedDict):
     """图的输入：调用者提供数据库 ID 和自然语言问题。"""
@@ -26,5 +30,18 @@ class QueryState(QueryInput):
     completion_tokens: NotRequired[int | None]
     sql: NotRequired[str]
     result: NotRequired[dict[str, Any]]
+    table_ddl: NotRequired[dict[str, str]]
+    hits: NotRequired[list[RetrievalHit]]
+    table_chunks: NotRequired[dict[str, str]]
 
+
+@dataclass(frozen=True)
+class QueryContext:
+    """每次调用时传入的运行时 context，不进图状态和输出。
+
+    knowledge_scopes 是"database_id → Knowledge Scope"对照表，knowledge 来源按当前库查表；
+    Scope 只是数据，不是授权依据。
+    """
+
+    knowledge_scopes: dict[str, KnowledgeScope]
 

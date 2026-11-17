@@ -1,25 +1,30 @@
 """要求显式指定数据库的单条线性 Text2SQL 工作流。
 
-此图复用 Phase 0 的模型适配器、AST 校验器和只读执行器。
-目前不含选库、重试、checkpoint 或长期记忆。
+此图复用 Phase 0 的模型适配器、AST 校验器和只读执行器。走哪条路径在编译时由 context_source 选定，
+没有条件边。目前不含选库、重试、checkpoint 或长期记忆。
 """
 
+from collections.abc import Callable
 from dataclasses import asdict
 from typing import Any, Literal
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.runtime import Runtime
 
 from querypilot.databases.api import execute_sql, format_schema, get_schema, get_table_ddl, validate_sql
+from querypilot.retrieval.api import KnowledgeScope, RetrievalHit, load_scope_chunks
 from querypilot.runtime.api import Settings
 from querypilot.sql_generation.api import SqlGenerator, generate_sql
 
-from .models import QueryInput, QueryOutput, QueryState
+from ._context import assemble_context
+from ._render import StructureFormat, render_context
+from .models import QueryContext, QueryInput, QueryOutput, QueryState
 
 GRAPH_VERSION = "single-v2"
 """查询图的实现版本，写进运行配置和评测报告；图的路径或节点职责变了就升版本。"""
 
-ContextSource = Literal["schema", "ddl"]
+ContextSource = Literal["schema", "ddl", "knowledge"]
 """模型收到的 Schema 来源，编译图时选定；取值含义见 build_query_graph。"""
 
 
@@ -43,6 +48,8 @@ def build_query_graph(
     generator: SqlGenerator = generate_sql,
     run_context=None,
     context_source: ContextSource = "schema",
+    knowledge_reader: Callable[[KnowledgeScope], list[RetrievalHit]] = load_scope_chunks,
+    structure_format: StructureFormat = "columns",
 ) -> CompiledStateGraph:
     """编译 Schema → 模型 → SQL 校验 → 只读执行的线性图。
 
@@ -51,13 +58,18 @@ def build_query_graph(
         generator: SQL 生成函数，返回 GeneratedSql；默认调用真实模型，测试可注入固定结果。
         run_context: 传给只读执行器的运行上下文；为 None 时每次执行各自开一次运行记录。
         context_source: 模型收到的 Schema 来源，编译时选定。"schema" 为每张表的表名和列名，
-            "ddl" 为每张表的 CREATE TABLE 原文。
+            "ddl" 为每张表的 CREATE TABLE 原文，"knowledge" 为这个库的全部知识经组装和渲染的文本。
+        knowledge_reader: knowledge 来源读出一个 Knowledge Scope 下全部 Chunk 的函数；默认读知识库，
+            测试可注入固定结果。其他来源不调用。
+        structure_format: knowledge 来源里表结构的写法，见 StructureFormat；其他来源忽略。
     返回:
-        可调用的已编译 LangGraph；输入为 QueryInput，输出为 QueryOutput。
+        可调用的已编译 LangGraph；输入为 QueryInput，输出为 QueryOutput。knowledge 来源调用时要传
+        context=QueryContext(knowledge_scopes=...)，其他来源不需要。
     异常:
         ValueError: context_source 不是上面列出的取值。
     说明:
-        凭据和数据库路径留在节点闭包内，不写入图状态。
+        凭据和数据库路径留在节点闭包内，不写入图状态；Knowledge Scope 只经运行时 context 传入，
+        也不写入图状态。
     """
     def load_columns(state: QueryState) -> dict[str, Any]:
         """读取已登记数据库每张表的表名和列名。
@@ -79,16 +91,42 @@ def build_query_graph(
             state: 至少包含 database_id 的图状态。
         返回:
             状态增量：schema 为按表名排序、以空行分隔的 CREATE TABLE 原文，
-            allowed_tables 为表名列表（不含 sqlite_ 内部表）。
+            allowed_tables 为表名列表（不含 sqlite_ 内部表），table_ddl 为表名 → CREATE TABLE 原文。
         异常:
             RegistryError: database_id 未登记或登记路径无效。
         """
         table_ddl = get_table_ddl(state["database_id"], settings)
-        return {"schema": "\n\n".join(table_ddl.values()), "allowed_tables": list(table_ddl)}
+        return {"schema": "\n\n".join(table_ddl.values()), "allowed_tables": list(table_ddl), "table_ddl": table_ddl}
 
-    loaders = {"schema": load_columns, "ddl": load_ddl}
-    if context_source not in loaders:
-        raise ValueError(f"unknown context_source {context_source!r}; expected one of {sorted(loaders)}")
+    def load_knowledge(state: QueryState, runtime: Runtime[QueryContext]) -> dict[str, Any]:
+        """按运行时 context 里当前库的 Knowledge Scope 读出全部 Chunk。
+
+        参数:
+            state: 至少包含 database_id 的图状态。
+            runtime: context 为 QueryContext，提供"database_id → Knowledge Scope"对照表。
+        返回:
+            状态增量：hits 为全部 Chunk（当作 Hit），table_chunks 为其中表 Chunk 的表名 → 正文。
+            Scope 本身不写入状态。
+        异常:
+            KeyError: 对照表里没有当前库；此时不读知识、不调用模型。
+            KnowledgeRetrievalError: 读取失败，类别沿用读取层。
+        """
+        read_scope = runtime.context.knowledge_scopes[state["database_id"]]
+        hits = knowledge_reader(read_scope)
+        table_chunks = {hit.table_name: hit.content for hit in hits if hit.knowledge_type == "table"}
+        return {"hits": hits, "table_chunks": table_chunks}
+
+    def build_context(state: QueryState) -> dict[str, str]:
+        """把 Hit 组装成 Retrieval Context，按编译时的结构写法渲染成给模型的 Schema。
+
+        参数:
+            state: 含 hits、table_chunks 和 load_schema 产出的 table_ddl 的图状态。
+        返回:
+            状态增量：schema 为渲染后的文本，替换 load_schema 写的那份。
+        """
+        table_context = assemble_context(state["hits"], state["table_chunks"])
+        return {"schema": render_context(table_context, structure_format=structure_format,
+                                         table_ddl=state["table_ddl"])}
 
     def generate(state: QueryState) -> dict[str, Any]:
         """根据问题和 Schema 生成候选 SQL，不注入 oracle evidence。
@@ -131,14 +169,17 @@ def build_query_graph(
         result = execute_sql(state["database_id"], state["sql"], settings, run_context=run_context)
         return {"result": asdict(result)}
 
-    builder = StateGraph(QueryState, input_schema=QueryInput, output_schema=QueryOutput)
-    builder.add_node("load_schema", loaders[context_source])
-    builder.add_node("generate_sql", generate)
-    builder.add_node("validate_sql", validate)
-    builder.add_node("execute_sql", execute)
+    # 每种来源在 generate_sql 之前的节点；之后的三个节点所有来源相同。
+    prefix = {
+        "schema": [("load_schema", load_columns)],
+        "ddl": [("load_schema", load_ddl)],
+        "knowledge": [("load_schema", load_ddl), ("load_knowledge", load_knowledge), ("build_context", build_context)],
+    }
+    if context_source not in prefix:
+        raise ValueError(f"unknown context_source {context_source!r}; expected one of {sorted(prefix)}")
+    builder = StateGraph(QueryState, input_schema=QueryInput, output_schema=QueryOutput, context_schema=QueryContext)
+    builder.add_sequence(prefix[context_source]
+                         + [("generate_sql", generate), ("validate_sql", validate), ("execute_sql", execute)])
     builder.add_edge(START, "load_schema")
-    builder.add_edge("load_schema", "generate_sql")
-    builder.add_edge("generate_sql", "validate_sql")
-    builder.add_edge("validate_sql", "execute_sql")
     builder.add_edge("execute_sql", END)
     return builder.compile(name="querypilot_single")
