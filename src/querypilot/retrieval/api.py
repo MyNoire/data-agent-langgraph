@@ -1,11 +1,11 @@
-"""检索的公开入口：retrieve_knowledge。"""
+"""检索的公开入口：retrieve_knowledge，以及 knowledge 来源用的 load_scope_chunks。"""
 
 from hashlib import sha256
 import time
 from uuid import uuid4
 
 from querypilot.knowledge.api import (
-    Embedder, EmbeddingError, EmbeddingSettings, KnowledgeReadError, KnowledgeStorageSettings,
+    Embedder, EmbeddingError, EmbeddingSettings, KnowledgeReadError, KnowledgeScope, KnowledgeStorageSettings,
     OpenAIEmbedder, ReadSession, open_read_scope,
 )
 
@@ -115,8 +115,31 @@ def retrieve_knowledge(request: RetrievalRequest, settings: KnowledgeStorageSett
     )
 
 
+def load_scope_chunks(scope: KnowledgeScope, settings: KnowledgeStorageSettings | None = None) -> list[RetrievalHit]:
+    """读出一个 Knowledge Scope 下的全部 Chunk，当作 Hit 返回，给查询图的 knowledge 来源用。
+
+    参数：
+        scope：要读的 Knowledge Scope；只当作数据，不是授权依据。
+        settings：知识存储的读取配置（使用只读账号）；没传时按 QUERYPILOT_KNOWLEDGE_* 配置创建。
+    返回：
+        按 chunk_key 升序（同 key 按 chunk_id）的全部 Chunk；rank 从 1 连续编号，score 为 0。
+    异常：
+        KnowledgeRetrievalError：沿用读取层的错误类别，如范围不存在或不匹配为 scope_not_found /
+        scope_mismatch，行数超过 5000 或结果超过 1 MiB 为 capacity_exceeded。
+    副作用：
+        只读访问知识库一次；不调用 Embedding 或 Rerank 服务。
+    """
+    try:
+        with open_read_scope(scope, settings or KnowledgeStorageSettings()) as session:
+            rows = _search.scope_chunks(session)
+    except KnowledgeReadError as exc:
+        raise KnowledgeRetrievalError(exc.error_type, str(exc)) from exc
+    return [RetrievalHit(rank=i, score=0.0, **row) for i, row in enumerate(rows, start=1)]
+
+
 __all__ = [
     "retrieve_knowledge",
+    "load_scope_chunks",
     "RetrievalRequest",
     "RetrievalMethod",
     "RetrievalResult",
@@ -128,4 +151,5 @@ __all__ = [
     "RerankSettings",
     "SiliconFlowReranker",
     "ScopeFile",
+    "KnowledgeScope",
 ]
