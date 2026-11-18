@@ -7,6 +7,7 @@ import pytest
 from querypilot.databases.api import DatabaseRegistry, RegistryError
 from querypilot.querying.api import ask
 from querypilot.runtime.api import Settings
+from querypilot.sql_generation.api import GeneratedSql
 
 
 def test_ask_completes_operation_and_unknown_source_stops_generation(tmp_path):
@@ -21,7 +22,7 @@ def test_ask_completes_operation_and_unknown_source_stops_generation(tmp_path):
     def generator(question, schema, evidence, settings):
         """记录原四参输入，返回固定 SQL。"""
         calls.append((question, schema, evidence))
-        return "SELECT id FROM items"
+        return GeneratedSql("SELECT id FROM items")
 
     settings = Settings(_env_file=None, data_dir=tmp_path)
     assert ask("demo", "list", settings, generator=generator)["result"]["rows"] == [[7]]

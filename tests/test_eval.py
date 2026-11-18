@@ -11,7 +11,7 @@ import pytest
 from querypilot.runtime.api import Settings
 from querypilot.databases.api import DatabaseRegistry
 from querypilot.evaluation.api import run_direct
-from querypilot.sql_generation.api import direct_prompt
+from querypilot.sql_generation.api import GeneratedSql, direct_prompt
 from querypilot.runtime.api import task_run
 
 
@@ -91,7 +91,7 @@ def test_model_provider_uses_openai_compatible_client(tmp_path, monkeypatch):
                 含一条固定 SQL 响应的简易替身对象。
             """
             captured.update(kwargs)
-            return type("Response", (), {"choices": [type("Choice", (), {"message": type("Message", (), {"content": "SELECT COUNT(*) FROM items"})()})()]})()
+            return type("Response", (), {"usage": None, "choices": [type("Choice", (), {"message": type("Message", (), {"content": "SELECT COUNT(*) FROM items"})()})()]})()
 
     class FakeClient:
         def __init__(self, **kwargs):
@@ -194,9 +194,9 @@ def test_eval_summary_separates_matches_mismatches_and_errors(tmp_path):
         """
         if question == "offline":
             raise RuntimeError("model offline")
-        return {"match": "SELECT id FROM items",
-                "mismatch": "SELECT 999",
-                "bad SQL": "DELETE FROM items"}[question]
+        return GeneratedSql({"match": "SELECT id FROM items",
+                             "mismatch": "SELECT 999",
+                             "bad SQL": "DELETE FROM items"}[question])
 
     events_path = tmp_path / "eval.events.jsonl"
     settings = Settings(data_dir=data, artifacts_dir=tmp_path / "artifacts")
@@ -246,3 +246,31 @@ def test_result_runs_are_unique_and_existing_report_is_preserved(tmp_path):
     with pytest.raises(FileExistsError):
         export_public(runs[0], output)
     assert output.read_text(encoding="utf-8") == "original"
+
+
+def test_direct_eval_records_token_usage_for_model_cases_only(tmp_path):
+    """model 模式下逐题记录带上生成器报告的用量并汇总；fixture 模式不调用模型，记录里没有用量。"""
+    data = tmp_path / "data"
+    data.mkdir()
+    path = data / "demo.sqlite"
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE items (id INTEGER)")
+        connection.execute("INSERT INTO items VALUES (1)")
+    DatabaseRegistry(data).register("demo", path)
+    cases = tmp_path / "cases.json"
+    cases.write_text(json.dumps([
+        {"db_id": "demo", "question": "first", "SQL": "SELECT id FROM items"},
+        {"db_id": "demo", "question": "second", "SQL": "SELECT id FROM items"},
+    ]), encoding="utf-8")
+    settings = Settings(data_dir=data, artifacts_dir=tmp_path / "artifacts")
+    usage = {"first": (120, 8), "second": (80, 12)}
+
+    model = run_direct(cases, settings, provider="model",
+                       generator=lambda question, *_: GeneratedSql("SELECT id FROM items", *usage[question]))
+    fixture = run_direct(cases, settings, provider="fixture")
+
+    assert [(record["prompt_tokens"], record["completion_tokens"]) for record in model["records"]] == [(120, 8), (80, 12)]
+    assert model["token_usage"]["prompt_tokens"] == {"count": 2, "total": 200, "mean": 100.0, "median": 100.0}
+    assert model["token_usage"]["completion_tokens"] == {"count": 2, "total": 20, "mean": 10.0, "median": 10.0}
+    assert all("prompt_tokens" not in record for record in fixture["records"])
+    assert fixture["token_usage"]["prompt_tokens"] == {"count": 0, "total": None, "mean": None, "median": None}

@@ -28,6 +28,7 @@
 | 检索评测 | 88 题检索题集、按 Hit 计的召回指标、BM25 基线和失败分析 | [检索评测](evaluation/retrieval-evaluation.md) |
 | R4 向量与混合检索 | Embedding 向量存在 Corpus 之外（[ADR 0002](adr/0002-embeddings-outside-corpus.md)），精确向量检索，RRF 融合；三种方法对比：hybrid 的 Complete Recall@5 从 64.8% 升到 68.2%，vector 单独用略低于 BM25 | [检索评测](evaluation/retrieval-evaluation.md)、[知识库](knowledge/knowledge-base.md) |
 | R4b 重排 | 检索之后可选的一步重排（硅基流动 `Qwen/Qwen3-Reranker-8B`，前 20 个候选，默认关闭）。BM25 + 重排的 Complete Recall@5 为 75.0%（BM25 为 64.8%），是前 5 最好的配置；hybrid + 重排的 @5 没有变化（67.0%），@10 从 85.2% 升到 89.8%。代价是延迟：单次检索的中位数在 1–11 秒之间波动 | [检索评测](evaluation/retrieval-evaluation.md)、[知识库](knowledge/knowledge-base.md) |
+| R5 检索接入查询图 | 查询图按编译时选的 Context Source 走一条路径（无条件边）：`schema`、`ddl`、`knowledge`（全部知识）、`retrieval`（用问题检索一次，默认 hybrid + 重排、`top_k=10`，只给命中的表）；Hit 按表组织并精简成 Schema（`r5-schema-v1`）；Knowledge Scope 经运行时 context 传入，不进图状态。两库 88 题六组对比：执行匹配 42–46/88，非冻结题 35–37/72，全部在噪声内；检索与全量知识持平而输入只有约 37%；表没拿全的 9 题只对 1 题 | [SQL 评测](evaluation/sql-evaluation.md) |
 | 检索评测并发 | `eval retrieval --workers N`：线程池同时检索多道题，线程里只做检索，计分和记录留在主线程，报告顺序不变；出错或中断时不再开始新题。hybrid + 重排的 88 题评测从 18.9 分钟降到 45 秒（8 个线程贡献约 8 倍，其余是服务当时更快），指标不变 | [检索评测](evaluation/retrieval-evaluation.md) |
 | 工程基础 | 模块边界测试，运行记录与安全事件 | [模块](architecture/modules.md)、[运行记录](architecture/observability.md) |
 
@@ -35,9 +36,9 @@
 
 | 阶段 | 要回答的问题 | 内容 |
 |---|---|---|
-| 知识结构评测 | 粒度怎么切最好？ | 比较列级、表级和 small-to-big，在**相同的上下文 token 预算**下评测 |
-| R5 检索接入查询图 | 检索结果能帮模型写对 SQL 吗？ | 按表组织命中的内容，控制上下文预算；加入检索节点和上下文节点；用 SQL 评测和"完整 Schema"基线对比 |
+| 知识结构评测 | 粒度怎么切最好？ | 比较列级、表级和 small-to-big，在**相同的上下文 token 预算**下评测（预算和截断规则在这一步加入），同时看检索指标和 SQL 准确率 |
 | R6 外键扩展 | JOIN 路径还缺什么？ | 检索后按外键补上桥接表，做成独立开关并做消融 |
+| 模型自主检索 | 让模型自己决定查什么、查几次，比固定查一次更好吗？ | 把检索做成 tool，模型自己写查询、可以多次检索；和固定流程在同一批题上对比准确率、调用次数和耗时。之后可选：把检索包成 MCP server 供其他客户端调用 |
 | 选库、修复与多轮 | 系统能不能自己选库、自己修错、记住上下文？ | 带拒答的选库；SQL 错误分类与有限次修复；checkpoint 和长期记忆的边界 |
 | 正式评测 | 哪些机制真的有效，代价是多少？ | 固定知识快照、模型、提示词和检索配置，跑冻结的 100 题，报告配对差异和成本 |
 

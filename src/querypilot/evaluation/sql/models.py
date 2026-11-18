@@ -24,6 +24,10 @@ class CaseRecord(TypedDict):
     error_type: NotRequired[str]
     graph_run_id: NotRequired[str]
     row_count: NotRequired[int]
+    frozen: NotRequired[bool]
+    prompt_tokens: NotRequired[int | None]
+    completion_tokens: NotRequired[int | None]
+    tables_complete: NotRequired[bool]
 
 
 class EvalSummary(TypedDict):
@@ -61,5 +65,16 @@ class EvalReport(TypedDict):
     p50_latency_ms: float | None
     p95_latency_ms: float | None
     records: list[CaseRecord]
+    token_usage: NotRequired[dict[str, dict]]
     graph_version: NotRequired[str]
+    workers: NotRequired[int]
+    context_source: NotRequired[str]
+    structure_format: NotRequired[str]
+    schema_render_version: NotRequired[str]
+    knowledge_scopes: NotRequired[dict[str, dict[str, str]]]
+    method: NotRequired[str]
+    rerank: NotRequired[bool]
+    top_k: NotRequired[int]
+    retrieval: NotRequired[list[dict[str, str | None]]]
+    tables_complete: NotRequired[dict[str, dict]]
 

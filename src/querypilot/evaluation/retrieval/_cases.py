@@ -55,6 +55,36 @@ class _CorpusSchema:
         return schema
 
 
+def knowledge_scopes_from_cases(cases_file: Path) -> dict[str, KnowledgeScope]:
+    """从检索题集读出每个库的 Knowledge Scope，给查询图的 knowledge 来源用。
+
+    参数：
+        cases_file：prepare_retrieval_cases 写出的检索题集。
+    返回：
+        db_id → Knowledge Scope，每个出现过的库一项。
+    异常：
+        ValueError：同一个库的题用了不同的 Scope（题集混了几份 Corpus），不替调用方挑一个；
+        题集格式不对时为 pydantic 的 ValidationError（也是 ValueError）。
+    """
+    scopes: dict[str, KnowledgeScope] = {}
+    for case in RetrievalCaseSet.model_validate_json(cases_file.read_bytes()).cases:
+        if scopes.setdefault(case.db_id, case.scope) != case.scope:
+            raise ValueError(f"retrieval cases use more than one knowledge scope for {case.db_id!r}")
+    return scopes
+
+
+def relevant_tables_from_cases(cases_file: Path) -> dict[int, list[str]]:
+    """从检索题集读出每道题 Relevant Set 的表，给 SQL 评测的 retrieval 来源判断"表是否拿全"。
+
+    参数：
+        cases_file：prepare_retrieval_cases 写出的检索题集。
+    返回：
+        题号 → Relevant Set 的表（Corpus 里的写法）。
+    """
+    case_set = RetrievalCaseSet.model_validate_json(cases_file.read_bytes())
+    return {case.question_id: case.relevant_tables for case in case_set.cases}
+
+
 def _corpus_schema(corpus_dir: Path) -> _CorpusSchema:
     """读取并校验一份 Corpus，取出它的 Knowledge Scope 和全部列 Chunk 的表列名称。"""
     corpus = load_corpus(corpus_dir)

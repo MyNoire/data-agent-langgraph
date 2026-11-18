@@ -3,12 +3,12 @@
 import json
 import sys
 from collections import Counter
-from hashlib import sha256
 
 from querypilot.evaluation.api import (
-    RetrievalCaseError, evaluate_retrieval, export_public, prepare_retrieval_cases, retrieval_run_config,
-    run_direct, run_graph,
+    RetrievalCaseError, evaluate_retrieval, export_public, knowledge_scopes_from_cases, prepare_retrieval_cases,
+    relevant_tables_from_cases, retrieval_run_config, run_direct, run_graph, sql_run_config,
 )
+from querypilot.querying.api import KNOWLEDGE_SOURCES
 from querypilot.runtime.api import task_run
 
 
@@ -24,14 +24,21 @@ def run(args, settings) -> int:
         return _retrieval_cases(args)
     if args.action == "retrieval":
         return _retrieval(args, settings)
-    config = {"mode": "sql"} if args.action == "export-public" else {
-        "mode": "sql",
-        "provider": getattr(args, "provider", "graph"),
-        "evidence_mode": getattr(args, "evidence_mode", "none"),
-        "dataset_sha256": sha256(args.cases.read_bytes()).hexdigest(),
-        "prompt_version": "direct-v2" if getattr(args, "provider", "model") != "fixture" else None,
-        "graph_version": "single-v1" if args.action == "graph" else None,
-    }
+    if args.action == "export-public":
+        config = {"mode": "sql"}
+    elif args.action == "direct":
+        config = sql_run_config(args.cases, settings, args.provider, args.evidence_mode)
+    else:
+        # knowledge / retrieval 来源的 Scope 来自检索题集；其他来源不读它。
+        knowledge_scopes = (knowledge_scopes_from_cases(args.retrieval_cases)
+                            if args.context_source in KNOWLEDGE_SOURCES else None)
+        graph_options = {"workers": args.workers, "context_source": args.context_source,
+                         "structure_format": args.structure_format, "knowledge_scopes": knowledge_scopes,
+                         "method": args.method, "rerank": args.rerank,
+                         # retrieval 来源按 Relevant Set 判断每题的表是否拿全。
+                         "relevant_tables": (relevant_tables_from_cases(args.retrieval_cases)
+                                             if args.context_source == "retrieval" else None)}
+        config = sql_run_config(args.cases, settings, "graph", "none", **graph_options)
     with task_run("evaluation", settings, command=args.action, private=True, config=config) as context:
         context.attach_stream(sys.stderr)
         if args.action == "export-public":
@@ -43,7 +50,7 @@ def run(args, settings) -> int:
                 result = run_direct(args.cases, settings, provider=args.provider,
                                     evidence_mode=args.evidence_mode, run_context=context)
             else:
-                result = run_graph(args.cases, settings, run_context=context)
+                result = run_graph(args.cases, settings, **graph_options, run_context=context)
             context.complete(result)
             summary = json.dumps({"output_file": str(context.run_dir / "private/result.json"),
                                   "event_file": str(context.run_dir / "events.jsonl"),

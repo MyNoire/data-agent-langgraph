@@ -174,7 +174,6 @@ def test_default_retriever_shares_one_reranker_across_cases(tmp_path, monkeypatc
 
     输出：两次检索收到的是同一个按 QUERYPILOT_RERANK_* 创建的 Reranker。
     """
-    from querypilot.evaluation.retrieval import _runner
     monkeypatch.setenv("QUERYPILOT_RERANK_BASE_URL", "http://127.0.0.1:9/v1")
     monkeypatch.setenv("QUERYPILOT_RERANK_MODEL", "Qwen/Qwen3-Reranker-8B")
     monkeypatch.setenv("QUERYPILOT_RERANK_API_KEY", "sk-not-a-real-key")
@@ -184,7 +183,8 @@ def test_default_retriever_shares_one_reranker_across_cases(tmp_path, monkeypatc
         rerankers.append(reranker)
         return _result(request, [_hit(1)])
 
-    monkeypatch.setattr(_runner, "retrieve_knowledge", fake_retrieve)
+    from querypilot.retrieval import api as retrieval_api
+    monkeypatch.setattr(retrieval_api, "retrieve_knowledge", fake_retrieve)
     evaluate_retrieval(_cases_file(tmp_path, [_case(1), _case(2)]), _settings(tmp_path), rerank=True)
     assert len(rerankers) == 2 and rerankers[0] is rerankers[1]
     assert rerankers[0].profile_id.startswith("siliconflow:Qwen/Qwen3-Reranker-8B:")
@@ -425,7 +425,7 @@ def test_cli_runs_one_recorded_evaluation_and_prints_locations(tmp_path, monkeyp
         built_for.append((method, rerank))
         return lambda request: requests.append(request) or _result(request, [_hit(1)])
 
-    monkeypatch.setattr(_runner, "_default_retriever", default_retriever)
+    monkeypatch.setattr(_runner, "shared_retriever", default_retriever)
     cases_file = _cases_file(tmp_path, [_case(1, question="PRIVATE RETRIEVAL QUESTION")])
 
     assert cli.main(["eval", "retrieval", "--cases", str(cases_file), "--method", "vector"]) == 0
@@ -460,7 +460,7 @@ def test_cli_rerank_flag_turns_reranking_on_for_the_whole_run(tmp_path, monkeypa
         built_for.append((method, rerank))
         return lambda request: requests.append(request) or _result(request, [_hit(1)])
 
-    monkeypatch.setattr(_runner, "_default_retriever", default_retriever)
+    monkeypatch.setattr(_runner, "shared_retriever", default_retriever)
     cases_file = _cases_file(tmp_path, [_case(1), _case(2)])
 
     assert cli.main(["eval", "retrieval", "--cases", str(cases_file), "--rerank"]) == 0
@@ -485,7 +485,7 @@ def test_cli_workers_flag_reaches_the_runner_and_the_run_config(tmp_path, monkey
 
     settings = _settings(tmp_path)
     monkeypatch.setattr(cli, "get_settings", lambda: settings)
-    monkeypatch.setattr(_runner, "_default_retriever",
+    monkeypatch.setattr(_runner, "shared_retriever",
                         lambda method, rerank: lambda request: _result(request, [_hit(1)]))
     cases_file = _cases_file(tmp_path, [_case(1), _case(2)])
 
@@ -508,7 +508,7 @@ def test_cli_rejects_workers_below_one_before_any_run_is_recorded(tmp_path, monk
     settings = _settings(tmp_path)
     monkeypatch.setattr(cli, "get_settings", lambda: settings)
     built = []
-    monkeypatch.setattr(_runner, "_default_retriever", lambda method, rerank: built.append(method))
+    monkeypatch.setattr(_runner, "shared_retriever", lambda method, rerank: built.append(method))
     cases_file = _cases_file(tmp_path, [_case(1)])
 
     with pytest.raises(SystemExit) as caught:

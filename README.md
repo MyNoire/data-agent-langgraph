@@ -16,7 +16,8 @@
 | 检索评测 | ✅ | 88 题检索题集，按 Hit 计的召回指标，BM25 基线和失败分析 |
 | SQL 评测 | ✅ | 12 题开发集 + 冻结的 100 题，执行结果匹配 |
 | 向量与混合检索 | ✅ | Qwen3-Embedding-8B 精确向量检索，BM25 + 向量用 RRF 融合；`--method lexical / vector / hybrid` |
-| 检索接入查询图、选库、SQL 修复、多轮记忆 | 规划中 | 见[路线图](docs/roadmap.md) |
+| 检索接入查询图 | ✅ | 编译时选 Context Source：表名列名、建表语句、全部知识，或用问题检索一次（默认 hybrid + 重排、top_k=10）只给命中的表 |
+| 选库、SQL 修复、多轮记忆 | 规划中 | 见[路线图](docs/roadmap.md) |
 
 ## 几个数字
 
@@ -25,6 +26,7 @@
 | 检索（BM25） | toxicology + student_club 共 88 题，top_k=20 | 前 10 个 Hit 拿全相关表：**84.1%**；前 5 个：**64.8%**；全覆盖所需 Hit 数的中位数为 **3** |
 | 检索（hybrid，RRF） | 同上，同一份题集和 Corpus | 前 10 个：**85.2%**；前 5 个：**68.2%**；vector 单独用为 80.7% / 62.5%。每次检索多一次 Embedding 调用，P95 约 2.4 s |
 | SQL（未接检索） | 冻结 100 题，gpt-5.5，模型看到完整 Schema | 执行结果匹配 **30%**（项目口径，不等于官方 BIRD EX） |
+| SQL（检索接入查询图，R5） | toxicology + student_club 88 题，gpt-6.1-sol，六组 Context Source 各跑一次 | 执行匹配 **42–46/88**，组间差在噪声内；检索（hybrid + 重排）**44/88**，与全量知识持平，输入约为全量知识的 37%；表没拿全的 9 题只对 1 题 |
 
 指标怎么定义、为什么这样设计、失败的原因有哪些，见[检索评测](docs/evaluation/retrieval-evaluation.md)。
 
@@ -45,7 +47,7 @@ src/querypilot/
   sql_generation/   提示词、模型调用
   databases/        数据库登记、结构读取、SQL 安全检查、只读执行
   knowledge/        知识准备（catalog → corpus）和 PostgreSQL 存储
-  retrieval/        BM25 检索 retrieve_knowledge
+  retrieval/        BM25 / 向量 / 混合检索与重排 retrieve_knowledge，查询图用的知识读取
   evaluation/       SQL 评测、检索评测、BIRD 数据准备
   runtime/          配置、运行记录、安全事件
 ```

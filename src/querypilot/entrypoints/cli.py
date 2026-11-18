@@ -24,6 +24,10 @@ def _positive_int(value: str) -> int:
     return number
 
 
+KNOWLEDGE_SOURCES = ("knowledge", "retrieval")
+"""要 --retrieval-cases 的 Context Source；与 querying.api.KNOWLEDGE_SOURCES 相同（有测试比对），这里不导入 querying。"""
+
+
 def create_parser() -> argparse.ArgumentParser:
     """构造明确命令的参数树，返回解析器；不读取配置、不产生业务副作用。"""
     parser = _artifacts(SafeArgumentParser(prog="querypilot", description="QueryPilot 查询、知识准备与评测"))
@@ -42,6 +46,26 @@ def create_parser() -> argparse.ArgumentParser:
         if name == "direct":
             command.add_argument("--provider", choices=("model", "fixture"), default="model")
             command.add_argument("--evidence-mode", choices=("none", "oracle"), default="none")
+        else:
+            command.add_argument("--workers", type=_positive_int, default=1, help="同时在跑的题数，至少为 1，默认 1")
+            # 取值与 querying 的 ContextSource、StructureFormat 相同（有测试比对）；这里不导入 querying，
+            # 解析参数时不加载模型和图。
+            command.add_argument("--context-source", choices=("schema", "ddl", "knowledge", "retrieval"),
+                                 default="schema",
+                                 help="模型收到的 Schema 来源：schema 为表名和列名（默认），ddl 为建表语句，"
+                                      "knowledge 为这个库的全部知识，retrieval 为用问题检索到的知识"
+                                      "（后两种需要 --retrieval-cases）")
+            command.add_argument("--structure-format", choices=("columns", "ddl"), default="columns",
+                                 help="knowledge / retrieval 来源里表结构的写法：columns 为字段目录、主键、外键"
+                                      "（默认），ddl 为建表语句；其他来源忽略")
+            command.add_argument("--retrieval-cases", type=Path,
+                                 help="检索题集文件，knowledge / retrieval 来源从中取各库的 Knowledge Scope")
+            command.add_argument("--method", choices=("lexical", "vector", "hybrid"), default="hybrid",
+                                 help="retrieval 来源的检索方法（默认 hybrid，与查询图相同）；vector 和 hybrid "
+                                      "会调用 Embedding 服务，产生费用")
+            command.add_argument("--rerank", action=argparse.BooleanOptionalAction, default=True,
+                                 help="retrieval 来源检索后是否重排（默认开启，与查询图相同）；会调用 Reranker "
+                                      "服务，产生费用")
         command.set_defaults(command=f"eval.{name}")
     retrieval = _artifacts(eval_actions.add_parser("retrieval", help="对检索题集跑一次检索评测"))
     retrieval.add_argument("--cases", type=Path, required=True)
@@ -134,6 +158,12 @@ def create_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--database-source", type=Path, required=True)
     prepare.add_argument("--manifest", type=Path, default=Path("evals/bird_final100_manifest.json"))
     prepare.set_defaults(command="data.bird.prepare-final100")
+    databases = _artifacts(bird_actions.add_parser("select-databases", help="取指定数据库的全部题目，生成 SQL 题集"))
+    databases.add_argument("--source", type=Path, default=Path("data/bird/mini_dev_sqlite-00000-of-00001.json"))
+    databases.add_argument("--frozen-manifest", type=Path, default=Path("evals/bird_final100_manifest.json"))
+    databases.add_argument("--database-id", action="append", required=True)
+    databases.add_argument("--output", type=Path, required=True)
+    databases.set_defaults(command="data.bird.select-databases")
     return parser
 
 
@@ -143,7 +173,10 @@ def main(argv: list[str] | None = None) -> int:
     参数：argv 可供测试传入，None 使用正常进程参数。帮助不会读取知识配置。
     副作用：仅选中命令才导入对应能力、执行已请求动作和建立运行记录。
     """
-    args = create_parser().parse_args(argv)
+    parser = create_parser()
+    args = parser.parse_args(argv)
+    if getattr(args, "context_source", None) in KNOWLEDGE_SOURCES and args.retrieval_cases is None:
+        parser.error(f"--context-source {args.context_source} 需要 --retrieval-cases")
     try:
         settings = get_settings()
         if hasattr(args, "artifacts_dir"):

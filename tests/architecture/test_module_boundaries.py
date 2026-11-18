@@ -22,11 +22,11 @@ DATASET_REEXPORTS = {
 }
 ALLOWED_DEPENDENCIES = {
     "entrypoints": {"querying", "sql_generation", "databases", "evaluation", "knowledge", "retrieval", "runtime"},
-    "querying": {"sql_generation", "databases", "runtime"},
+    "querying": {"sql_generation", "databases", "retrieval", "runtime"},
     "sql_generation": {"runtime"},
     "databases": {"runtime"},
     "evaluation": {"evaluation.sql", "evaluation.retrieval"},
-    "evaluation.sql": {"querying", "sql_generation", "databases", "runtime"},
+    "evaluation.sql": {"querying", "retrieval", "sql_generation", "databases", "runtime"},
     "evaluation.retrieval": {"retrieval", "knowledge", "runtime"},
     "evaluation.datasets": {"databases", "runtime"},
     "knowledge": {*(f"knowledge.{part}" for part in KNOWLEDGE_PARTS), "runtime"},
@@ -496,7 +496,6 @@ def test_legal_api_exports_and_internal_imports(tmp_path: Path) -> None:
     ("from querypilot.databases.api import *", "non-public-symbol"),
     ("from querypilot.evaluation.api import run", "dependency-direction"),
     ("from querypilot.knowledge.api import build", "dependency-direction"),
-    ("from querypilot.retrieval.api import retrieve", "dependency-direction"),
     ("from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    from querypilot.evaluation.api import run", "dependency-direction"),
 ])
 def test_querying_rejects_private_or_forbidden_imports(tmp_path: Path, source: str, expected: str) -> None:

@@ -4,23 +4,15 @@
 Hits to Cover，以及只作诊断的 Column Recall@K。K 都以 Hit 计，和检索的 top_k 同一单位。
 """
 
-import json
 from statistics import median
 
-from querypilot.retrieval.api import RetrievalHit
+from querypilot.retrieval.api import RetrievalHit, hit_table
 
 from .models import RelevantColumn
 
 TABLE_KS = (5, 10)
 # Column Recall 在前 COLUMN_K 个 Hit 里找列；不能超过运行器的检索预算 TOP_K。
 COLUMN_K = 10
-
-
-def _hit_table(hit: RetrievalHit) -> str:
-    """Hit 所属的表。关系类的定位字段为空，取 chunk_key（[类型, 库, schema, 源表, 序号]）里的源表。"""
-    if hit.knowledge_type == "relationship":
-        return json.loads(hit.chunk_key)[3]
-    return hit.table_name
 
 
 def score_case(relevant_tables: list[str], relevant_columns: list[RelevantColumn],
@@ -32,7 +24,7 @@ def score_case(relevant_tables: list[str], relevant_columns: list[RelevantColumn
     # 每张相关表的首次命中名次：表、列、关系三类 Hit 都算它所属的表。
     first_table_ranks: dict[str, int] = {}
     for hit in hits:
-        first_table_ranks.setdefault(_hit_table(hit), hit.rank)
+        first_table_ranks.setdefault(hit_table(hit), hit.rank)
     table_ranks = {table: first_table_ranks.get(table) for table in relevant_tables}
 
     # 拿全相关表至少要多少个 Hit：最晚命中的那张表的名次；有一张没命中就为空。

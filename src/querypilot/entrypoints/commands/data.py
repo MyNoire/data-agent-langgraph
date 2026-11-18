@@ -4,7 +4,7 @@ import json
 import sys
 
 from querypilot.evaluation.api import (
-    fetch_bird, import_bird, select_final100, freeze_final100, prepare_final100,
+    fetch_bird, import_bird, select_database_cases, select_final100, freeze_final100, prepare_final100,
 )
 from querypilot.runtime.api import task_run
 
@@ -28,6 +28,10 @@ def run(args, settings) -> int:
             result = freeze_final100(args.database_root, args.output, args.source, args.smoke_manifest,
                                      run_context=context)
             text = f"frozen {result['count']} cases across {result['database_count']} databases\ndifficulty: {result['difficulty']}\nskipped by reference-SQL preflight: {result['skipped_preflight']}\nmanifest: {result['manifest']}"
+        elif args.action == "select-databases":
+            result = select_database_cases(args.source, args.database_id, args.frozen_manifest, args.output)
+            text = (f"selected {result['count']} cases: {result['databases']}\nfrozen: {result['frozen']}\n"
+                    f"cases: {result['output']}\nmanifest: {result['manifest']}")
         else:
             result = prepare_final100(args.database_source, args.manifest, settings)
             lines = [f"{status}: {database_id}" for database_id, status in result["databases"].items()]

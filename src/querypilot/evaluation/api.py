@@ -2,11 +2,11 @@
 
 from .sql.api import (
     CaseRecord, CaseOutcome, EvalReport, EvalSummary,
-    run_direct, run_graph, read_report, export_public,
+    run_direct, run_graph, read_report, export_public, select_database_cases, sql_run_config, SqlCaseSetError,
 )
 from .retrieval.api import (
     PreparedCases, RelevantColumn, RetrievalCase, RetrievalCaseError, RetrievalCaseSet, evaluate_retrieval,
-    prepare_retrieval_cases, retrieval_run_config,
+    knowledge_scopes_from_cases, prepare_retrieval_cases, relevant_tables_from_cases, retrieval_run_config,
 )
 
 from .datasets._errors import DataPreparationError
@@ -20,5 +20,6 @@ __all__ = [
     "run_direct", "run_graph", "read_report", "export_public",
     "CaseRecord", "CaseOutcome", "EvalReport", "EvalSummary", "DataPreparationError",
     "fetch_bird", "import_bird", "select_final100", "freeze_final100", "prepare_final100",
-    "prepare_retrieval_cases", "evaluate_retrieval", "retrieval_run_config", "PreparedCases", "RetrievalCaseError", "RetrievalCase", "RetrievalCaseSet", "RelevantColumn",
+    "select_database_cases", "sql_run_config", "SqlCaseSetError",
+    "prepare_retrieval_cases", "knowledge_scopes_from_cases", "relevant_tables_from_cases", "evaluate_retrieval", "retrieval_run_config", "PreparedCases", "RetrievalCaseError", "RetrievalCase", "RetrievalCaseSet", "RelevantColumn",
 ]

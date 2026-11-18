@@ -1,4 +1,4 @@
-"""检索的 SQL：BM25 搜索和向量搜索。
+"""检索的 SQL：BM25 搜索、向量搜索，以及读出一个 Scope 的全部 Chunk 或指定表的表 Chunk。
 
 可检索字段必须与知识存储里 BM25 索引的定义一致；两边是否一致由真实 PG 集成测试保证。
 """
@@ -143,4 +143,60 @@ def vector_chunks(session: ReadSession, request: RetrievalRequest, profile_id: s
         "profile_id": profile_id,
         "query_vector": "[" + ",".join(repr(float(value)) for value in query_vector) + "]",
         "limit": limit,
+    })
+
+
+SCOPE_CHUNKS_SQL = """
+    SELECT
+        c.chunk_id::text AS chunk_id,
+        c.chunk_key,
+        c.knowledge_type,
+        c.title,
+        c.content,
+        c.content_hash,
+        c.schema_name,
+        c.table_name,
+        c.column_name
+    FROM querypilot_kb.knowledge_chunks AS c
+    WHERE c.corpus_id = %(corpus_id)s
+        AND c.database_id = %(database_id)s
+        AND c.schema_version = %(schema_version)s
+    ORDER BY c.chunk_key COLLATE "C" ASC,
+            c.chunk_id ASC
+"""
+
+
+def scope_chunks(session: ReadSession) -> list[dict]:
+    """读出 session 的 Knowledge Scope 下的全部 Chunk，按 chunk_key → chunk_id 排序。
+
+    行数和字节数受读取层的上限约束，超出时报 capacity_exceeded，不截断。
+    每行的键与 RetrievalHit 除 rank、score 外的 9 个字段同名。
+    """
+    scope = session.scope
+    return session.fetch_rows(SCOPE_CHUNKS_SQL, {
+        "corpus_id": scope.corpus_id, "database_id": scope.database_id, "schema_version": scope.schema_version,
+    })
+
+
+TABLE_CHUNKS_SQL = """
+    SELECT c.table_name, c.content
+    FROM querypilot_kb.knowledge_chunks AS c
+    WHERE c.corpus_id = %(corpus_id)s
+        AND c.database_id = %(database_id)s
+        AND c.schema_version = %(schema_version)s
+        AND c.knowledge_type = 'table'
+        AND c.table_name = ANY(%(tables)s::text[])
+    ORDER BY c.table_name COLLATE "C" ASC
+"""
+
+
+def table_chunks(session: ReadSession, tables: list[str]) -> list[dict]:
+    """读出 session 的 Knowledge Scope 下这些表的表 Chunk，每行含 table_name 和 content。
+
+    Scope 里没有的表名不返回；行数和字节数受读取层的上限约束。
+    """
+    scope = session.scope
+    return session.fetch_rows(TABLE_CHUNKS_SQL, {
+        "corpus_id": scope.corpus_id, "database_id": scope.database_id, "schema_version": scope.schema_version,
+        "tables": list(tables),
     })

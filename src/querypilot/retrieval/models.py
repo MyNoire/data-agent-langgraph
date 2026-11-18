@@ -1,5 +1,6 @@
 """检索的请求、结果和错误类型。"""
 
+import json
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
@@ -119,6 +120,17 @@ class RetrievalHit(RetrievalModel):
     schema_name: str | None = None
     table_name: str | None = None
     column_name: str | None = None
+
+
+def hit_table(hit: RetrievalHit) -> str:
+    """Hit 属于哪张表：表和列 Hit 是自己的 table_name；关系 Hit 是外键的源表。
+
+    关系 Hit 的三个定位字段为空，源表取自 chunk_key（JSON 数组 [类型, 库, schema, 源表, 序号]）。
+    检索评测的计分和查询图的上下文组装都按这条规则把 Hit 归到表。
+    """
+    if hit.knowledge_type == "relationship":
+        return json.loads(hit.chunk_key)[3]
+    return hit.table_name
 
 
 class RetrievalResult(RetrievalModel):

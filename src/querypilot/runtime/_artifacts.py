@@ -7,6 +7,7 @@ import re
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
 from typing import Any, Iterator, Mapping
 from uuid import uuid4
 
@@ -97,6 +98,7 @@ class RunContext:
         self._middleware: list[Any] = []
         self._terminal_streams: set[int] = set()
         self._audit_logger: logging.Logger | None = None
+        self._audit_lock = Lock()
         self._last_failure_event: tuple[str, str, str] | None = None
         self.record: RunRecord = {
             "format_version": "querypilot-run-v1", "run_id": self.run_id, "operation": operation,
@@ -144,12 +146,16 @@ class RunContext:
 
     @property
     def audit_logger(self) -> logging.Logger:
-        """首次实际 SQL 调用才创建私有审计端，不为知识任务生成空审计文件。"""
-        if self._audit_logger is None:
-            if self._closed:
-                raise RuntimeError("run context is closed")
-            self._audit_logger = self._new_logger("querypilot.sql.audit", self.run_dir / "private" / "sql-audit.jsonl", audit=True)
-        return self._audit_logger
+        """首次实际 SQL 调用才创建私有审计端，不为知识任务生成空审计文件。
+
+        多个线程同时第一次调用时只创建一次：审计文件是排他新建的，创建两次第二次会失败。
+        """
+        with self._audit_lock:
+            if self._audit_logger is None:
+                if self._closed:
+                    raise RuntimeError("run context is closed")
+                self._audit_logger = self._new_logger("querypilot.sql.audit", self.run_dir / "private" / "sql-audit.jsonl", audit=True)
+            return self._audit_logger
 
     def event(self, event: str, **fields: Any) -> None:
         """写固定安全事件；忽略非白名单正文，写失败在完成时报告。"""

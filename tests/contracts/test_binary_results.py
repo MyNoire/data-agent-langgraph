@@ -11,6 +11,7 @@ from querypilot.databases.api import DatabaseRegistry, execute_sql
 from querypilot.entrypoints.http import create_app
 from querypilot.querying.api import ask
 from querypilot.runtime.api import Settings, read_run_result
+from querypilot.sql_generation.api import GeneratedSql
 
 
 def binary_settings(tmp_path, payloads, *, api_key="local"):
@@ -40,7 +41,7 @@ def test_public_library_queries_preserve_arbitrary_blob_and_archive_reversibly(t
     if operation == "execute_sql":
         rows = execute_sql("binary", sql, settings).rows
     else:
-        rows = ask("binary", "返回二进制字段", settings, generator=lambda *_: sql)["result"]["rows"]
+        rows = ask("binary", "返回二进制字段", settings, generator=lambda *_: GeneratedSql(sql))["result"]["rows"]
     assert rows == [[payload] for payload in payloads]
     assert all(type(row[0]) is bytes for row in rows)
     runs = list(settings.artifacts_dir.glob("runs/query/*/*"))

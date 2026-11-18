@@ -14,6 +14,7 @@ from querypilot.knowledge.api import (build_corpus, curate_catalog, load_corpus,
                                      render_knowledge, verify_corpus)
 from querypilot.querying.api import ask
 from querypilot.runtime.api import read_run_result, task_run
+from querypilot.sql_generation.api import GeneratedSql
 
 
 def corpus_inputs(tmp_path):
@@ -41,7 +42,7 @@ def test_mixed_public_operations_own_one_run_and_reused_corpus_is_untouched(tmp_
                                  "question": "QUESTION_PRIVATE", "SQL": "SELECT label FROM items"}]))
     curated, semantic = corpus_inputs(tmp_path)
     target = tmp_path / "corpus"
-    query = ask("demo", "QUESTION_PRIVATE", settings, generator=lambda *_: "SELECT label FROM items")
+    query = ask("demo", "QUESTION_PRIVATE", settings, generator=lambda *_: GeneratedSql("SELECT label FROM items"))
 
     def forbid_model(*args):
         """fixture应使用题集SQL，不得调用任何生成器或模型。"""
@@ -111,7 +112,7 @@ def test_overlapping_query_and_corpus_do_not_share_event_sink(tmp_path, monkeypa
     def generate(*args):
         """固定SQL替代模型，同时与构建操作建立真实重叠。"""
         barrier.wait(timeout=15)
-        return "SELECT 23 AS value"
+        return GeneratedSql("SELECT 23 AS value")
 
     monkeypatch.setattr(corpus_api, "_build_knowledge_corpus", synchronized_build)
     with ThreadPoolExecutor(max_workers=2) as pool:

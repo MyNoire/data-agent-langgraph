@@ -1,9 +1,13 @@
 """自然语言单图的完整操作和框架集成入口。"""
 
 from querypilot.runtime.api import Settings
-from querypilot.sql_generation.api import SqlGenerator, generate_sql
-from .models import QueryInput, QueryOutput, QueryState
-from ._single_graph import build_query_graph, query_result_row_count
+from querypilot.sql_generation.api import PROMPT_VERSION, SqlGenerator, generate_sql
+from .models import QueryInput, QueryOutput, QueryState, QueryContext
+from ._context import TableContext, assemble_context
+from ._render import SCHEMA_RENDER_VERSION, StructureFormat, render_context
+from ._single_graph import (
+    GRAPH_VERSION, KNOWLEDGE_SOURCES, RETRIEVAL_TOP_K, ContextSource, build_query_graph, query_result_row_count,
+)
 
 
 def ask(database_id: str, question: str, settings: Settings, *, generator: SqlGenerator = generate_sql,
@@ -18,7 +22,7 @@ def ask(database_id: str, question: str, settings: Settings, *, generator: SqlGe
 
     owned = run_context is None
     with task_run("query", settings, run_context=run_context, command="ask", private=True,
-                  config={"graph_version": "single-v1", "prompt_version": "direct-v2",
+                  config={"graph_version": GRAPH_VERSION, "prompt_version": PROMPT_VERSION,
                           "max_rows": settings.max_rows, "query_timeout_ms": settings.query_timeout_ms,
                           "max_response_bytes": settings.max_response_bytes}) as context:
         graph = build_query_graph(settings, generator=generator, run_context=context)
@@ -30,4 +34,4 @@ def ask(database_id: str, question: str, settings: Settings, *, generator: SqlGe
         return result
 
 
-__all__ = ["ask", "build_query_graph", "QueryInput", "QueryOutput", "QueryState", "SqlGenerator", "query_result_row_count"]
+__all__ = ["ask", "build_query_graph", "GRAPH_VERSION", "ContextSource", "TableContext", "assemble_context", "render_context", "StructureFormat", "SCHEMA_RENDER_VERSION", "QueryInput", "QueryOutput", "QueryState", "SqlGenerator", "query_result_row_count", "QueryContext", "RETRIEVAL_TOP_K", "KNOWLEDGE_SOURCES"]

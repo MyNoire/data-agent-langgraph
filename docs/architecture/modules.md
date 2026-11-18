@@ -25,7 +25,7 @@ src/querypilot/
   runtime/           配置、运行目录、事件、审计、版本信息
 ~~~
 
-查询依赖生成和数据库；评测调用这些正式能力。正式查询不向评测借生成器。知识快照依赖知识目录，存储依赖快照；检索从存储借用限定只读会话。runtime 不导入业务模块。
+查询依赖生成、数据库和检索（检索得到的 Hit 在查询里组装成给模型的 Schema；查询不直接导入 knowledge）；评测调用这些正式能力。正式查询不向评测借生成器。知识快照依赖知识目录，存储依赖快照；检索从存储借用限定只读会话。runtime 不导入业务模块。
 
 tests/architecture/test_module_boundaries.py 检查方向、跨模块私有访问、显式导出泄漏和循环，也识别 evaluation 的三个子目录；同在 evaluation 内不代表可以互读内部实现。测试为检查安全细节可以访问本能力内部；生产调用走公开入口。
 
@@ -34,10 +34,11 @@ tests/architecture/test_module_boundaries.py 检查方向、跨模块私有访�
 | 从哪里导入 | 操作与返回 | 失败和副作用 |
 | --- | --- | --- |
 | querying.api | ask(database_id, question, settings, *, generator=..., run_context=None) → 原 sql/result | 创建查询记录；模型和数据库错误保留；没有检索、修复、重试 |
-| querying.api | build_query_graph(settings, *, generator=..., run_context=None) → 编译图 | 编译不建运行目录；手动执行时提供任务上下文 |
-| sql_generation.api | direct_prompt → 文本；generate_sql(question, schema, evidence, settings) → SQL | 前者纯计算，后者请求模型；direct-v2、超时与客户端参数保持 |
+| querying.api | build_query_graph(settings, *, generator=..., run_context=None, context_source="schema", knowledge_reader=load_scope_chunks, structure_format="columns", retriever=retrieve_knowledge, table_chunk_reader=load_table_chunks, method="hybrid", rerank=True) → 编译图；GRAPH_VERSION 为图版本，ContextSource 为可选的 Schema 来源（schema / ddl / knowledge / retrieval），RETRIEVAL_TOP_K 为检索取的 Hit 数（10）；QueryContext 是运行时 context（"database_id → Knowledge Scope"对照表） | 编译不建运行目录；手动执行时提供任务上下文；不认识的 context_source 在编译时抛 ValueError。knowledge 路径为 load_schema → load_knowledge → build_context，retrieval 路径为 load_schema → retrieve → build_context，两者调用时都传 context=QueryContext(...)；对照表里没有当前库时抛 KeyError，检索没有命中或失败时抛 KnowledgeRetrievalError（no_match / input_error / embedding_error / rerank_error 等），都不调用模型、不退回其他来源；Scope 不进图状态和输出；retrieval 只给模型被命中的表，AST 检查仍允许这个库的全部表；编译时用 `langsmith.configure(enabled=False)` 关闭本进程的 LangSmith 追踪，环境变量打开了也不上传（运行数据里有问题原文、Schema、Hit 正文、SQL 和结果行） |
+| querying.api | assemble_context(hits, table_chunks) → list[TableContext]；render_context(context, *, structure_format, table_ddl=None) → Schema 文本（规则版本 SCHEMA_RENDER_VERSION） | 都是纯函数：前者把 Hit 按所属的表归拢成 Retrieval Context（关系归源表），后者按行标签筛选 Chunk 正文，columns / ddl 两种结构写法；图的 build_context 节点调用它们 |
+| sql_generation.api | direct_prompt → 文本；generate_sql(question, schema, evidence, settings) → GeneratedSql（SQL 和接口报告的 token 用量） | 前者纯计算，后者请求模型；direct-v2、超时与客户端参数保持 |
 | databases.api | DatabaseRegistry(data_dir).list/register/get → 登记映射或路径 | 注册写索引；不接受 data_dir 以外的源 |
-| databases.api | get_schema(database_id, settings) → 表名到列名；format_schema → 文本 | 自行定位；未知 ID 抛 RegistryError；结构读取不建任务 |
+| databases.api | get_schema(database_id, settings) → 表名到列名；format_schema → 文本；get_table_ddl(database_id, settings) → 表名到 CREATE TABLE 原文 | 自行定位；未知 ID 抛 RegistryError；结构读取不建任务 |
 | databases.api | validate_sql → 受限 SQL；execute_sql(database_id, sql, settings, *, run_context=None) → QueryResult | 自行定位、检查和只读执行；保留行数、时间、字节限制 |
 
 QueryResult 保留 sql/columns/rows/row_count/elapsed_ms；数据库 API 中的二进制字段仍是原 bytes。私有 JSON 归档对二进制值使用可逆的 base64 标签，普通文本与数值不改；HTTP 保留原来的成功序列化。错误包括 RegistryError、SqlRejected、QueryLimitError 和 SQLite 错误，HTTP 在入口层转换状态码。
@@ -126,7 +127,7 @@ PG 的真实事务和权限必须在专用测试库验证；替身只能证明�
 
 ## 评测与报告
 
-querypilot.evaluation.api 提供 run_direct/run_graph，返回原 EvalReport。fixture 把金标准 SQL 交回执行器，只检查评测管线，分数不能当模型能力。direct 在查库或读取结构失败时中止批次；进入逐题处理后，生成服务和执行错误都会记录后继续。graph 的查库也在逐题错误处理内，因此未知库会记错后继续下一题。两者保留原来的差异。
+querypilot.evaluation.api 提供 run_direct/run_graph，返回原 EvalReport；run_graph 可用 workers 同时跑多道题，报告仍按题集顺序；context_source 传给查询图并记进报告。knowledge 和 retrieval 来源另传 structure_format 和"db_id → Knowledge Scope"对照表（命令行用 knowledge_scopes_from_cases 从检索题集读出），三者连同渲染版本记进运行配置和报告；对照表缺了题集用到的库时在建立运行记录之前报 ValueError。retrieval 来源另传 method / rerank（默认 hybrid + 重排），记 method、rerank、top_k，报告的 retrieval 列出实际用到的检索版本（方法、两个 Profile、检索配置版本）；整次运行用 shared_retriever 共用一组 Embedder 和 Reranker。逐题的 error_type 对带类别的错误（检索、知识读取）记类别，否则记异常类名。retrieval 另传题号 → Relevant Set 的表（命令行用 relevant_tables_from_cases 从检索题集读出），逐题记 tables_complete，报告按拿全 / 没拿全汇总。因此 evaluation.sql 也可以从 retrieval 的公开入口导入。sql_run_config 是两者和命令行共用的运行配置。select_database_cases 从 BIRD 题目文件生成指定数据库的 SQL 题集和 manifest。fixture 把金标准 SQL 交回执行器，只检查评测管线，分数不能当模型能力。direct 在查库或读取结构失败时中止批次；进入逐题处理后，生成服务和执行错误都会记录后继续。graph 的查库也在逐题错误处理内，因此未知库会记错后继续下一题。两者保留原来的差异。
 
 这些完整操作只在 `evaluation/sql/api.py` 实现，根 `evaluation.api` 普通重导出同一个函数和类型，不再包一层转发。调用方原有导入不变；已有 generator 参数继续用于固定生成器注入。SQL 批次沿用 operation=evaluation，实际最外层配置标明 mode=sql；完整无预测报告仍是完成批次，不因搬迁改成命令失败。
 
@@ -136,7 +137,7 @@ BIRD 的 fetch/import/select/freeze/prepare 逻辑归 evaluation/datasets；命�
 
 检索评测归 `evaluation/retrieval`，按需离线运行：`prepare_retrieval_cases` 从 BIRD 题目和 Corpus 生成检索题集（`eval retrieval-cases`），`evaluate_retrieval` 按 `method`（lexical / vector / hybrid）和 `rerank`（是否重排，默认关闭）用 `workers` 个线程（默认 1）对每道题调用一次 `retrieve_knowledge`，在主线程里按 GLOSSARY「评测」的口径计分（`eval retrieval --method ... [--rerank] [--workers N]`），vector 和 hybrid 整次运行共用一个 Embedder，开启重排时整次运行共用一个 Reranker，它们会被多个线程同时使用；报告按题集顺序写进运行记录。SQL 报告不接收检索分数，SQL 的延迟计算也不为此改公式。
 
-检索本体的 `retrieval.api` 导出 `retrieve_knowledge`（限定 Knowledge Scope，按 `method` 做 BM25、向量或 RRF 混合检索；向量和混合检索可传入 Embedder，没传时按配置创建；请求开启 `rerank` 时用 Reranker 对候选重排，没传时按 `QUERYPILOT_RERANK_*` 创建）和它的请求、结果、Hit、错误与 ScopeFile 类型，以及 `Reranker` 接口、`RerankError`、硅基流动的 `SiliconFlowReranker` 和它的配置 `RerankSettings`；KnowledgeScope 仍从 `knowledge.api` 取得。参数和 scope 文件解析位于 `entrypoints/commands/retrieval.py`，安全解析器在 `entrypoints/_arguments.py` 共用。统一检索命令还没有接进 CLI，不公开内部查询或会话辅助函数凑接口。
+检索本体的 `retrieval.api` 导出 `load_scope_chunks`（读出一个 Knowledge Scope 的全部 Chunk，按 chunk_key 排序当作 Hit 返回，给查询图的 knowledge 来源用；行数和字节数受读取层上限约束）、`load_table_chunks`（按表名读一个 Scope 下的表 Chunk，给 retrieval 来源补齐表级知识）、`shared_retriever`（一次批量运行共用一组 Embedder 和 Reranker 的检索函数，检索评测和 SQL 评测都用它）、`retrieve_knowledge`（限定 Knowledge Scope，按 `method` 做 BM25、向量或 RRF 混合检索；向量和混合检索可传入 Embedder，没传时按配置创建；请求开启 `rerank` 时用 Reranker 对候选重排，没传时按 `QUERYPILOT_RERANK_*` 创建）和它的请求、结果、Hit、错误与 ScopeFile 类型，以及 `Reranker` 接口、`RerankError`、硅基流动的 `SiliconFlowReranker` 和它的配置 `RerankSettings`；`KnowledgeScope` 也从这里导出，查询图和 SQL 评测不直接导入 knowledge。参数和 scope 文件解析位于 `entrypoints/commands/retrieval.py`，安全解析器在 `entrypoints/_arguments.py` 共用。统一检索命令还没有接进 CLI，不公开内部查询或会话辅助函数凑接口。
 
 ## 一次任务的记录归谁管
 

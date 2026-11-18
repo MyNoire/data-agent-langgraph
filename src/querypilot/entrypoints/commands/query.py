@@ -3,14 +3,15 @@
 import json
 import sys
 
-from querypilot.querying.api import ask
+from querypilot.querying.api import GRAPH_VERSION, ask
 from querypilot.runtime.api import task_run
+from querypilot.sql_generation.api import PROMPT_VERSION
 
 
 def run(args, settings) -> int:
     """执行已解析 ask；返回0，业务/产物错误交统一入口映射。"""
     with task_run("query", settings, command="ask", private=True,
-                  config={"graph_version": "single-v1", "prompt_version": "direct-v2"}) as context:
+                  config={"graph_version": GRAPH_VERSION, "prompt_version": PROMPT_VERSION}) as context:
         context.attach_stream(sys.stderr)
         result = ask(args.database_id, args.question, settings, run_context=context)
         context.complete(result)
