@@ -70,6 +70,11 @@ Data Semantics 配置 ──corpus build──▶ Corpus 快照（Documents / Ch
 出向关联（声明外键）: "zip" → "main"."zip_code" ("zip_code"); "link_to_major" → "main"."major" ("major_id")
 ```
 
+**数据约定**（Data Convention）：语义配置可以给一张表写一条 `data_convention`（`{"text": …, "origin": "observed"}`），表块在「记录粒度」后多一行 `数据约定: …`，metadata 记 `data_convention.origin = observed`。表用途和记录粒度是只看结构推断出来的（`inferred`）；数据约定是查数据观察到的存储性质，比如 toxicology 的 `connected` 每条键正反各存一行。规则：
+
+- 对所有库的每张表做同一组只读检查（成对列是否对称存储、只取一个值的列、ID 的组成、派生列与其他列的关系、文本格式等），不针对具体题目；检查方法和结果记在工单里。
+- 草稿经用户审阅批准后才写进语义配置；没有发现约定的表不写。取值样例已经能看出的东西（比如某列只有哪几个值）不重复写成约定。
+
 **列块**：一列的类型、约束、含义和取值说明。
 
 ```text

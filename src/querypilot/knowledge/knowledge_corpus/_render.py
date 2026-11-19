@@ -474,10 +474,12 @@ def _render_curated(
         table_title = _qualified(schema, table.name)
         common = {"document_key": document_key, "database_id": db}
         table_meaning = profile.tables.get(table.name) if profile else None
+        convention = table_meaning.data_convention if table_meaning else None
         table_content = "\n".join([
             f"数据库: {db}; 表: {table_title}",
             f"表用途: {table_meaning.purpose if table_meaning else '未配置表级摘要。'}",
             f"记录粒度: {table_meaning.row_grain if table_meaning else '未配置。'}",
+            *([f"数据约定: {convention.text}"] if convention else []),
             "字段目录: " + ", ".join(_qualified(column.name) for column in table.columns),
             "行标识线索（主键声明、成员顺序）: "
             + (", ".join(_qualified(name) for name in table.primary_key_columns()) or "未声明"),
@@ -495,6 +497,7 @@ def _render_curated(
                 "structure_locator": locator, "without_rowid": table.without_rowid, "strict": table.strict,
                 "semantic_render_version": "compact-context-v2",
                 **(semantic_metadata if table_meaning else {"semantic_origin": "not_configured"}),
+                **({"data_convention": {"origin": convention.origin}} if convention else {}),
                 "semantic_sources": _semantic_sources(
                     [(table.name, column.name) for column in table.columns], notes, source_hashes, db, schema,
                 ),

@@ -58,11 +58,19 @@ class KnowledgeDraft(CatalogModel):
     relations: list[RelationDraft]
 
 
+class DataConvention(CatalogModel):
+    """查数据观察到、经用户批准的存储约定；来源固定为 observed，与推断出的摘要分开。"""
+
+    text: str = Field(min_length=1)
+    origin: Literal["observed"]
+
+
 class TableMeaning(CatalogModel):
-    """输入为离线推断的表摘要；输出用途和记录粒度，不复制字段详情。"""
+    """输入为离线推断的表摘要；输出用途和记录粒度，不复制字段详情。可选带一条数据约定。"""
 
     purpose: str = Field(min_length=1)
     row_grain: str = Field(min_length=1)
+    data_convention: DataConvention | None = None
 
 
 class RelationshipMeaning(CatalogModel):
