@@ -37,7 +37,7 @@
 | 表 | 发现 | 写成约定？ |
 |---|---|---|
 | toxicology.connected | 18312 行 = 9156 条键 × 2；每条键 (atom_id, atom_id2) 和 (atom_id2, atom_id) 都存，bond_id 相同；38 个原子不在这张表里 | 写 |
-| toxicology.atom | atom_id 全部是 molecule_id + '_' + 序号，序号不补零（TR000_1 … TR000_100） | 写 |
+| toxicology.atom | atom_id 全部是 molecule_id + '_' + 序号，序号不补零（TR001_1 … TR001_10） | 写 |
 | toxicology.bond | bond_id 全部是 molecule_id + '_' + 较小的原子序号 + '_' + 较大的原子序号；每条键两端的原子都属于这个分子 | 写 |
 | toxicology.molecule | label 只有 '+' / '-'（取值样例已经能看到） | 不写 |
 | student_club.budget | 每个 (link_to_event, category) 一行；remaining = amount − spent 全部成立，5 行为负；spent = 这条预算下 expense.cost 的合计，全部成立（28 行没有支出，spent 为 0）；event_status 与对应 event.status 全部相同 | 写 |
@@ -53,7 +53,7 @@
 **草稿（待用户批准）**
 
 - toxicology.connected：每条化学键正反各存一行：(atom_id, atom_id2) 和 (atom_id2, atom_id) 都在，bond_id 相同，所以本表行数是键数的两倍；数键用 bond 表或 COUNT(DISTINCT bond_id)。没有任何键的原子不出现在本表。
-- toxicology.atom：atom_id 由 molecule_id、下划线和原子序号组成，序号不补零（如 'TR000_1'、'TR000_10'），按文本排序与按序号排序不同。
+- toxicology.atom：atom_id 由 molecule_id、下划线和原子序号组成，序号不补零（如 'TR001_1'、'TR001_2'、'TR001_10'），按文本排序与按序号排序不同。
 - toxicology.bond：bond_id 由 molecule_id、较小的原子序号、较大的原子序号用下划线连接而成（如 'TR000_1_2' 连接 'TR000_1' 和 'TR000_2'）。
 - student_club.budget：每个活动的每个类别一行。remaining = amount - spent；spent 是关联到这一行的 expense.cost 之和，没有支出时为 0；remaining 可以为负（超支）。event_status 与所属 event 的 status 相同。
 - student_club.expense：approved 只有 'true' 和 NULL 两种，没有 'false'。expense_date 是 'YYYY-MM-DD' 文本。
