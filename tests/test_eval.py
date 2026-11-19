@@ -40,7 +40,7 @@ def test_fixture_eval_plumbing(tmp_path):
     assert result["execution_accuracy"] == 1
     assert result["summary"] == {
         "total": 1, "success": 1, "failure": 0, "mismatch": 0,
-        "error": 0, "no_prediction": 0, "valid_sql": 1,
+        "error": 0, "no_prediction": 0, "valid_sql": 1, "content_match": 1,
     }
     assert result["records"][0]["outcome"] == "matched"
     assert result["max_response_bytes"] == Settings(data_dir=data).max_response_bytes
@@ -207,7 +207,7 @@ def test_eval_summary_separates_matches_mismatches_and_errors(tmp_path):
     events_path = context.run_dir / "events.jsonl"
     assert result["summary"] == {
         "total": 4, "success": 1, "failure": 3, "mismatch": 1,
-        "error": 2, "no_prediction": 1, "valid_sql": 2,
+        "error": 2, "no_prediction": 1, "valid_sql": 2, "content_match": 1,
     }
     assert [record["outcome"] for record in result["records"]] == [
         "matched", "mismatched", "error", "error",

@@ -17,6 +17,7 @@ class CaseRecord(TypedDict):
     evidence_used: bool
     valid_sql: bool
     execution_match: bool
+    content_match: bool
     outcome: NotRequired[CaseOutcome]
     latency_ms: NotRequired[float]
     predicted_sql: NotRequired[str]
@@ -40,6 +41,7 @@ class EvalSummary(TypedDict):
     error: int
     no_prediction: int
     valid_sql: int
+    content_match: int
 
 
 class EvalReport(TypedDict):
@@ -62,6 +64,7 @@ class EvalReport(TypedDict):
     max_response_bytes: int
     valid_sql_rate: float | None
     execution_accuracy: float | None
+    content_match_rate: float | None
     p50_latency_ms: float | None
     p95_latency_ms: float | None
     records: list[CaseRecord]

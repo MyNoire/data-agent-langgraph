@@ -9,7 +9,7 @@ from querypilot.runtime.api import Settings
 from querypilot.databases.api import execute_sql, get_schema
 from querypilot.databases.api import DatabaseRegistry
 from querypilot.databases.api import format_schema
-from ._compare import normalized_rows
+from ._compare import content_match, normalized_rows
 from ._results import (
     CaseRecord, EvalReport, build_report, finish_case_record, new_case_record,
 )
@@ -69,6 +69,7 @@ def run_direct(cases_path: Path, settings: Settings, *, provider="model", eviden
             gold = execute_sql(database_id, case["SQL"], settings, run_context=run_context)
             # 同一列位置的值需要相等；行顺序不影响结果，重复行仍计入。
             record["execution_match"] = normalized_rows(actual.rows) == normalized_rows(gold.rows)
+            record["content_match"] = content_match(actual.rows, gold.rows)
         except Exception as exc:
             record["error"] = f"{type(exc).__name__}: {exc}"
         finish_case_record(record, started)

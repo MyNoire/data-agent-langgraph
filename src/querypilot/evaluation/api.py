@@ -2,7 +2,8 @@
 
 from .sql.api import (
     CaseRecord, CaseOutcome, EvalReport, EvalSummary,
-    run_direct, run_graph, read_report, export_public, select_database_cases, sql_run_config, SqlCaseSetError,
+    content_match, run_direct, run_graph, read_report, export_public, select_database_cases, sql_run_config,
+    SqlCaseSetError,
 )
 from .retrieval.api import (
     PreparedCases, RelevantColumn, RetrievalCase, RetrievalCaseError, RetrievalCaseSet, evaluate_retrieval,
@@ -17,7 +18,7 @@ from .datasets._freeze import freeze_final100
 from .datasets._prepare import prepare_final100
 
 __all__ = [
-    "run_direct", "run_graph", "read_report", "export_public",
+    "content_match", "run_direct", "run_graph", "read_report", "export_public",
     "CaseRecord", "CaseOutcome", "EvalReport", "EvalSummary", "DataPreparationError",
     "fetch_bird", "import_bird", "select_final100", "freeze_final100", "prepare_final100",
     "select_database_cases", "sql_run_config", "SqlCaseSetError",

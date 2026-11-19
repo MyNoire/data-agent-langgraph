@@ -11,7 +11,7 @@ from pathlib import Path
 from querypilot.runtime.api import Settings
 from querypilot.databases.api import execute_sql
 from querypilot.sql_generation.api import PROMPT_VERSION, generate_sql
-from ._compare import normalized_rows
+from ._compare import content_match, normalized_rows
 from ._results import (
     CaseRecord, EvalReport, build_report, finish_case_record, new_case_record,
 )
@@ -100,16 +100,21 @@ def _case_record(position: int, case: dict, run: _CaseRun, graph_run_id: str,
         record["error"] = f"{type(run.error).__name__}: {run.error}"
     else:
         record["execution_match"] = normalized_rows(run.result["rows"]) == normalized_rows(run.gold_rows)
+        record["content_match"] = content_match(run.result["rows"], run.gold_rows)
     return finish_case_record(record, run.started, finished=run.finished)
 
 
 def _split(records: list[CaseRecord]) -> dict:
-    """一组记录按 tables_complete 分成拿全 / 没拿全，各给题数、执行匹配数和比例（没有题时比例为 None）。"""
+    """一组记录按 tables_complete 分成拿全 / 没拿全，各给题数，以及严格执行匹配（matched、rate）和内容匹配
+    （content_matched、content_rate）的题数和比例；没有题时比例为 None。"""
     split = {}
     for name, complete in (("complete", True), ("incomplete", False)):
         group = [record for record in records if record["tables_complete"] is complete]
         matched = sum(record["execution_match"] for record in group)
-        split[name] = {"cases": len(group), "matched": matched, "rate": matched / len(group) if group else None}
+        content_matched = sum(record["content_match"] for record in group)
+        split[name] = {"cases": len(group), "matched": matched, "rate": matched / len(group) if group else None,
+                       "content_matched": content_matched,
+                       "content_rate": content_matched / len(group) if group else None}
     return split
 
 

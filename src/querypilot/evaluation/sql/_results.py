@@ -30,7 +30,7 @@ def new_case_record(index: int, case: Mapping[str, Any], *, evidence_used: bool,
         "index": index, "question_id": case.get("question_id"),
         "database_id": case["db_id"], "question": case["question"],
         "evidence_used": evidence_used, "valid_sql": False,
-        "execution_match": False,
+        "execution_match": False, "content_match": False,
     }
     if graph_run_id is not None:
         record["graph_run_id"] = graph_run_id
@@ -63,8 +63,8 @@ def summarize_records(records: list[CaseRecord]) -> EvalSummary:
     参数:
         records: 已经调用 ``finish_case_record`` 的逐题记录。
     返回:
-        success、mismatch、error 的互斥计数及总数；no_prediction
-        是 error 中可能出现的子集，valid_sql 是独立计数。
+        success、mismatch、error 的互斥计数及总数（按严格执行匹配）；no_prediction
+        是 error 中可能出现的子集，valid_sql 和 content_match（内容匹配的题数）是独立计数。
     """
     outcomes = Counter(record["outcome"] for record in records)
     return {
@@ -73,6 +73,7 @@ def summarize_records(records: list[CaseRecord]) -> EvalSummary:
         "mismatch": outcomes["mismatched"], "error": outcomes["error"],
         "no_prediction": sum("predicted_sql" not in record for record in records),
         "valid_sql": sum(record["valid_sql"] for record in records),
+        "content_match": sum(record["content_match"] for record in records),
     }
 
 
@@ -113,8 +114,8 @@ def build_report(*, cases_path: Path, case_bytes: bytes, settings: Settings,
         prompt_version: 实际使用的 Prompt 版本；fixture 为 None。
         graph_version: 单图实现版本；其他模式为空。
     返回:
-        EvalReport，其中 token_usage 是两项用量的汇总。没有任何预测时模型
-        准确率和有效 SQL 率为 None，避免把服务不可用算成 0%。
+        EvalReport，其中 execution_accuracy 是严格执行匹配率，content_match_rate 是内容匹配率，
+        token_usage 是两项用量的汇总。没有任何预测时这两个比例和有效 SQL 率为 None，避免把服务不可用算成 0%。
     """
     summary = summarize_records(records)
     no_predictions = bool(records) and summary["no_prediction"] == len(records)
@@ -140,6 +141,7 @@ def build_report(*, cases_path: Path, case_bytes: bytes, settings: Settings,
         "max_response_bytes": settings.max_response_bytes,
         "valid_sql_rate": summary["valid_sql"] / len(records) if rate_available else None,
         "execution_accuracy": summary["success"] / len(records) if rate_available else None,
+        "content_match_rate": summary["content_match"] / len(records) if rate_available else None,
         "p50_latency_ms": statistics.median(latencies) if latencies else None,
         "p95_latency_ms": latencies[min(len(latencies) - 1, int(len(latencies) * .95))] if latencies else None,
         "token_usage": summarize_token_usage(records),
