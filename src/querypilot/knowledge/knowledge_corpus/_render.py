@@ -8,6 +8,7 @@ from typing import Any
 
 from querypilot.knowledge.knowledge_catalog.api import ColumnDescription, EnrichedCatalog, SourceRecord
 from querypilot.knowledge.knowledge_catalog.api import Catalog, ForeignKeySchema, TableSchema
+from querypilot.knowledge.knowledge_catalog.api import VALUE_RULE_VERSION, ColumnValues, ValueSamples
 from .draft import (
     ChunkDraft, DocumentDraft, KnowledgeDraft, RelationDraft, SemanticProfile,
 )
@@ -211,6 +212,9 @@ def _parse_semantics(
              "语义配置 database_id/schema_name 与当前库不一致")
     tables = {table.name: table for table in catalog.tables}
     _require(profile.tables.keys() <= tables.keys(), "语义配置包含未知表")
+    _require(all(item.table_name in tables and any(column.name == item.column_name
+                                                   for column in tables[item.table_name].columns)
+                 for item in profile.private_columns), "隐私列名单包含结构中不存在的列")
     meanings = {}
     for item in profile.relationships:
         table = tables.get(item.source_table)
@@ -226,6 +230,39 @@ def _parse_semantics(
         "semantic_profile": {"file": semantic_name, "sha256": sha256(raw).hexdigest(),
                              "version": profile.version, "author": profile.author},
     }
+
+
+def _parse_values(raw: bytes, catalog: Catalog) -> dict[tuple[str, str], ColumnValues]:
+    """解析取值样例文件，并核对它与当前结构逐列对应（库、schema、表和列的顺序都相同）。
+
+    返回 (表, 列) → 这一列的取值。异常：KnowledgeError / ValueError。
+    """
+    samples = ValueSamples.model_validate_json(raw)
+    _require(samples.database_id == catalog.database_id and samples.schema_name == catalog.schema_name,
+             "取值样例文件的 database_id/schema_name 与当前库不一致")
+    expected = [(table.name, column.name) for table in catalog.tables for column in table.columns]
+    _require([(item.table_name, item.column_name) for item in samples.columns] == expected,
+             "取值样例文件的列与当前结构不对应")
+    return {(item.table_name, item.column_name): item for item in samples.columns}
+
+
+def _literal(item) -> str:
+    """一个取值写成 SQL 字面量：文本加单引号（内部单引号写两次），数字原样；截断的值后面加 …。"""
+    value = item.value
+    text = "'" + value.replace("'", "''") + "'" if isinstance(value, str) else repr(value)
+    return text + ("…" if item.truncated else "")
+
+
+def _values_line(column: ColumnValues) -> str | None:
+    """列 Chunk 的取值一行；隐私列返回 None（不加这一行）。"""
+    if column.mode == "private":
+        return None
+    if not column.values:
+        return "取值: 没有非空值"
+    values = ", ".join(_literal(item) for item in column.values)
+    if column.mode == "all":
+        return f"取值: 全部 {column.distinct_count} 个：{values}"
+    return f"取值: 样例（出现最多的 {len(column.values)} 个，共 {column.distinct_count} 个不同值）：{values}"
 
 
 def _load_curated(curated_dir: Path) -> _CuratedCatalog:
@@ -369,7 +406,7 @@ def render_knowledge(curated_dir: Path, semantic_file: Path | None = None) -> Kn
 
 def render_knowledge_inputs(
     manifest_bytes: bytes, input_files: dict[str, bytes],
-    semantic_bytes: bytes, semantic_name: str,
+    semantic_bytes: bytes, semantic_name: str, *, values_bytes: bytes | None = None,
 ) -> KnowledgeDraft:
     """从固定输入字节生成与 R1.3 文件入口相同的草稿。
 
@@ -378,6 +415,7 @@ def render_knowledge_inputs(
         input_files: 清单声明的相对文件名到原字节的映射。
         semantic_bytes: 必需语义配置原字节。
         semantic_name: 原 basename，用于保留定位。
+        values_bytes: 可选的取值样例文件原字节；给出时列 Chunk 多一行取值。
     返回:
         原有 KnowledgeDraft，状态仍为 draft。
     异常:
@@ -386,14 +424,20 @@ def render_knowledge_inputs(
         无；路径及来源范围由调用方校验。
     """
     curated = _parse_curated(manifest_bytes, input_files)
-    return _render_curated(curated, *_parse_semantics(
-        semantic_bytes, semantic_name, curated.enriched.catalog,
-    ))
+    catalog = curated.enriched.catalog
+    profile, meanings, metadata = _parse_semantics(semantic_bytes, semantic_name, catalog)
+    values = _parse_values(values_bytes, catalog) if values_bytes is not None else None
+    if values is not None:
+        # 取值文件若不是按这份隐私名单生成的，隐私值会进入 Corpus：拒绝。
+        _require(all(values[(item.table_name, item.column_name)].mode == "private"
+                     for item in profile.private_columns), "隐私列在取值样例文件里带了取值")
+    return _render_curated(curated, profile, meanings, metadata, values=values)
 
 
 def _render_curated(
     curated: _CuratedCatalog, profile: SemanticProfile | None,
-    relation_meanings: dict[str, str], semantic_metadata: dict[str, Any],
+    relation_meanings: dict[str, str], semantic_metadata: dict[str, Any], *,
+    values: dict[tuple[str, str], ColumnValues] | None = None,
 ) -> KnowledgeDraft:
     """渲染已核对的内容，保持原知识表达及成员顺序。
 
@@ -402,6 +446,7 @@ def _render_curated(
         profile: 可选推断配置。
         relation_meanings: 关系语义映射。
         semantic_metadata: 配置来源和版本。
+        values: 可选的每列取值；给出时列 Chunk 在取值解释后多一行取值（隐私列除外）。
     返回:
         文档、三类块和关系草稿。
     副作用:
@@ -459,6 +504,8 @@ def _render_curated(
         for column_index, column in enumerate(table.columns):
             note = notes.get((table.name, column.name))
             title = _qualified(schema, table.name, column.name)
+            column_values = values[(table.name, column.name)] if values is not None else None
+            values_line = _values_line(column_values) if column_values is not None else None
             content = "\n".join([
                 f"数据库: {db}; 字段: {title}",
                 f"声明类型: {column.declared_type or '未声明'}",
@@ -467,6 +514,7 @@ def _render_curated(
                 f"展示名: {note.display_name if note and note.display_name else '来源未说明'}",
                 f"字段解释: {note.description if note and note.description else '来源未说明'}",
                 f"取值解释: {note.value_description if note and note.value_description else '来源未说明'}",
+                *([values_line] if values_line else []),
             ])
             table_chunks.append(ChunkDraft(
                 **common, chunk_key=_key("column", db, schema, table.name, column.name),
@@ -479,6 +527,8 @@ def _render_curated(
                     "display_name": note.display_name if note else None,
                     "source_data_format": note.source_data_format if note else None,
                     "review_status": note.review_status if note else "missing_description",
+                    **({"value_samples": {"rule_version": VALUE_RULE_VERSION, "mode": column_values.mode}}
+                       if column_values is not None else {}),
                 },
             ))
             if note:

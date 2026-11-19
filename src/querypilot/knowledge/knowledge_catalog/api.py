@@ -17,6 +17,9 @@ from .description_models import (
 )
 from ._descriptions import DescriptionError, enrich_catalog
 from ._sqlite import CatalogError, extract_catalog
+from ._values import (
+    VALUE_RULE_VERSION, ColumnValues, SampleValue, ValueSamples, collect_value_samples,
+)
 from ._corrections import CorrectionError, build_curated_catalog as _build_curated_catalog
 from ._source_verification import SourceVerification, SourceVerificationError, verify_sources
 
@@ -89,6 +92,11 @@ __all__ = [
     "SourceVerificationError",
     "CurationSummary",
     "extract_catalog",
+    "collect_value_samples",
+    "ValueSamples",
+    "ColumnValues",
+    "SampleValue",
+    "VALUE_RULE_VERSION",
     "enrich_catalog",
     "curate_catalog",
     "verify_sources",

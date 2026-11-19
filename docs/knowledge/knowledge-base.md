@@ -11,6 +11,8 @@ BIRD 字段说明 CSV ──enrich──▶ 增强目录（每列绑定说明和
                           │
 已批准的修正计划 ──curate──▶ 修正后的增强目录 + 派生 CSV
                           │
+SQLite 库 + 隐私列名单 ──values──▶ 取值样例（可选）
+                          │
 Data Semantics 配置 ──corpus build──▶ Corpus 快照（Documents / Chunks / Relations + manifest）
                           │
                  corpus verify ──▶ store import ──▶ store verify ──▶ BM25 检索
@@ -22,7 +24,8 @@ Data Semantics 配置 ──corpus build──▶ Corpus 快照（Documents / Ch
 | 提取结构 | `querypilot knowledge catalog extract` | 只读打开 SQLite，提取表、列、主键、外键 |
 | 绑定说明 | `querypilot knowledge catalog enrich` | 把 BIRD 的 `database_description/*.csv` 绑到对应的列，记录来源文件的 hash 和行号 |
 | 应用修正 | `querypilot knowledge catalog curate` | 按**已批准**的计划修正说明里的错误，写出派生 CSV |
-| 构建快照 | `querypilot knowledge corpus build` | 加上中文语义，渲染成知识块，生成确定性的身份和 manifest |
+| 取值样例 | `querypilot knowledge catalog values` | 可选。只读打开 SQLite，按规则 `value-samples-v1` 取每列的真实取值；隐私列（名单在语义配置的 `private_columns`）不查询。见第 3 节「取值样例」 |
+| 构建快照 | `querypilot knowledge corpus build` | 加上中文语义，渲染成知识块，生成确定性的身份和 manifest；给 `--values-file` 时列块多一行取值 |
 | 校验快照 | `querypilot knowledge corpus verify` | 重新读取每个文件，核对 hash 和引用关系 |
 | 导入 | `querypilot knowledge store import` / `verify` | 写进 PostgreSQL，并把每个字段读回来核对 |
 | 生成向量 | `querypilot knowledge store embed` | 按 `--corpus-id/--database-id/--schema-version` 或 `--scope-file` 指定 Scope，用当前 Embedding Profile 为全部 Chunk 算向量，一个事务写进向量表；已有就报 `exists`，不调用 API。会产生费用 |
@@ -79,7 +82,20 @@ not_null 声明标志: False; 主键位置: 0; hidden: 0
 取值解释: 来源未说明
 ```
 
-注意最后一行"取值解释：来源未说明"：知识库不知道 `position` 里有 President、Vice President 这些值。所以用户问"副会长"时，检索很难找到这张表。这是[检索评测](../evaluation/retrieval-evaluation.md)里发现的一类典型失败。
+注意最后一行"取值解释：来源未说明"：知识库不知道 `position` 里有 President、Vice President 这些值。所以用户问"副会长"时，检索很难找到这张表。这是[检索评测](../evaluation/retrieval-evaluation.md)里发现的一类典型失败。构建时给了取值样例文件，列块会在最后多一行真实取值（见下面「取值样例」）：
+
+```text
+取值: 全部 6 个：'Inactive', 'Member', 'President', 'Secretary', 'Treasurer', 'Vice President'
+```
+
+**取值样例**（Value Samples，规则 `value-samples-v1`）：`knowledge catalog values` 只读打开业务 SQLite，逐列取值，写成一份取值样例文件，作为 `corpus build --values-file` 的输入。它和其他输入一样存进快照的 `inputs/`，参与 `corpus_id` 的计算；文件里是数据集的原始数据，放在 Git 忽略的目录里。
+
+- 声明类型是文本（含 CHAR、CLOB 或 TEXT）、去重后非空取值不超过 20 个、又不是主键或外键列的：按值排序，全部列出。
+- 其他列：出现次数最多的 3 个非空值，次数相同按值排序；行里写明「共多少个不同值」。主键和外键列即使取值很少也只给样例。
+- 单个值超过 80 个字符时截断，渲染时在后面加 `…`。不统计 NULL 比例，不给数值范围。
+- 文本按 SQL 字面量写（单引号，内部单引号写两次），数字原样，保留大小写和格式。
+- **隐私列**：每个库的语义配置里有 `private_columns` 名单（由用户审阅），取值这一步不查询这些列，所以它们的值不会落盘，列块里也没有取值这一行；列名、类型和说明照常保留。构建时如果名单上的列在取值文件里带了值，拒绝构建。这份名单只决定知识库和提示词里放什么，不限制查询结果：模型仍然可以 SELECT 这些列。
+- 取值文件里的列必须和当前结构逐列对应（库、schema、表和列的顺序都相同），否则拒绝构建。不给取值文件时，构建结果与没有这一步时逐字节相同。
 
 **关系块**：一条外键的方向、字段对、业务含义和候选 JOIN 条件。
 
