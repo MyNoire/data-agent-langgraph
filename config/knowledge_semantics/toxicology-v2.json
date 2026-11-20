@@ -12,15 +12,27 @@
     },
     "atom": {
       "purpose": "记录分子中的原子及其元素类型，用于分析分子的元素组成或按元素筛选原子。",
-      "row_grain": "一个原子，关联其所属分子。"
+      "row_grain": "一个原子，关联其所属分子。",
+      "data_convention": {
+        "text": "atom_id 由 molecule_id、下划线和原子序号组成，序号不补零（如 'TR001_1'、'TR001_2'、'TR001_10'），按文本排序与按序号排序不同。",
+        "origin": "observed"
+      }
     },
     "bond": {
       "purpose": "记录分子中的化学键及键型，用于分析分子的成键结构。",
-      "row_grain": "一条化学键，关联其所属分子。"
+      "row_grain": "一条化学键，关联其所属分子。",
+      "data_convention": {
+        "text": "bond_id 由 molecule_id、较小的原子序号、较大的原子序号用下划线连接而成（如 'TR000_1_2' 连接 'TR000_1' 和 'TR000_2'）。",
+        "origin": "observed"
+      }
     },
     "connected": {
       "purpose": "记录两个原子之间由哪条化学键连接，将原子与化学键组织成可查询的连接关系。",
-      "row_grain": "一对原子及连接它们的化学键。"
+      "row_grain": "一对原子及连接它们的化学键。",
+      "data_convention": {
+        "text": "每条化学键正反各存一行：(atom_id, atom_id2) 和 (atom_id2, atom_id) 都在，bond_id 相同，所以本表行数是键数的两倍；数键用 bond 表或 COUNT(DISTINCT bond_id)。没有任何键的原子不出现在本表。",
+        "origin": "observed"
+      }
     }
   },
   "relationships": [

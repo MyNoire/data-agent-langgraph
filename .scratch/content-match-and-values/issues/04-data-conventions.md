@@ -6,13 +6,13 @@
 
 **Status:** ready-for-agent
 
-- [ ] 语义配置可选地给每张表带数据约定文本，来源标 `observed`；旧格式配置照常可用
-- [ ] 表 Chunk 只在有约定时多出「数据约定」一行，metadata 记录来源为 `observed`；没有约定时表 Chunk 不变（有测试）
-- [ ] 对两个库的每张表做同一组只读检查（成对列是否对称存储、只取一个值的列、ID 的组成规律等），检查方法和结果记在本工单 Comments 里，不针对具体题目
-- [ ] 草稿交给用户审阅；用户批准后才写进两个库的语义配置，批准的原话记在 Comments
-- [ ] 没有发现约定的表不写
-- [ ] 知识库文档写明数据约定的来源和审阅规则
-- [ ] 模块边界测试和全部单元测试通过
+- [x] 语义配置可选地给每张表带数据约定文本，来源标 `observed`；旧格式配置照常可用
+- [x] 表 Chunk 只在有约定时多出「数据约定」一行，metadata 记录来源为 `observed`；没有约定时表 Chunk 不变（有测试）
+- [x] 对两个库的每张表做同一组只读检查（成对列是否对称存储、只取一个值的列、ID 的组成规律等），检查方法和结果记在本工单 Comments 里，不针对具体题目
+- [x] 草稿交给用户审阅；用户批准后才写进两个库的语义配置，批准的原话记在 Comments
+- [x] 没有发现约定的表不写
+- [x] 知识库文档写明数据约定的来源和审阅规则
+- [x] 模块边界测试和全部单元测试通过
 
 ## Comments
 
@@ -61,3 +61,9 @@
 - student_club.income：date_received 是 'YYYY-MM-DD' 文本。
 - student_club.member：zip 存成整数，以 0 开头的邮编丢了前导 0。
 - student_club.zip_code：zip_code 存成整数，以 0 开头的邮编丢了前导 0。state 是州全称，short_state 是两字母缩写，一一对应。county 带后缀（如 'Orange County'；波多黎各是 '... Municipio'），部分为空。
+
+**2026-11-20 用户批准，写进配置**
+
+- 用户追问 member / zip_code 两条后，同意精简：member 一条删掉（它的 zip 是指向 zip_code 的外键，说的是同一件事），zip_code 改为「zip_code 是整数，以 0 开头的邮编没有前导 0（02108 存为 2108）。state 是州全称，short_state 是两字母缩写。county 带后缀，如 'Orange County'。」
+- 批准原话：「可以，按精简后的 8 条写进配置」。
+- 8 条写进 `config/knowledge_semantics/toxicology-v2.json`（connected、atom、bond）和 `student_club-v2.json`（budget、expense、event、income、zip_code），来源 `observed`。用两份配置在 scratchpad 里试构建：student_club 5 张表、toxicology 3 张表的表块带上了「数据约定」一行。正式构建在工单 06 做。

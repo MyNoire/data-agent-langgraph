@@ -16,11 +16,19 @@
     },
     "zip_code": {
       "purpose": "记录美国邮政编码对应的城市、县、州及编码类型，用于按地区分析会员的家乡。",
-      "row_grain": "一个邮政编码。"
+      "row_grain": "一个邮政编码。",
+      "data_convention": {
+        "text": "zip_code 是整数，以 0 开头的邮编没有前导 0（02108 存为 2108）。state 是州全称，short_state 是两字母缩写。county 带后缀，如 'Orange County'。",
+        "origin": "observed"
+      }
     },
     "event": {
       "purpose": "记录社团举办或计划举办的活动，包括名称、日期、类型、地点、备注和状态。",
-      "row_grain": "一场活动。"
+      "row_grain": "一场活动。",
+      "data_convention": {
+        "text": "event_date 是 'YYYY-MM-DDTHH:MM:SS' 文本，带时间；和其他表的日期比较时要先取日期部分。",
+        "origin": "observed"
+      }
     },
     "attendance": {
       "purpose": "记录哪位会员参加了哪场活动，用于统计活动的出席人数或会员参加过的活动。",
@@ -28,15 +36,27 @@
     },
     "budget": {
       "purpose": "记录每场活动在各个类别（如广告、餐饮、停车）上的预算金额、已花费金额和剩余金额，用于比较预算与实际支出。",
-      "row_grain": "一场活动在一个类别下的一条预算。"
+      "row_grain": "一场活动在一个类别下的一条预算。",
+      "data_convention": {
+        "text": "每个活动的每个类别一行。remaining = amount - spent；spent 是关联到这一行的 expense.cost 之和，没有支出时为 0；remaining 可以为负（超支）。event_status 与所属 event 的 status 相同。",
+        "origin": "observed"
+      }
     },
     "expense": {
       "purpose": "记录会员为某条预算产生的具体支出，包括用途描述、日期、金额以及是否获批。",
-      "row_grain": "一笔支出。"
+      "row_grain": "一笔支出。",
+      "data_convention": {
+        "text": "approved 只有 'true' 和 NULL 两种，没有 'false'。expense_date 是 'YYYY-MM-DD' 文本。",
+        "origin": "observed"
+      }
     },
     "income": {
       "purpose": "记录社团收到的资金，包括到账日期、金额、来源（如会费、学校年度拨款）和备注。",
-      "row_grain": "一笔收入。"
+      "row_grain": "一笔收入。",
+      "data_convention": {
+        "text": "date_received 是 'YYYY-MM-DD' 文本。",
+        "origin": "observed"
+      }
     }
   },
   "relationships": [
