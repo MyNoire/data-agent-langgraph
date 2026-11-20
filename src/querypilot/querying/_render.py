@@ -9,7 +9,7 @@ from typing import Literal
 
 from ._context import TableContext
 
-SCHEMA_RENDER_VERSION = "r5-schema-v2"
+SCHEMA_RENDER_VERSION = "r5-schema-v3"
 """渲染规则的版本，写进评测报告；保留或去掉的内容、排版任何一处改变都要升版本。"""
 
 StructureFormat = Literal["columns", "ddl"]
@@ -17,8 +17,9 @@ StructureFormat = Literal["columns", "ddl"]
 
 UNKNOWN = "来源未说明"
 
-TABLE_LABELS = ("数据库", "表用途", "记录粒度", "字段目录", "行标识线索（主键声明、成员顺序）", "出向关联（声明外键）")
-COLUMN_LABELS = ("数据库", "声明类型", "not_null 声明标志", "默认 SQL 表达式（仅文本）", "展示名", "字段解释", "取值解释")
+TABLE_LABELS = ("数据库", "表用途", "记录粒度", "数据约定", "字段目录", "行标识线索（主键声明、成员顺序）", "出向关联（声明外键）")
+COLUMN_LABELS = ("数据库", "声明类型", "not_null 声明标志", "默认 SQL 表达式（仅文本）", "展示名", "字段解释", "取值解释",
+                 "取值")
 RELATIONSHIP_LABELS = ("数据库", "引用方向", "同一条外键的有序字段对", "关联语义", "端点含义",
                        "候选 JOIN（source 为源表别名，target 为目标表别名；仅展示 ON 条件）", "复合外键", "角色区别",
                        "ON UPDATE")
@@ -64,9 +65,11 @@ def _restates(display_name: str, column_name: str) -> bool:
 
 
 def _table_lines(table: TableContext, structure_format: StructureFormat, table_ddl: dict[str, str] | None) -> list[str]:
-    """一张表的全部行：表头、表用途、记录粒度、结构，然后是命中的列和关系。"""
+    """一张表的全部行：表头、表用途、记录粒度、数据约定（有时）、结构，然后是命中的列和关系。"""
     fields = _fields(table.table_chunk, TABLE_LABELS)
     lines = [f'表 "{table.table}"', f"  表用途: {fields['表用途']}", f"  记录粒度: {fields['记录粒度']}"]
+    if "数据约定" in fields:
+        lines.append(f"  数据约定: {fields['数据约定']}")
     if structure_format == "ddl":
         lines.append(table_ddl[table.table])
     else:
@@ -81,6 +84,8 @@ def _table_lines(table: TableContext, structure_format: StructureFormat, table_d
             lines += _indented("展示名", column["展示名"], "    ")
         if column["取值解释"] != UNKNOWN:
             lines += _indented("取值解释", column["取值解释"], "    ")
+        if "取值" in column:
+            lines.append(f"    取值: {column['取值']}")
     for hit in table.relationships:
         relationship = _fields(hit.content, RELATIONSHIP_LABELS)
         pairs = relationship["同一条外键的有序字段对"]
@@ -106,7 +111,7 @@ def render_context(context: list[TableContext], *, structure_format: StructureFo
         structure_format: columns 写字段目录、主键、外键三行；ddl 把这三行换成建表语句原文。
         table_ddl: 表名 → 建表语句；ddl 写法必须提供，且包含 context 里的每张表。
     返回:
-        每张表一段、段间空一行的文本。关系保留字段对、关联语义（没有时为每个字段对的端点含义）、复合外键
+        每张表一段、段间空一行的文本。表有数据约定时接在记录粒度后；命中的列有取值样例时接在说明后。关系保留字段对、关联语义（没有时为每个字段对的端点含义）、复合外键
         提醒和角色区别。只放有用的结构、知识和线索：去掉数据库名、"main". 前缀、
         声明标志、默认值、值为"来源未说明"的字段、只是列名换个写法的展示名、引用方向、候选 JOIN 和
         ON UPDATE / DELETE / MATCH。

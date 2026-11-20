@@ -70,7 +70,7 @@ def test_retrieval_run_records_retrieval_config_and_the_versions_that_actually_r
   主键: 未声明
   外键: 未声明
   列 "name" TEXT: 物品名称''']
-    expected = {"context_source": "retrieval", "structure_format": "columns", "schema_render_version": "r5-schema-v2",
+    expected = {"context_source": "retrieval", "structure_format": "columns", "schema_render_version": "r5-schema-v3",
                 "knowledge_scopes": {"sample": SAMPLE_SCOPE.model_dump()}, "method": "hybrid", "rerank": True,
                 "top_k": 10}
     config = _run_config(settings, report["run_id"])

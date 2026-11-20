@@ -65,7 +65,7 @@ def test_knowledge_run_gives_the_model_rendered_knowledge_and_records_format_ren
 
     输出：
     - 假知识读取收到 SAMPLE_SCOPE；模型收到 items 的表用途、建表语句和 name 列。
-    - 报告、运行配置和公开导出都记下 structure_format=ddl、schema_render_version=r5-schema-v2 和各库的 Scope。
+    - 报告、运行配置和公开导出都记下 structure_format=ddl、schema_render_version=r5-schema-v3 和各库的 Scope。
     - 运行目录里的任何文件都不含知识正文。
     """
     schemas, scopes = [], []
@@ -82,7 +82,7 @@ def test_knowledge_run_gives_the_model_rendered_knowledge_and_records_format_ren
 {ITEMS_DDL}
   列 "name" TEXT: 物品名称''']
     assert report["summary"]["success"] == 1
-    expected = {"context_source": "knowledge", "structure_format": "ddl", "schema_render_version": "r5-schema-v2",
+    expected = {"context_source": "knowledge", "structure_format": "ddl", "schema_render_version": "r5-schema-v3",
                 "knowledge_scopes": {"sample": SAMPLE_SCOPE.model_dump()}}
     assert {key: report[key] for key in expected} == expected
     config = _run_config(settings, report["run_id"])
