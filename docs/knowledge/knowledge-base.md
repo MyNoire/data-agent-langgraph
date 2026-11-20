@@ -30,12 +30,16 @@ Data Semantics 配置 ──corpus build──▶ Corpus 快照（Documents / Ch
 | 导入 | `querypilot knowledge store import` / `verify` | 写进 PostgreSQL，并把每个字段读回来核对 |
 | 生成向量 | `querypilot knowledge store embed` | 按 `--corpus-id/--database-id/--schema-version` 或 `--scope-file` 指定 Scope，用当前 Embedding Profile 为全部 Chunk 算向量，一个事务写进向量表；已有就报 `exists`，不调用 API。会产生费用 |
 
-目前有两个库的正式快照：
+目前两个库各有两份正式快照，都在同一个知识库里，靠 Knowledge Scope 区分：
 
-| 库 | Documents | Chunks（表 / 列 / 关系） | Relations |
-|---|---|---|---|
-| toxicology | 4 | 20（4 / 11 / 5） | 5 |
-| student_club | 8 | 64（8 / 48 / 8） | 8 |
+| 库 | 快照（`corpus_id` 前 8 位） | 输入 | Documents | Chunks（表 / 列 / 关系） | Relations |
+|---|---|---|---|---|---|
+| toxicology | `d4792b3c`（`r1-4-corpus`） | 语义配置 v1 | 4 | 20（4 / 11 / 5） | 5 |
+| toxicology | `50c156f8`（`values-corpus-v1`） | 语义配置 v2（3 条数据约定）+ 取值样例：11 列带取值 | 4 | 20（4 / 11 / 5） | 5 |
+| student_club | `66f8085b`（`r1-4-corpus`） | 语义配置 v1 | 8 | 64（8 / 48 / 8） | 8 |
+| student_club | `748167d2`（`values-corpus-v1`） | 语义配置 v2（5 条数据约定、4 个隐私列）+ 取值样例：44 列带取值 | 8 | 64（8 / 48 / 8） | 8 |
+
+新快照的 Chunk 数和旧的相同，只是正文多了取值和数据约定。新快照对应的检索题集是 `evals/retrieval/retrieval_cases_values.json`（manifest 已提交），题号和 Relevant Set 与旧题集相同，只有 Scope 不同。
 
 ## 2. 知识从哪里来，什么不能进
 
