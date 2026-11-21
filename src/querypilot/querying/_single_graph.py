@@ -21,7 +21,7 @@ from querypilot.retrieval.api import (
 from querypilot.runtime.api import Settings
 from querypilot.sql_generation.api import SqlGenerator, generate_sql
 
-from ._context import assemble_context, expand_to_documents
+from ._context import assemble_context, expand_to_documents, table_chunks_of
 from ._render import StructureFormat, render_context
 from .models import QueryContext, QueryInput, QueryOutput, QueryState
 
@@ -140,8 +140,7 @@ def build_query_graph(
         """
         read_scope = runtime.context.knowledge_scopes[state["database_id"]]
         hits = knowledge_reader(read_scope)
-        table_chunks = {hit.table_name: hit.content for hit in hits if hit.knowledge_type == "table"}
-        return {"hits": hits, "table_chunks": table_chunks}
+        return {"hits": hits, "table_chunks": table_chunks_of(hits)}
 
     def retrieve(state: QueryState, runtime: Runtime[QueryContext]) -> dict[str, Any]:
         """用问题原文在当前库的 Knowledge Scope 里检索一次，再读出 Hit 所属各表的表 Chunk。
@@ -165,8 +164,7 @@ def build_query_graph(
             raise KnowledgeRetrievalError("no_match", "检索没有命中任何知识")
         if small_to_big:
             hits = expand_to_documents(result.hits, knowledge_reader(scope))
-            return {"hits": hits,
-                    "table_chunks": {hit.table_name: hit.content for hit in hits if hit.knowledge_type == "table"}}
+            return {"hits": hits, "table_chunks": table_chunks_of(hits)}
         # 按第一次出现的顺序去重：一张表的多个 Hit 只读一次表 Chunk。
         tables = list(dict.fromkeys(hit_table(hit) for hit in result.hits))
         return {"hits": result.hits, "table_chunks": table_chunk_reader(scope, tables)}

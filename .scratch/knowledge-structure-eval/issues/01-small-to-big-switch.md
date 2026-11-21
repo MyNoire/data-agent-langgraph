@@ -25,3 +25,7 @@
   - 评测：`--small-to-big / --no-small-to-big` → `run_graph(small_to_big=)` → 查询图；检查放在 `sql_run_config`（建运行记录之前），命令行没有另写一份。`small_to_big` 进 `CONFIG_FIELDS`、报告 `TOP_LEVEL` 导出白名单和 `EvalReport`；retrieval 来源总记 true/false，其他来源不记。
   - 测试：新文件 `tests/test_graph_small_to_big.py`（展开与检索表序、只命中关系也展开、ddl 写法、三种非 retrieval 来源报错）；`tests/test_graph_eval_retrieval.py` 加 3 个测试（run_graph 记录开关、CLI 开关生效、CLI 非 retrieval 来源开始前失败且无运行记录），并把"非检索来源不记检索配置"扩到 `small_to_big`。"只命中关系"和 ddl 两个测试写下时就通过（前一个测试的实现已覆盖），作为验收守护保留。
   - 命令与结果：`.venv/Scripts/python.exe -m pytest tests -q --ignore=tests/integration -p no:cacheprovider` → 604 passed, 1 skipped, 1 failed（`tests/contracts/test_cli.py::test_console_and_module_share_help`，PATH 上没有 `querypilot`，之前就有）。项目没有配置类型检查器。没有跑真实模型或检索。
+- 2026-11-21 审查后（Claude）：
+  - 加了一条断言：打开开关时 `tables_complete` 仍是 True。
+  - 把从一组 Chunk 里取表 Chunk 的那一行抽成查询模块里的 `table_chunks_of`，`knowledge` 来源和 small-to-big 分支都用它。
+  - 不改的地方：打开开关时 `tables_complete` 按展开后的 Hit 计算。如果某张命中的表在全量读取里不存在，它会被悄悄丢掉。但 Hit 和全量读取来自同一份不可变的 Corpus，这种情况不会发生，所以不加检查。

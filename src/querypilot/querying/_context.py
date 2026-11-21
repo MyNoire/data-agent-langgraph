@@ -19,6 +19,11 @@ class TableContext:
     relationships: list[RetrievalHit]
 
 
+def table_chunks_of(chunks: list[RetrievalHit]) -> dict[str, str]:
+    """从一组 Chunk 里取出表 Chunk：表名 → 正文。"""
+    return {chunk.table_name: chunk.content for chunk in chunks if chunk.knowledge_type == "table"}
+
+
 def expand_to_documents(hits: list[RetrievalHit], chunks: list[RetrievalHit]) -> list[RetrievalHit]:
     """Small-to-Big：把一次检索的 Hit 换成它们所属各表的全部 Chunk。纯函数，不读数据库。
 

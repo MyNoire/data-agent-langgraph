@@ -275,6 +275,7 @@ def test_small_to_big_run_expands_hit_tables_and_records_the_switch(tmp_path):
     - 模型收到的 items 带上表 Chunk 和 name 列；表 Chunk 取自全量读取，不再按表名补读。
     - 运行配置、报告和公开导出都有 small_to_big=true。
     - 不带开关的 retrieval 运行记 small_to_big=false。
+    - 两次运行的 tables_complete 都是 True：开关不改变哪些表进入上下文。
     """
     schemas, reads = [], []
 
@@ -304,6 +305,7 @@ def test_small_to_big_run_expands_hit_tables_and_records_the_switch(tmp_path):
     assert export_public(run_dir, tmp_path / "public.json")["small_to_big"] is True
     assert plain["small_to_big"] is False
     assert _run_config(settings, plain["run_id"])["small_to_big"] is False
+    assert [record["tables_complete"] for record in expanded["records"] + plain["records"]] == [True, True]
 
 
 def test_cli_small_to_big_flag_reaches_the_run(tmp_path, monkeypatch, capsys):
