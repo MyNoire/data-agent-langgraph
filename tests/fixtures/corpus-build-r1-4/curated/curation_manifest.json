@@ -1,0 +1,31 @@
+{
+  "approval": {
+    "approved_on": "2026-10-05",
+    "approved_scope_sha256": "3411bc77f9e078cb9f1563988e00d4709a2bf4b3ba2d7da3ff93f2f6129103b2",
+    "decision": "原创测试批准记录",
+    "reviewed_candidate_manifest_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "reviewed_plan_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "reviewer": "user",
+    "scope": "listed_corrections_only"
+  },
+  "artifacts_sha256": {
+    "correction_report.json": "40fccf6d8fc5d2ca95b69f0396100c00c18de06ec60a4b773913c2e249a6fb6d",
+    "derived_source/demo/database_description/events.csv": "33899b8b97a3f0a5df754e603ebd231721e59409ec0166a6d0a70b24a5c73ae9",
+    "derived_source/demo/database_description/items.csv": "f9d5a34627ab85de4ddcfd9170d63df0ccfadcaac1f6acde47255b103579c97f",
+    "enriched_catalog.json": "9893c35695e4f33170b39ff29f1811e0516186b27fca0bd28f5cd22c5175641b",
+    "import_warnings.json": "082fd75da81d4bb2d33a7c4bc9d151a9faa1b55924eac24341f069b55343581b"
+  },
+  "base_enriched_sha256": "e280be4c53b12681d23def37172eab0f8c4c22056cf2bbb8c975b4f41279d8ef",
+  "builder_sha256": "f81f5d8983f5c125fbed7fd6f888d8e1e626791fe0253e785cd4d524591c9d7c",
+  "changes": 2,
+  "database_id": "demo",
+  "format_version": "description-curation-v1",
+  "original_source_sha256": {
+    "events.csv": "33899b8b97a3f0a5df754e603ebd231721e59409ec0166a6d0a70b24a5c73ae9",
+    "items.csv": "c9bec81f5fbb7fed4a52ffb4cbd67e722f05576b2e8b8582c691df318d668deb"
+  },
+  "plan_sha256": "30b9b81956b97f6c0384c3d470de6b5850ae81b31fd8b2a7d5442227af40e3f0",
+  "remaining_warnings": 0,
+  "rules": 1,
+  "status": "approved_corrections_applied"
+}

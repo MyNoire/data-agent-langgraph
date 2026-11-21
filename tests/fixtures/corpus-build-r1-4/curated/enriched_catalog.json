@@ -1,0 +1,236 @@
+{
+  "catalog": {
+    "database_id": "demo",
+    "dialect": "sqlite",
+    "format_version": "sqlite-catalog-v1",
+    "schema_name": "main",
+    "tables": [
+      {
+        "columns": [
+          {
+            "declared_type": "TEXT",
+            "default_sql": null,
+            "hidden": 0,
+            "name": "item_id",
+            "not_null_flag": false,
+            "ordinal": 0,
+            "pk_position": 2
+          },
+          {
+            "declared_type": "TEXT",
+            "default_sql": null,
+            "hidden": 0,
+            "name": "label",
+            "not_null_flag": false,
+            "ordinal": 1,
+            "pk_position": 0
+          },
+          {
+            "declared_type": "TEXT",
+            "default_sql": null,
+            "hidden": 0,
+            "name": "tenant_id",
+            "not_null_flag": false,
+            "ordinal": 2,
+            "pk_position": 1
+          }
+        ],
+        "foreign_keys": [],
+        "name": "items",
+        "strict": false,
+        "without_rowid": false
+      },
+      {
+        "columns": [
+          {
+            "declared_type": "TEXT",
+            "default_sql": null,
+            "hidden": 0,
+            "name": "item_ref",
+            "not_null_flag": false,
+            "ordinal": 0,
+            "pk_position": 0
+          },
+          {
+            "declared_type": "TEXT",
+            "default_sql": null,
+            "hidden": 0,
+            "name": "tenant_ref",
+            "not_null_flag": false,
+            "ordinal": 1,
+            "pk_position": 0
+          }
+        ],
+        "foreign_keys": [
+          {
+            "declared_target_columns": [
+              "tenant_id",
+              "item_id"
+            ],
+            "foreign_key_id": 0,
+            "match": "NONE",
+            "on_delete": "RESTRICT",
+            "on_update": "CASCADE",
+            "source_columns": [
+              "tenant_ref",
+              "item_ref"
+            ],
+            "target_columns": [
+              "tenant_id",
+              "item_id"
+            ],
+            "target_table": "items"
+          }
+        ],
+        "name": "events",
+        "strict": false,
+        "without_rowid": false
+      }
+    ]
+  },
+  "descriptions": [
+    {
+      "column_name": "item_ref",
+      "description": "referenced item identifier",
+      "display_name": null,
+      "review_status": "source_extracted",
+      "source": {
+        "line_end": 2,
+        "line_start": 2,
+        "raw_record": "item_ref,,referenced item identifier,text,\n",
+        "raw_values": [
+          "item_ref",
+          "",
+          "referenced item identifier",
+          "text",
+          ""
+        ],
+        "record_index": 1,
+        "source_file": "demo/database_description/events.csv"
+      },
+      "source_data_format": "text",
+      "table_name": "events",
+      "value_description": null
+    },
+    {
+      "column_name": "tenant_ref",
+      "description": "referenced tenant identifier",
+      "display_name": null,
+      "review_status": "source_extracted",
+      "source": {
+        "line_end": 3,
+        "line_start": 3,
+        "raw_record": "tenant_ref,,referenced tenant identifier,text,\n",
+        "raw_values": [
+          "tenant_ref",
+          "",
+          "referenced tenant identifier",
+          "text",
+          ""
+        ],
+        "record_index": 2,
+        "source_file": "demo/database_description/events.csv"
+      },
+      "source_data_format": "text",
+      "table_name": "events",
+      "value_description": null
+    },
+    {
+      "column_name": "item_id",
+      "description": "item identifier",
+      "display_name": null,
+      "review_status": "source_extracted",
+      "source": {
+        "line_end": 2,
+        "line_start": 2,
+        "raw_record": "item_id,,item identifier,text,\n",
+        "raw_values": [
+          "item_id",
+          "",
+          "item identifier",
+          "text",
+          ""
+        ],
+        "record_index": 1,
+        "source_file": "demo/database_description/items.csv"
+      },
+      "source_data_format": "text",
+      "table_name": "items",
+      "value_description": null
+    },
+    {
+      "column_name": "label",
+      "description": "activation status",
+      "display_name": "activation label",
+      "review_status": "source_extracted",
+      "source": {
+        "line_end": 4,
+        "line_start": 3,
+        "raw_record": "label,activation label,activation status,text,\"+: active\n-: inactive\"\n",
+        "raw_values": [
+          "label",
+          "activation label",
+          "activation status",
+          "text",
+          "+: active\n-: inactive"
+        ],
+        "record_index": 2,
+        "source_file": "demo/database_description/items.csv"
+      },
+      "source_data_format": "text",
+      "table_name": "items",
+      "value_description": "+: active\n-: inactive"
+    },
+    {
+      "column_name": "tenant_id",
+      "description": "tenant identifier",
+      "display_name": null,
+      "review_status": "source_extracted",
+      "source": {
+        "line_end": 5,
+        "line_start": 5,
+        "raw_record": "tenant_id,,tenant identifier,text,\n",
+        "raw_values": [
+          "tenant_id",
+          "",
+          "tenant identifier",
+          "text",
+          ""
+        ],
+        "record_index": 3,
+        "source_file": "demo/database_description/items.csv"
+      },
+      "source_data_format": "text",
+      "table_name": "items",
+      "value_description": null
+    }
+  ],
+  "format_version": "enriched-catalog-v1",
+  "sources": [
+    {
+      "encoding": "utf-8",
+      "headers_raw": [
+        "original_column_name",
+        "column_name",
+        "column_description",
+        "data_format",
+        "value_description"
+      ],
+      "source_file": "demo/database_description/events.csv",
+      "source_sha256": "33899b8b97a3f0a5df754e603ebd231721e59409ec0166a6d0a70b24a5c73ae9"
+    },
+    {
+      "encoding": "utf-8",
+      "headers_raw": [
+        "original_column_name",
+        "column_name",
+        "column_description",
+        "data_format",
+        "value_description"
+      ],
+      "source_file": "demo/database_description/items.csv",
+      "source_sha256": "f9d5a34627ab85de4ddcfd9170d63df0ccfadcaac1f6acde47255b103579c97f"
+    }
+  ],
+  "status": "draft"
+}
