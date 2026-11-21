@@ -66,6 +66,9 @@ def create_parser() -> argparse.ArgumentParser:
             command.add_argument("--rerank", action=argparse.BooleanOptionalAction, default=True,
                                  help="retrieval 来源检索后是否重排（默认开启，与查询图相同）；会调用 Reranker "
                                       "服务，产生费用")
+            command.add_argument("--small-to-big", action=argparse.BooleanOptionalAction, default=False,
+                                 help="retrieval 来源把命中的表展开成完整的 Document（全部列的说明和取值、出向的"
+                                      "全部关系），选出的表不变（默认关闭）；其他来源上使用时在开始前报错")
         command.set_defaults(command=f"eval.{name}")
     retrieval = _artifacts(eval_actions.add_parser("retrieval", help="对检索题集跑一次检索评测"))
     retrieval.add_argument("--cases", type=Path, required=True)

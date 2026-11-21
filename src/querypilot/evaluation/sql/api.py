@@ -22,15 +22,15 @@ from ._reports import export_public, read_report
 
 def _knowledge_fields(context_source: ContextSource | None, structure_format: StructureFormat,
                       knowledge_scopes: dict[str, KnowledgeScope] | None, method: RetrievalMethod,
-                      rerank: bool) -> dict:
-    """读知识库的来源才记的配置：结构写法、渲染版本和各库的 Scope；retrieval 另记检索方法、是否重排和
-    top_k。其他来源返回空字典。"""
+                      rerank: bool, small_to_big: bool) -> dict:
+    """读知识库的来源才记的配置：结构写法、渲染版本和各库的 Scope；retrieval 另记检索方法、是否重排、
+    top_k 和是否 Small-to-Big。其他来源返回空字典。"""
     if context_source not in KNOWLEDGE_SOURCES:
         return {}
     fields = {"structure_format": structure_format, "schema_render_version": SCHEMA_RENDER_VERSION,
               "knowledge_scopes": {database_id: scope.model_dump() for database_id, scope in knowledge_scopes.items()}}
     if context_source == "retrieval":
-        fields.update(method=method, rerank=rerank, top_k=RETRIEVAL_TOP_K)
+        fields.update(method=method, rerank=rerank, top_k=RETRIEVAL_TOP_K, small_to_big=small_to_big)
     return fields
 
 
@@ -38,19 +38,21 @@ def sql_run_config(cases_path: Path, settings: Settings, provider: str, evidence
                    workers: int | None = None, context_source: ContextSource | None = None,
                    structure_format: StructureFormat = "columns",
                    knowledge_scopes: dict[str, KnowledgeScope] | None = None,
-                   method: RetrievalMethod = "hybrid", rerank: bool = True,
+                   method: RetrievalMethod = "hybrid", rerank: bool = True, small_to_big: bool = False,
                    relevant_tables: dict[int, list[str]] | None = None) -> dict:
     """SQL 评测写进运行配置的参数；命令行和 run_direct/run_graph 用同一份。
 
     参数：cases_path 为题集路径，settings 为运行配置，provider 和 evidence_mode 为评测模式；
         workers 和 context_source 只有图评测传（direct 评测不传，配置里也就没有这两项）；
         structure_format 和 knowledge_scopes 只在 context_source 为 knowledge 或 retrieval 时记下，另加渲染
-        版本；method、rerank 只在 retrieval 时记下，另加 top_k。relevant_tables（题号 → Relevant Set 的表）
+        版本；method、rerank、small_to_big 只在 retrieval 时记下，另加 top_k。relevant_tables（题号 → Relevant Set 的表）
         只用来检查 retrieval 的每道题都有 Relevant Set，不写进配置。
     返回：不含题目、SQL 或完整设置的配置字典；读取题集计算摘要，I/O 错误原样传播。
-    异常：ValueError：knowledge 或 retrieval 来源下对照表缺了题集用到的库，或 retrieval 来源下有题号在
-        relevant_tables 里找不到。命令行和 run_graph 都在建立运行记录之前调用这里，所以缺了时不会留下运行记录。
+    异常：ValueError：knowledge 或 retrieval 来源下对照表缺了题集用到的库，retrieval 来源下有题号在
+        relevant_tables 里找不到，或在 retrieval 以外的来源上打开 small_to_big。命令行和 run_graph 都在建立运行记录之前调用这里，所以缺了时不会留下运行记录。
     """
+    if small_to_big and context_source != "retrieval":
+        raise ValueError(f"small_to_big only applies to context_source 'retrieval', got {context_source!r}")
     case_bytes = cases_path.read_bytes()
     if context_source in KNOWLEDGE_SOURCES:
         missing = sorted({case["db_id"] for case in json.loads(case_bytes)} - set(knowledge_scopes or {}))
@@ -72,7 +74,7 @@ def sql_run_config(cases_path: Path, settings: Settings, provider: str, evidence
             "max_response_bytes": settings.max_response_bytes,
             **({} if workers is None else {"workers": workers}),
             **({} if context_source is None else {"context_source": context_source}),
-            **_knowledge_fields(context_source, structure_format, knowledge_scopes, method, rerank)}
+            **_knowledge_fields(context_source, structure_format, knowledge_scopes, method, rerank, small_to_big)}
 
 
 def run_direct(cases_path: Path, settings: Settings, *, provider: str = "model",
@@ -105,7 +107,7 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator |
               structure_format: StructureFormat = "columns",
               knowledge_scopes: dict[str, KnowledgeScope] | None = None,
               knowledge_reader: Callable[[KnowledgeScope], list[RetrievalHit]] | None = None,
-              method: RetrievalMethod = "hybrid", rerank: bool = True,
+              method: RetrievalMethod = "hybrid", rerank: bool = True, small_to_big: bool = False,
               retriever: Callable[[RetrievalRequest], RetrievalResult] | None = None,
               table_chunk_reader: Callable[[KnowledgeScope, list[str]], dict[str, str]] | None = None,
               relevant_tables: dict[int, list[str]] | None = None,
@@ -116,12 +118,13 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator |
         context_source（默认 schema）和 structure_format（默认 columns，只对 knowledge 有效），
         knowledge / retrieval 来源要的"db_id → Knowledge Scope"对照表和知识读取函数（默认读知识库），
         retrieval 来源的检索方法、是否重排（默认 hybrid + 重排）、检索函数（默认整次运行共用一组 Embedder
-        和 Reranker）、表 Chunk 读取函数和每道题 Relevant Set 的表（题号 → 表），及可选外层上下文。
+        和 Reranker）、表 Chunk 读取函数、是否 Small-to-Big（默认关闭，只用于 retrieval，打开时命中的表从
+        知识读取函数取完整 Document）和每道题 Relevant Set 的表（题号 → 表），及可选外层上下文。
     返回：EvalReport，records 按题集顺序；题内的错误记在那一题上并继续，一道预测都没有时两个比率为 None。
         knowledge / retrieval 来源另记结构写法、渲染版本和各库的 Scope；retrieval 另记 method、rerank、
-        top_k、实际用到的检索版本（retrieval），以及逐题和汇总的"表是否拿全"（tables_complete）。
+        top_k、small_to_big、实际用到的检索版本（retrieval），以及逐题和汇总的"表是否拿全"（tables_complete）。
     异常：ValueError：knowledge / retrieval 来源下对照表缺了题集用到的库，或 retrieval 来源下有题没有
-        Relevant Set；在建立运行记录之前报出（见 sql_run_config）。
+        Relevant Set，或在 retrieval 以外的来源上打开 small_to_big；在建立运行记录之前报出（见 sql_run_config）。
     副作用：读取 SQLite，可调用模型，knowledge 来源每题读一次知识库；一个批次一份运行，子题不另建根。
     """
     from ._graph import run_graph as perform
@@ -131,7 +134,7 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator |
                   config=sql_run_config(cases_path, settings, "graph", "none", workers=workers,
                                         context_source=context_source, structure_format=structure_format,
                                         knowledge_scopes=knowledge_scopes, method=method, rerank=rerank,
-                                        relevant_tables=relevant_tables)) as context:
+                                        small_to_big=small_to_big, relevant_tables=relevant_tables)) as context:
         # 只有 retrieval 才建检索客户端：其他来源不需要 Embedding / Rerank 配置，也不会调用检索函数。
         if retriever is None:
             retriever = shared_retriever(method, rerank) if context_source == "retrieval" else retrieve_knowledge
@@ -139,9 +142,10 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator |
                          context_source=context_source, structure_format=structure_format,
                          knowledge_scopes=knowledge_scopes or {},
                          knowledge_reader=knowledge_reader or load_scope_chunks, method=method, rerank=rerank,
-                         retriever=retriever, table_chunk_reader=table_chunk_reader or load_table_chunks,
+                         small_to_big=small_to_big, retriever=retriever, table_chunk_reader=table_chunk_reader or load_table_chunks,
                          relevant_tables=relevant_tables, run_context=context)
-        result.update(_knowledge_fields(context_source, structure_format, knowledge_scopes, method, rerank))
+        result.update(_knowledge_fields(context_source, structure_format, knowledge_scopes, method, rerank,
+                                        small_to_big))
         secrets = (settings.model_api_key,) if settings.model_api_key != "local" else ()
         result = sanitize_private(result, secrets=secrets)
         if owned:

@@ -24,6 +24,8 @@
 
 `eval graph --context-source` 选模型收到的 Schema 从哪里来（Context Source，编译图时选定，见 [GLOSSARY](../../GLOSSARY.md)）：`schema`（默认）是每张表的表名和列名；`ddl` 是这个库全部用户表的 CREATE TABLE 原文，按表名排序、空一行分隔，从 SQLite 的 `sqlite_master` 现场读取。`knowledge` 是这个库在知识库里的全部知识，经组装和渲染（当前规则版本 `r5-schema-v3`：表有数据约定时接在记录粒度后，命中的列有取值样例时接在说明后，没被命中的列仍然只在字段目录或建表语句里。没有这两行的旧 Corpus 渲染结果与 `r5-schema-v2` 逐字相同；R5 的运行用的是 `r5-schema-v1`，它和 v2 只在缺关联语义或有复合外键的关系上不同，R5 两个库的渲染逐字相同）后交给模型，`--structure-format columns`（默认）把表结构写成字段目录、主键、外键三行，`ddl` 换成建表语句原文；它需要 `--retrieval-cases <检索题集>`，从中取各库的 Knowledge Scope，题集用到的库缺 Scope 时在开始前报错。`retrieval` 用问题原文在这个库的 Scope 里检索一次（`--method` 默认 `hybrid`，`--rerank / --no-rerank` 默认重排，`top_k` 固定为 10），只把命中的表（加上它们的表 Chunk）渲染给模型，结构写法和 `--retrieval-cases` 与 `knowledge` 相同；没有命中或检索失败的题记为 error，`error_type` 是检索错误的类别（如 `no_match`、`embedding_error`），然后继续下一题。`retrieval` 的每道题另记 `tables_complete`：这道题 Relevant Set 的表（取自 `--retrieval-cases`，按题号对应，缺题号时在开始前报错）是否都出现在 Hit 所属的表里，检索失败的题记为没拿全；报告的 `tables_complete` 按"拿全 / 没拿全"分别给出题数、执行匹配数和比例，整体和分库各一份。用来分清 SQL 写错是检索没给全，还是给全了模型仍然写错。vector、hybrid 和重排会调用付费服务。所有来源下安全检查允许的都是这个库的全部用户表。Context Source 记在运行配置和报告里，`knowledge` 和 `retrieval` 另记结构写法、渲染版本和各库的 Scope，`retrieval` 再记 `method`、`rerank`、`top_k` 和实际用到的检索版本；建表语句、知识正文和 Hit 本身不写进日志和运行记录。
 
+`--small-to-big`（默认关闭）只用于 `retrieval` 来源：照常检索一次，进入上下文的表不变，但每张被命中的表以完整的 Document 交给模型（表块、全部列的说明和取值、这张表出向的全部关系），内容从这个库的 Scope 全量读出，渲染与 `knowledge` 来源里这张表逐字相同，表的先后仍按检索名次（见 GLOSSARY 的 Small-to-Big）。渲染版本不变；`tables_complete` 照常按 Hit 所属的表计算，与开关无关。开关写进运行配置、报告和 `export-public`（retrieval 来源总是记下 `small_to_big`，其他来源不记）；在其他来源上使用时，开始前报错，不留运行记录。
+
 `--evidence-mode oracle` 会把 BIRD 的人工提示（evidence）交给模型。这是隔离实验，不代表系统真实的能力，默认为 `none`。
 
 ## 计分

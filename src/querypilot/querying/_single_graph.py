@@ -21,7 +21,7 @@ from querypilot.retrieval.api import (
 from querypilot.runtime.api import Settings
 from querypilot.sql_generation.api import SqlGenerator, generate_sql
 
-from ._context import assemble_context
+from ._context import assemble_context, expand_to_documents
 from ._render import StructureFormat, render_context
 from .models import QueryContext, QueryInput, QueryOutput, QueryState
 
@@ -64,6 +64,7 @@ def build_query_graph(
     table_chunk_reader: Callable[[KnowledgeScope, list[str]], dict[str, str]] = load_table_chunks,
     method: RetrievalMethod = "hybrid",
     rerank: bool = True,
+    small_to_big: bool = False,
 ) -> CompiledStateGraph:
     """编译 Schema → 模型 → SQL 校验 → 只读执行的线性图。
 
@@ -81,11 +82,14 @@ def build_query_graph(
             retrieve_knowledge（每次按配置新建 Embedder 和 Reranker），评测可传入共用客户端的版本。
         table_chunk_reader: retrieval 来源按表名读表 Chunk 的函数，参数为 (Scope, 表名列表)。
         method, rerank: retrieval 来源的检索方法和是否重排，默认 hybrid + 重排；top_k 固定为 RETRIEVAL_TOP_K。
+        small_to_big: 只用于 retrieval 来源。打开时照常检索一次，选出的表不变，但每张被命中的表以完整的
+            Document（表、全部列、出向的全部关系）交给模型，内容由 knowledge_reader 读出，与 knowledge 来源里
+            这张表的渲染逐字相同；表的先后仍按检索名次。此时不调用 table_chunk_reader。默认关闭。
     返回:
         可调用的已编译 LangGraph；输入为 QueryInput，输出为 QueryOutput。knowledge 和 retrieval 来源
         调用时要传 context=QueryContext(knowledge_scopes=...)，其他来源不需要。
     异常:
-        ValueError: context_source 不是上面列出的取值。
+        ValueError: context_source 不是上面列出的取值，或在 retrieval 以外的来源上打开 small_to_big。
     说明:
         凭据和数据库路径留在节点闭包内，不写入图状态；Knowledge Scope 只经运行时 context 传入，
         也不写入图状态。编译时关闭本进程的 LangSmith 追踪，见下面的注释。
@@ -147,7 +151,8 @@ def build_query_graph(
             runtime: context 为 QueryContext，提供"database_id → Knowledge Scope"对照表。
         返回:
             状态增量：hits 为检索命中的 Hit，table_chunks 为它们所属各表的表名 → 表 Chunk 正文。
-            Scope 本身不写入状态。
+            打开 small_to_big 时，hits 换成这些表的全部 Chunk（见 expand_to_documents），表 Chunk 取自其中，
+            所属的表与检索命中的表相同。Scope 本身不写入状态。
         异常:
             KeyError: 对照表里没有当前库；此时不检索、不调用模型。
             KnowledgeRetrievalError: 没有命中（no_match），或检索失败（input_error、embedding_error、
@@ -158,6 +163,10 @@ def build_query_graph(
                                             top_k=RETRIEVAL_TOP_K))
         if result.outcome == "no_match":
             raise KnowledgeRetrievalError("no_match", "检索没有命中任何知识")
+        if small_to_big:
+            hits = expand_to_documents(result.hits, knowledge_reader(scope))
+            return {"hits": hits,
+                    "table_chunks": {hit.table_name: hit.content for hit in hits if hit.knowledge_type == "table"}}
         # 按第一次出现的顺序去重：一张表的多个 Hit 只读一次表 Chunk。
         tables = list(dict.fromkeys(hit_table(hit) for hit in result.hits))
         return {"hits": result.hits, "table_chunks": table_chunk_reader(scope, tables)}
@@ -224,6 +233,8 @@ def build_query_graph(
     }
     if context_source not in prefix:
         raise ValueError(f"unknown context_source {context_source!r}; expected one of {sorted(prefix)}")
+    if small_to_big and context_source != "retrieval":
+        raise ValueError(f"small_to_big only applies to context_source 'retrieval', got {context_source!r}")
     builder = StateGraph(QueryState, input_schema=QueryInput, output_schema=QueryOutput, context_schema=QueryContext)
     builder.add_sequence(prefix[context_source]
                          + [("generate_sql", generate), ("validate_sql", validate), ("execute_sql", execute)])

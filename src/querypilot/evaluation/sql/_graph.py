@@ -131,7 +131,7 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator =
               structure_format: StructureFormat = "columns",
               knowledge_scopes: dict[str, KnowledgeScope] | None = None,
               knowledge_reader: Callable[[KnowledgeScope], list[RetrievalHit]] = load_scope_chunks,
-              method: RetrievalMethod = "hybrid", rerank: bool = True,
+              method: RetrievalMethod = "hybrid", rerank: bool = True, small_to_big: bool = False,
               retriever: Callable[[RetrievalRequest], RetrievalResult] = retrieve_knowledge,
               table_chunk_reader: Callable[[KnowledgeScope, list[str]], dict[str, str]] = load_table_chunks,
               relevant_tables: dict[int, list[str]] | None = None,
@@ -149,9 +149,10 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator =
         structure_format：knowledge 来源里表结构的写法，编译查询图时传入。
         knowledge_scopes：每题调用查询图时作为运行时 context 传入的"db_id → Knowledge Scope"对照表；
             只有 knowledge 来源会用。
-        knowledge_reader：knowledge 来源读出一个 Scope 全部 Chunk 的函数，默认读知识库。
+        knowledge_reader：knowledge 来源读出一个 Scope 全部 Chunk 的函数，默认读知识库；retrieval 来源打开
+            small_to_big 时也用它取命中表的完整 Document。
         method、rerank、retriever、table_chunk_reader：retrieval 来源的检索配置、检索函数和表 Chunk 读取
-            函数，编译查询图时传入；批量运行应传入共用客户端的检索函数（api.run_graph 传 shared_retriever）。
+            函数，编译查询图时传入；small_to_big 同样在编译时传入（见 build_query_graph）。批量运行应传入共用客户端的检索函数（api.run_graph 传 shared_retriever）。
         relevant_tables：retrieval 来源下题号 → Relevant Set 的表，用来记逐题的 tables_complete；有题缺了时
             在开始前报 ValueError。
         run_context：外层运行上下文，事件和 SQL 审计都写进它；由调用方发布结果和关闭。
@@ -189,7 +190,7 @@ def run_graph(cases_path: Path, settings: Settings, *, generator: SqlGenerator =
     graph = build_query_graph(settings, generator=generator, run_context=run_context, context_source=context_source,
                               structure_format=structure_format, knowledge_reader=knowledge_reader,
                               retriever=recording_retriever, table_chunk_reader=table_chunk_reader,
-                              method=method, rerank=rerank)
+                              method=method, rerank=rerank, small_to_big=small_to_big)
     query_context = QueryContext(knowledge_scopes=knowledge_scopes or {})
     # 缺 Relevant Set 的题不能按空集合判成"拿全"：开始前就拒绝。
     if context_source == "retrieval":
