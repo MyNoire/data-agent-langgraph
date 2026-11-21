@@ -102,7 +102,7 @@ R5 的六组 Context Source 在两库 88 题上的执行匹配都在 42–46 之
   - 每个值超过 80 个字符时截断并标记。
   - 不统计 NULL 比例，不给数值范围。
 - 取值样例文件记录：规则版本、来源 SQLite 文件的 sha256、库标识、每列的取值方式（全部 / 样例 / 隐私不提供）和取值。它和其他知识准备产物一样放在 Git 忽略的目录里，因为里面是数据集的原始数据。
-- 构建 Corpus 时可选地读入取值样例文件，它作为一种新的来源角色进入 Corpus 身份，所以 `corpus_id` 随之改变。列 Chunk 在"取值解释"后面新增一行：全部取值时写明个数和全部值，样例时写明是样例。隐私列和没有取值文件时都不加这一行。新增的行用新的渲染版本标记；不给取值文件、语义配置也没有新字段时，渲染版本和输出都与今天相同。
+- 构建 Corpus 时可选地读入取值样例文件，它作为一种新的来源角色进入 Corpus 身份，所以 `corpus_id` 随之改变。列 Chunk 在"取值解释"后面新增一行：全部取值时写明个数和全部值，样例时写明是样例。隐私列和没有取值文件时都不加这一行。Corpus 的渲染版本（`BuildConfig.renderer_version`）不变：取值文件本身进入 Corpus 身份，每个列 Chunk 的 metadata 记 `value_samples: {rule_version, mode}`，已经能区分新旧（工单 03 实现时定下）。不给取值文件、语义配置也没有新字段时，输出与今天逐字节相同（`tests/test_knowledge_corpus_regression.py`）。
 - 隐私名单首版：student_club 是 `member.first_name`、`member.last_name`、`member.email`、`member.phone`；toxicology 没有。
 
 ### 数据约定与语义配置
