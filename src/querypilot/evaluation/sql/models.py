@@ -78,6 +78,7 @@ class EvalReport(TypedDict):
     method: NotRequired[str]
     rerank: NotRequired[bool]
     top_k: NotRequired[int]
+    small_to_big: NotRequired[bool]
     retrieval: NotRequired[list[dict[str, str | None]]]
     tables_complete: NotRequired[dict[str, dict]]
 

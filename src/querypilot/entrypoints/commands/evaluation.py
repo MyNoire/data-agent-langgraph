@@ -34,7 +34,7 @@ def run(args, settings) -> int:
                             if args.context_source in KNOWLEDGE_SOURCES else None)
         graph_options = {"workers": args.workers, "context_source": args.context_source,
                          "structure_format": args.structure_format, "knowledge_scopes": knowledge_scopes,
-                         "method": args.method, "rerank": args.rerank,
+                         "method": args.method, "rerank": args.rerank, "small_to_big": args.small_to_big,
                          # retrieval 来源按 Relevant Set 判断每题的表是否拿全。
                          "relevant_tables": (relevant_tables_from_cases(args.retrieval_cases)
                                              if args.context_source == "retrieval" else None)}

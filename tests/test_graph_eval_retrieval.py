@@ -103,14 +103,14 @@ def test_retrieval_failure_is_recorded_on_its_case_with_its_category_and_the_run
 
 
 def test_sources_without_retrieval_record_no_retrieval_config(tmp_path):
-    """输入：knowledge 来源的一次运行。输出：没有 method、rerank、top_k、retrieval 这几项。"""
+    """输入：knowledge 来源的一次运行。输出：没有 method、rerank、top_k、small_to_big、retrieval 这几项。"""
     cases, settings = _sample_run(tmp_path, _cases(1))
 
     report = run_graph(cases, settings, generator=lambda *_: GeneratedSql(MATCHING_SQL), context_source="knowledge",
                        knowledge_scopes={"sample": SAMPLE_SCOPE}, knowledge_reader=lambda scope: SAMPLE_CHUNKS)
 
     for fields in (report, _run_config(settings, report["run_id"])):
-        assert not {"method", "rerank", "top_k", "retrieval"} & set(fields)
+        assert not {"method", "rerank", "top_k", "small_to_big", "retrieval"} & set(fields)
 
 
 def test_cli_retrieval_flags_reach_the_graph_and_the_run_config_matches_the_runner(tmp_path, monkeypatch, capsys):
@@ -266,3 +266,87 @@ def test_cli_and_graph_agree_on_which_sources_need_retrieval_cases():
     from querypilot.querying.api import KNOWLEDGE_SOURCES
 
     assert cli.KNOWLEDGE_SOURCES == KNOWLEDGE_SOURCES
+
+
+def test_small_to_big_run_expands_hit_tables_and_records_the_switch(tmp_path):
+    """输入：retrieval 来源、small_to_big=True；检索只命中 items.name，知识读取给出 items 的全部 Chunk。
+
+    输出：
+    - 模型收到的 items 带上表 Chunk 和 name 列；表 Chunk 取自全量读取，不再按表名补读。
+    - 运行配置、报告和公开导出都有 small_to_big=true。
+    - 不带开关的 retrieval 运行记 small_to_big=false。
+    - 两次运行的 tables_complete 都是 True：开关不改变哪些表进入上下文。
+    """
+    schemas, reads = [], []
+
+    def generator(question, schema, *_):
+        schemas.append(schema)
+        return GeneratedSql(MATCHING_SQL)
+
+    cases, settings = _sample_run(tmp_path, _cases(1))
+    common = {"context_source": "retrieval", "knowledge_scopes": {"sample": SAMPLE_SCOPE},
+              "relevant_tables": {1: ["items"]}, "retriever": _fake_retriever([]),
+              "table_chunk_reader": _table_reader(reads), "knowledge_reader": lambda scope: SAMPLE_CHUNKS}
+
+    expanded = run_graph(cases, settings, generator=generator, small_to_big=True, **common)
+    plain = run_graph(cases, settings, generator=lambda *_: GeneratedSql(MATCHING_SQL), **common)
+
+    assert schemas == ['''表 "items"
+  表用途: 记录物品编号和名称。
+  记录粒度: 一件物品。
+  字段目录: "id", "name"
+  主键: 未声明
+  外键: 未声明
+  列 "name" TEXT: 物品名称''']
+    assert reads == [["items"]]   # 只有不带开关的那次按表名补读
+    run_dir = next(path for path in settings.artifacts_dir.glob("runs/evaluation/*/*") if path.name == expanded["run_id"])
+    assert expanded["small_to_big"] is True
+    assert _run_config(settings, expanded["run_id"])["small_to_big"] is True
+    assert export_public(run_dir, tmp_path / "public.json")["small_to_big"] is True
+    assert plain["small_to_big"] is False
+    assert _run_config(settings, plain["run_id"])["small_to_big"] is False
+    assert [record["tables_complete"] for record in expanded["records"] + plain["records"]] == [True, True]
+
+
+def test_cli_small_to_big_flag_reaches_the_run(tmp_path, monkeypatch, capsys):
+    """输入：eval graph --context-source retrieval --small-to-big --retrieval-cases <题集>。
+
+    输出：命中的表从知识读取取完整 Document（不按表名补读），运行配置记 small_to_big=true。
+    """
+    from querypilot.entrypoints import cli
+    from querypilot.evaluation.sql import api as evaluation_api
+
+    reads, scopes = [], []
+    cases, settings = _sample_run(tmp_path, _cases(1))
+    monkeypatch.setattr(evaluation_api, "generate_sql", lambda *_: GeneratedSql(MATCHING_SQL))
+    monkeypatch.setattr(evaluation_api, "shared_retriever", lambda method, rerank: _fake_retriever([]))
+    monkeypatch.setattr(evaluation_api, "load_table_chunks", _table_reader(reads))
+    monkeypatch.setattr(evaluation_api, "load_scope_chunks", lambda scope: scopes.append(scope) or SAMPLE_CHUNKS)
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+
+    assert cli.main(["eval", "graph", "--cases", str(cases), "--context-source", "retrieval", "--small-to-big",
+                     "--retrieval-cases", str(_retrieval_cases(tmp_path, [SAMPLE_SCOPE]))]) == 0
+    summary = json.loads(capsys.readouterr().out)
+
+    assert (reads, scopes) == ([], [SAMPLE_SCOPE])
+    assert summary["small_to_big"] is True
+    assert _run_config(settings, summary["run_id"])["small_to_big"] is True
+
+
+@pytest.mark.parametrize("context_source", ["schema", "knowledge"])
+def test_cli_small_to_big_without_retrieval_source_exits_before_any_run_is_recorded(tmp_path, monkeypatch,
+                                                                                    context_source):
+    """输入：--small-to-big 配 schema 或 knowledge 来源。输出：报错退出，没有运行记录，模型没被调用。"""
+    from querypilot.entrypoints import cli
+    from querypilot.evaluation.sql import api as evaluation_api
+
+    calls = []
+    cases, settings = _sample_run(tmp_path, _cases(1))
+    monkeypatch.setattr(evaluation_api, "generate_sql", lambda *args: calls.append(args) or GeneratedSql(MATCHING_SQL))
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+
+    assert cli.main(["eval", "graph", "--cases", str(cases), "--context-source", context_source, "--small-to-big",
+                     "--retrieval-cases", str(_retrieval_cases(tmp_path, [SAMPLE_SCOPE]))]) != 0
+
+    assert calls == []
+    assert not (tmp_path / "artifacts").exists()

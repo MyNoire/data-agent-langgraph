@@ -24,6 +24,7 @@ CONFIG_FIELDS = frozenset({
     "semantic_sha256", "corpus_id", "database_id", "schema_version", "scope", "profile_version",
     "renderer_version", "config_sha256", "input_hashes", "dataset_hash", "dataset_version", "method", "rerank",
     "workers", "context_source", "structure_format", "schema_render_version", "knowledge_scopes", "top_k",
+    "small_to_big",
 })
 
 
