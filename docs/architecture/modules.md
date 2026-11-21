@@ -82,8 +82,9 @@ with TemporaryDirectory() as temporary:
 | knowledge_catalog | extract_catalog(database_id, path) → Catalog；enrich_catalog(catalog, description_dir) → DescriptionImportResult | SQLite/CSV 只读；保留来源和警告；CatalogError/DescriptionError，以及文件读取或 SQLite 错误 |
 | knowledge_catalog | curate_catalog(base_file, source_dir, plan_file, output_dir, *, settings=None, run_context=None) → CurationSummary | 应用批准规则到新目录；冲突与防覆盖保留；CorrectionError |
 | knowledge_catalog | verify_sources(enriched, source_bytes) → SourceVerification | 完整核对 hash、行位置、单元格和表列绑定；无 I/O；SourceVerificationError |
+| knowledge_catalog | collect_value_samples(database_id, path, *, private_columns) → ValueSamples | 只读打开 SQLite，按规则 `value-samples-v1` 逐列取值；隐私列不查询，名单里有不存在的列时 ValueError；SQLite 错误照常抛出 |
 | knowledge_corpus | render_knowledge → KnowledgeDraft | 读取批准包和语义配置；不自动发布正式快照；KnowledgeError |
-| knowledge_corpus | build_corpus(bundle_dir, semantic_file, output_dir, database_id, config=None, *, settings=None, run_context=None) → BuildSummary | 来源核对、渲染、身份和发布；返回 built/reused；CorpusError |
+| knowledge_corpus | build_corpus(bundle_dir, semantic_file, output_dir, database_id, config=None, *, settings=None, run_context=None, values_file=None) → BuildSummary | 来源核对、渲染、身份和发布；可选的取值样例文件进入快照和 `corpus_id`；返回 built/reused；CorpusError |
 | knowledge_corpus | verify_corpus(corpus_dir) → VerificationSummary；load_corpus(corpus_dir) → VerifiedCorpus | 每次从目录重新读取核对；普通库调用不建任务；CorpusError |
 | knowledge_store | manage_store(operation, storage_settings, *, run_context=None) → ManagementSummary | 只执行 bootstrap/migrate/check；所选操作才加载 PG 驱动 |
 | knowledge_store | import_corpus(corpus_dir, storage_settings, *, run_context=None) → ImportSummary；verify_import(...) → ImportVerificationSummary | 先重读快照；原事务锁、全字段回读、imported/reused 和未知提交语义保留；KnowledgeStorageError |
@@ -127,7 +128,7 @@ PG 的真实事务和权限必须在专用测试库验证；替身只能证明�
 
 ## 评测与报告
 
-querypilot.evaluation.api 提供 run_direct/run_graph，返回原 EvalReport；run_graph 可用 workers 同时跑多道题，报告仍按题集顺序；context_source 传给查询图并记进报告。knowledge 和 retrieval 来源另传 structure_format 和"db_id → Knowledge Scope"对照表（命令行用 knowledge_scopes_from_cases 从检索题集读出），三者连同渲染版本记进运行配置和报告；对照表缺了题集用到的库时在建立运行记录之前报 ValueError。retrieval 来源另传 method / rerank（默认 hybrid + 重排），记 method、rerank、top_k，报告的 retrieval 列出实际用到的检索版本（方法、两个 Profile、检索配置版本）；整次运行用 shared_retriever 共用一组 Embedder 和 Reranker。逐题的 error_type 对带类别的错误（检索、知识读取）记类别，否则记异常类名。retrieval 另传题号 → Relevant Set 的表（命令行用 relevant_tables_from_cases 从检索题集读出），逐题记 tables_complete，报告按拿全 / 没拿全汇总。因此 evaluation.sql 也可以从 retrieval 的公开入口导入。sql_run_config 是两者和命令行共用的运行配置。select_database_cases 从 BIRD 题目文件生成指定数据库的 SQL 题集和 manifest。fixture 把金标准 SQL 交回执行器，只检查评测管线，分数不能当模型能力。direct 在查库或读取结构失败时中止批次；进入逐题处理后，生成服务和执行错误都会记录后继续。graph 的查库也在逐题错误处理内，因此未知库会记错后继续下一题。两者保留原来的差异。
+querypilot.evaluation.api 提供 run_direct/run_graph，返回原 EvalReport；run_graph 可用 workers 同时跑多道题，报告仍按题集顺序；context_source 传给查询图并记进报告。knowledge 和 retrieval 来源另传 structure_format 和"db_id → Knowledge Scope"对照表（命令行用 knowledge_scopes_from_cases 从检索题集读出），三者连同渲染版本记进运行配置和报告；对照表缺了题集用到的库时在建立运行记录之前报 ValueError。retrieval 来源另传 method / rerank（默认 hybrid + 重排），记 method、rerank、top_k，报告的 retrieval 列出实际用到的检索版本（方法、两个 Profile、检索配置版本）；整次运行用 shared_retriever 共用一组 Embedder 和 Reranker。逐题的 error_type 对带类别的错误（检索、知识读取）记类别，否则记异常类名。retrieval 另传题号 → Relevant Set 的表（命令行用 relevant_tables_from_cases 从检索题集读出），逐题记 tables_complete，报告按拿全 / 没拿全汇总。因此 evaluation.sql 也可以从 retrieval 的公开入口导入。每道题按两个口径计分：strict_execution_match（严格执行匹配，记为 execution_match）和 content_match（内容匹配，ADR 0003）；两个比较函数都从 evaluation.api 导出，离线重算脚本也调用它们。sql_run_config 是两者和命令行共用的运行配置。select_database_cases 从 BIRD 题目文件生成指定数据库的 SQL 题集和 manifest。fixture 把金标准 SQL 交回执行器，只检查评测管线，分数不能当模型能力。direct 在查库或读取结构失败时中止批次；进入逐题处理后，生成服务和执行错误都会记录后继续。graph 的查库也在逐题错误处理内，因此未知库会记错后继续下一题。两者保留原来的差异。
 
 这些完整操作只在 `evaluation/sql/api.py` 实现，根 `evaluation.api` 普通重导出同一个函数和类型，不再包一层转发。调用方原有导入不变；已有 generator 参数继续用于固定生成器注入。SQL 批次沿用 operation=evaluation，实际最外层配置标明 mode=sql；完整无预测报告仍是完成批次，不因搬迁改成命令失败。
 
