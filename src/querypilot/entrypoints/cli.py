@@ -94,6 +94,11 @@ def create_parser() -> argparse.ArgumentParser:
     extract.add_argument("--database-id", required=True)
     extract.add_argument("--output", type=Path, required=True)
     extract.set_defaults(command="knowledge.catalog.extract")
+    values = _artifacts(catalog_actions.add_parser("values", help="从登记的库取每列的取值样例（隐私列跳过）"))
+    values.add_argument("--database-id", required=True)
+    values.add_argument("--semantic-file", type=Path, required=True)
+    values.add_argument("--output", type=Path, required=True)
+    values.set_defaults(command="knowledge.catalog.values")
     enrich = _artifacts(catalog_actions.add_parser("enrich"))
     for flag in ("catalog", "description-dir", "output-dir"):
         enrich.add_argument(f"--{flag}", type=Path, required=True)
@@ -112,6 +117,7 @@ def create_parser() -> argparse.ArgumentParser:
         if name == "build":
             command.add_argument("--database-id", required=True)
             command.add_argument("--profile-version", default="r1-4-v1")
+            command.add_argument("--values-file", type=Path, default=None)
         command.set_defaults(command=f"knowledge.corpus.{name}")
     verify = _artifacts(corpus_actions.add_parser("verify"))
     verify.add_argument("--corpus-dir", type=Path, required=True)

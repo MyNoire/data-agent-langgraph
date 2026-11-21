@@ -1,0 +1,248 @@
+{
+  "approval": {
+    "approved_on": "2026-10-05",
+    "approved_scope_sha256": "3411bc77f9e078cb9f1563988e00d4709a2bf4b3ba2d7da3ff93f2f6129103b2",
+    "decision": "原创测试批准记录",
+    "reviewed_candidate_manifest_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "reviewed_plan_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "reviewer": "user",
+    "scope": "listed_corrections_only"
+  },
+  "base_enriched_sha256": "e280be4c53b12681d23def37172eab0f8c4c22056cf2bbb8c975b4f41279d8ef",
+  "changes": [
+    {
+      "after": "",
+      "before": "+: active\n-: inactive",
+      "column_name": "item_id",
+      "field": "value_description",
+      "kind": "move_value_description",
+      "original_source": {
+        "line_end": 3,
+        "line_start": 2,
+        "raw_record": "item_id,,item identifier,text,\"+: active\n-: inactive\"\n",
+        "raw_values": [
+          "item_id",
+          "",
+          "item identifier",
+          "text",
+          "+: active\n-: inactive"
+        ],
+        "record_index": 1,
+        "source_file": "demo/database_description/items.csv"
+      },
+      "original_source_sha256": "c9bec81f5fbb7fed4a52ffb4cbd67e722f05576b2e8b8582c691df318d668deb",
+      "reason": "把状态取值说明迁移到状态字段",
+      "rule_id": "move-label",
+      "table_name": "items"
+    },
+    {
+      "after": "+: active\n-: inactive",
+      "before": "",
+      "column_name": "label",
+      "field": "value_description",
+      "kind": "move_value_description",
+      "original_source": {
+        "line_end": 4,
+        "line_start": 4,
+        "raw_record": "label,activation label,activation status,text,\n",
+        "raw_values": [
+          "label",
+          "activation label",
+          "activation status",
+          "text",
+          ""
+        ],
+        "record_index": 2,
+        "source_file": "demo/database_description/items.csv"
+      },
+      "original_source_sha256": "c9bec81f5fbb7fed4a52ffb4cbd67e722f05576b2e8b8582c691df318d668deb",
+      "reason": "把状态取值说明迁移到状态字段",
+      "rule_id": "move-label",
+      "table_name": "items"
+    }
+  ],
+  "evidence_summary": [
+    "原创测试资料，不代表真实业务审核"
+  ],
+  "format_version": "description-quality-report-v1",
+  "lineage": [
+    {
+      "column_name": "item_ref",
+      "correction_ids": [],
+      "derived_source": {
+        "line_end": 2,
+        "line_start": 2,
+        "raw_record": "item_ref,,referenced item identifier,text,\n",
+        "raw_values": [
+          "item_ref",
+          "",
+          "referenced item identifier",
+          "text",
+          ""
+        ],
+        "record_index": 1,
+        "source_file": "demo/database_description/events.csv"
+      },
+      "original_source": {
+        "line_end": 2,
+        "line_start": 2,
+        "raw_record": "item_ref,,referenced item identifier,text,\n",
+        "raw_values": [
+          "item_ref",
+          "",
+          "referenced item identifier",
+          "text",
+          ""
+        ],
+        "record_index": 1,
+        "source_file": "demo/database_description/events.csv"
+      },
+      "original_source_sha256": "33899b8b97a3f0a5df754e603ebd231721e59409ec0166a6d0a70b24a5c73ae9",
+      "table_name": "events"
+    },
+    {
+      "column_name": "tenant_ref",
+      "correction_ids": [],
+      "derived_source": {
+        "line_end": 3,
+        "line_start": 3,
+        "raw_record": "tenant_ref,,referenced tenant identifier,text,\n",
+        "raw_values": [
+          "tenant_ref",
+          "",
+          "referenced tenant identifier",
+          "text",
+          ""
+        ],
+        "record_index": 2,
+        "source_file": "demo/database_description/events.csv"
+      },
+      "original_source": {
+        "line_end": 3,
+        "line_start": 3,
+        "raw_record": "tenant_ref,,referenced tenant identifier,text,\n",
+        "raw_values": [
+          "tenant_ref",
+          "",
+          "referenced tenant identifier",
+          "text",
+          ""
+        ],
+        "record_index": 2,
+        "source_file": "demo/database_description/events.csv"
+      },
+      "original_source_sha256": "33899b8b97a3f0a5df754e603ebd231721e59409ec0166a6d0a70b24a5c73ae9",
+      "table_name": "events"
+    },
+    {
+      "column_name": "item_id",
+      "correction_ids": [
+        "move-label"
+      ],
+      "derived_source": {
+        "line_end": 2,
+        "line_start": 2,
+        "raw_record": "item_id,,item identifier,text,\n",
+        "raw_values": [
+          "item_id",
+          "",
+          "item identifier",
+          "text",
+          ""
+        ],
+        "record_index": 1,
+        "source_file": "demo/database_description/items.csv"
+      },
+      "original_source": {
+        "line_end": 3,
+        "line_start": 2,
+        "raw_record": "item_id,,item identifier,text,\"+: active\n-: inactive\"\n",
+        "raw_values": [
+          "item_id",
+          "",
+          "item identifier",
+          "text",
+          "+: active\n-: inactive"
+        ],
+        "record_index": 1,
+        "source_file": "demo/database_description/items.csv"
+      },
+      "original_source_sha256": "c9bec81f5fbb7fed4a52ffb4cbd67e722f05576b2e8b8582c691df318d668deb",
+      "table_name": "items"
+    },
+    {
+      "column_name": "label",
+      "correction_ids": [
+        "move-label"
+      ],
+      "derived_source": {
+        "line_end": 4,
+        "line_start": 3,
+        "raw_record": "label,activation label,activation status,text,\"+: active\n-: inactive\"\n",
+        "raw_values": [
+          "label",
+          "activation label",
+          "activation status",
+          "text",
+          "+: active\n-: inactive"
+        ],
+        "record_index": 2,
+        "source_file": "demo/database_description/items.csv"
+      },
+      "original_source": {
+        "line_end": 4,
+        "line_start": 4,
+        "raw_record": "label,activation label,activation status,text,\n",
+        "raw_values": [
+          "label",
+          "activation label",
+          "activation status",
+          "text",
+          ""
+        ],
+        "record_index": 2,
+        "source_file": "demo/database_description/items.csv"
+      },
+      "original_source_sha256": "c9bec81f5fbb7fed4a52ffb4cbd67e722f05576b2e8b8582c691df318d668deb",
+      "table_name": "items"
+    },
+    {
+      "column_name": "tenant_id",
+      "correction_ids": [],
+      "derived_source": {
+        "line_end": 5,
+        "line_start": 5,
+        "raw_record": "tenant_id,,tenant identifier,text,\n",
+        "raw_values": [
+          "tenant_id",
+          "",
+          "tenant identifier",
+          "text",
+          ""
+        ],
+        "record_index": 3,
+        "source_file": "demo/database_description/items.csv"
+      },
+      "original_source": {
+        "line_end": 5,
+        "line_start": 5,
+        "raw_record": "tenant_id,,tenant identifier,text,\n",
+        "raw_values": [
+          "tenant_id",
+          "",
+          "tenant identifier",
+          "text",
+          ""
+        ],
+        "record_index": 3,
+        "source_file": "demo/database_description/items.csv"
+      },
+      "original_source_sha256": "c9bec81f5fbb7fed4a52ffb4cbd67e722f05576b2e8b8582c691df318d668deb",
+      "table_name": "items"
+    }
+  ],
+  "plan_sha256": "30b9b81956b97f6c0384c3d470de6b5850ae81b31fd8b2a7d5442227af40e3f0",
+  "status": "approved_corrections_applied",
+  "warning_counts_after": {},
+  "warning_counts_before": {}
+}

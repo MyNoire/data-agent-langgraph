@@ -1,6 +1,6 @@
 """完整知识操作与领域类型的明确公开面。"""
 
-from .draft import KnowledgeDraft
+from .draft import KnowledgeDraft, SemanticProfile
 from .models import (
     BuildConfig, BuildSummary, VerificationSummary, VerifiedCorpus,
     CorpusModel, CorpusManifest, ValidationReport, CorpusDocument, CorpusChunk,
@@ -19,10 +19,11 @@ from pathlib import Path
 from querypilot.runtime.api import RunContext, Settings
 def build_corpus(curated_dir: Path, semantic_file: Path, output_dir: Path,
                    database_id: str, config: BuildConfig | None = None, *, run_context: RunContext | None = None,
-                   settings: Settings | None = None) -> BuildSummary:
+                   settings: Settings | None = None, values_file: Path | None = None) -> BuildSummary:
     """从已批准来源构建或复用完整语料。
 
-    参数：整理后目录、语义文件、新目标、数据库标识和 BuildConfig；run_context 可复用上层运行，settings 控制运行根。
+    参数：整理后目录、语义文件、新目标、数据库标识和 BuildConfig；run_context 可复用上层运行，settings 控制运行根；
+    values_file 是可选的取值样例文件，给了就存进 Corpus 的 inputs/values/、参与 corpus_id，列 Chunk 多一行取值。
     返回：通过发布后核验的 built/reused 摘要。
     异常：CorpusError 或 RunArtifactError；不把语料构建与记录失败混为成功。
     副作用：只创建新语料；已有合法语料只读复用；运行目录独立，只有上下文创建者关闭。
@@ -33,21 +34,24 @@ def build_corpus(curated_dir: Path, semantic_file: Path, output_dir: Path,
     with task_run("knowledge_corpus", settings, run_context=run_context,
                   command="knowledge corpus build",
                   config={"database_id": database_id, "profile_version": config.profile_version,
-                          "input_hashes": _input_hashes(curated_dir, semantic_file),
+                          "input_hashes": _input_hashes(curated_dir, semantic_file, values_file),
                           "config_sha256": digest(canonical_json(config.model_dump(mode="json")))}) as context:
         context.event("corpus_build_started", status="started")
         result = _build_knowledge_corpus(curated_dir, semantic_file, output_dir, database_id,
-                                        profile_version=config.profile_version)
+                                        profile_version=config.profile_version, values_file=values_file)
         context.event("corpus_build_finished", status="success", corpus_id=result.corpus_id)
         if owned:
             context.complete(result, outcome="reused" if result.outcome == "reused" else "succeeded")
         return result
 
 
-def _input_hashes(curated_dir: Path, semantic_file: Path) -> list[str]:
-    """输入：来源位置；返回：整理后目录清单与语义原字节摘要；领域核验负责缺失/污染报错。"""
+def _input_hashes(curated_dir: Path, semantic_file: Path, values_file: Path | None = None) -> list[str]:
+    """输入：来源位置；返回：整理后目录清单、语义文件和（给了时）取值样例文件的原字节摘要；领域核验负责缺失/污染报错。"""
     hashes = []
-    for path in (Path(curated_dir) / "curation_manifest.json", Path(semantic_file)):
+    paths = [Path(curated_dir) / "curation_manifest.json", Path(semantic_file)]
+    if values_file is not None:
+        paths.append(Path(values_file))
+    for path in paths:
         try:
             hashes.append(digest(path.read_bytes()))
         except OSError:
@@ -67,6 +71,7 @@ def load_corpus(corpus_dir: Path) -> VerifiedCorpus:
 
 __all__ = [
     "KnowledgeDraft",
+    "SemanticProfile",
     "BuildConfig",
     "BuildSummary",
     "VerificationSummary",

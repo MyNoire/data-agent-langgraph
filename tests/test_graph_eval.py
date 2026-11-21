@@ -73,7 +73,7 @@ def test_graph_eval_records_match_mismatch_and_guard_failure(tmp_path, monkeypat
     assert result["graph_version"] == "single-v2"
     assert result["summary"] == {
         "total": 3, "success": 1, "failure": 2, "mismatch": 1,
-        "error": 1, "no_prediction": 0, "valid_sql": 2,
+        "error": 1, "no_prediction": 0, "valid_sql": 2, "content_match": 1,
     }
     assert [record["outcome"] for record in result["records"]] == [
         "matched", "mismatched", "error",
@@ -213,6 +213,28 @@ def test_graph_eval_record_carries_the_frozen_flag_of_its_case(tmp_path):
 
 
 MATCHING_SQL = "SELECT id FROM items"
+
+
+def test_graph_eval_records_content_match_beside_strict_execution_match(tmp_path):
+    """输入：金标准都是 SELECT name；预测依次是同样的 SQL、多选了 id 列、只选了一行、被拒绝的 DELETE。
+
+    输出：逐题的 execution_match（严格）依次为 真、假、假、假，content_match 为 真、真、假、假；outcome 仍按
+    严格口径；汇总和报告并列给出两个口径的题数和比例。
+    """
+    gold = "SELECT name FROM items"
+    predictions = {"q1": gold, "q2": "SELECT id, name FROM items", "q3": "SELECT name FROM items WHERE id = 1",
+                   "q4": "DELETE FROM items"}
+    cases, settings = _sample_run(tmp_path, [
+        {"question_id": number, "db_id": "sample", "question": f"q{number}", "SQL": gold} for number in range(1, 5)])
+
+    result = run_graph(cases, settings, generator=lambda question, *_: GeneratedSql(predictions[question]))
+
+    records = result["records"]
+    assert [record["execution_match"] for record in records] == [True, False, False, False]
+    assert [record["content_match"] for record in records] == [True, True, False, False]
+    assert [record["outcome"] for record in records] == ["matched", "mismatched", "mismatched", "error"]
+    assert (result["summary"]["success"], result["summary"]["content_match"]) == (1, 2)
+    assert (result["execution_accuracy"], result["content_match_rate"]) == (0.25, 0.5)
 
 
 def _cases(count: int) -> list[dict]:
@@ -457,6 +479,19 @@ def test_public_export_keeps_run_shape_and_token_usage_but_no_question_text(tmp_
     assert "question" not in record and "model_base_url" not in public
     assert "PRIVATE QUESTION" not in (tmp_path / "public.json").read_text(encoding="utf-8")
 
+
+
+def test_public_export_carries_content_match_per_case_and_in_total(tmp_path):
+    """输入：一道题，预测多选了 id 列，只有内容匹配。输出：公开导出里逐题有 content_match，汇总有题数和比例。"""
+    cases, settings = _sample_run(tmp_path, [
+        {"question_id": 1, "db_id": "sample", "question": "q1", "SQL": "SELECT name FROM items"}])
+    result = run_graph(cases, settings, generator=lambda *_: GeneratedSql("SELECT id, name FROM items"))
+    run_dir = next(path for path in settings.artifacts_dir.glob("runs/evaluation/*/*") if path.name == result["run_id"])
+
+    public = export_public(run_dir, tmp_path / "public.json")
+
+    assert (public["records"][0]["execution_match"], public["records"][0]["content_match"]) == (False, True)
+    assert (public["summary"]["content_match"], public["content_match_rate"]) == (1, 1.0)
 
 ITEMS_DDL = "CREATE TABLE items (id INTEGER, name TEXT)"
 

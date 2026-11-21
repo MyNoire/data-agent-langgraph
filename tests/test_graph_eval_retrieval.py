@@ -70,7 +70,7 @@ def test_retrieval_run_records_retrieval_config_and_the_versions_that_actually_r
   主键: 未声明
   外键: 未声明
   列 "name" TEXT: 物品名称''']
-    expected = {"context_source": "retrieval", "structure_format": "columns", "schema_render_version": "r5-schema-v2",
+    expected = {"context_source": "retrieval", "structure_format": "columns", "schema_render_version": "r5-schema-v3",
                 "knowledge_scopes": {"sample": SAMPLE_SCOPE.model_dump()}, "method": "hybrid", "rerank": True,
                 "top_k": 10}
     config = _run_config(settings, report["run_id"])
@@ -175,8 +175,8 @@ def test_each_retrieval_case_records_whether_its_relevant_tables_were_all_retrie
     - q2 的 Relevant Set 是 [items, orders]：缺 orders，没拿全；
     - q3 的检索报 no_match：没有 Hit，记为没拿全。
 
-    输出：逐题记录的 tables_complete 分别为 True / False / False；汇总按"拿全 / 没拿全"分别给出题数、执行
-    匹配数和比例，整体和分库各一份。
+    输出：逐题记录的 tables_complete 分别为 True / False / False；汇总按"拿全 / 没拿全"分别给出题数，以及严格
+    执行匹配和内容匹配各自的题数和比例，整体和分库各一份。
     """
     cases, settings = _sample_run(tmp_path, _cases(3))
 
@@ -186,8 +186,8 @@ def test_each_retrieval_case_records_whether_its_relevant_tables_were_all_retrie
                        retriever=_fake_retriever([], fail={"q3": "no_match"}), table_chunk_reader=_table_reader([]))
 
     assert [record["tables_complete"] for record in report["records"]] == [True, False, False]
-    split = {"complete": {"cases": 1, "matched": 1, "rate": 1.0},
-             "incomplete": {"cases": 2, "matched": 1, "rate": 0.5}}
+    split = {"complete": {"cases": 1, "matched": 1, "rate": 1.0, "content_matched": 1, "content_rate": 1.0},
+             "incomplete": {"cases": 2, "matched": 1, "rate": 0.5, "content_matched": 1, "content_rate": 0.5}}
     assert report["tables_complete"] == {"overall": split, "by_database": {"sample": split}}
 
 

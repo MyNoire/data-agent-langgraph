@@ -58,11 +58,19 @@ class KnowledgeDraft(CatalogModel):
     relations: list[RelationDraft]
 
 
+class DataConvention(CatalogModel):
+    """查数据观察到、经用户批准的存储约定；来源固定为 observed，与推断出的摘要分开。"""
+
+    text: str = Field(min_length=1)
+    origin: Literal["observed"]
+
+
 class TableMeaning(CatalogModel):
-    """输入为离线推断的表摘要；输出用途和记录粒度，不复制字段详情。"""
+    """输入为离线推断的表摘要；输出用途和记录粒度，不复制字段详情。可选带一条数据约定。"""
 
     purpose: str = Field(min_length=1)
     row_grain: str = Field(min_length=1)
+    data_convention: DataConvention | None = None
 
 
 class RelationshipMeaning(CatalogModel):
@@ -75,8 +83,18 @@ class RelationshipMeaning(CatalogModel):
     meaning: str = Field(min_length=1)
 
 
+class ColumnRef(CatalogModel):
+    """一列的位置：表名和列名。"""
+
+    table_name: str = Field(min_length=1)
+    column_name: str = Field(min_length=1)
+
+
 class SemanticProfile(CatalogModel):
-    """输入为可复用的推断配置；输出带版本、性质和数据库范围的摘要集合。"""
+    """输入为可复用的推断配置；输出带版本、性质和数据库范围的摘要集合。
+
+    private_columns 是隐私列名单：生成取值样例时跳过这些列，构建 Corpus 时它们不能带取值。
+    """
 
     format_version: Literal["knowledge-semantics-v1"] = "knowledge-semantics-v1"
     database_id: str
@@ -86,3 +104,4 @@ class SemanticProfile(CatalogModel):
     author: str = Field(min_length=1)
     tables: dict[str, TableMeaning]
     relationships: list[RelationshipMeaning] = Field(default_factory=list)
+    private_columns: list[ColumnRef] = Field(default_factory=list)

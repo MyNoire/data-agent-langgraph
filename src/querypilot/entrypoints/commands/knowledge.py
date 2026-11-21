@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from querypilot.databases.api import DatabaseRegistry
 from querypilot.knowledge.api import (
     BuildConfig, Catalog, KnowledgeStorageError, KnowledgeStorageSettings,
-    extract_catalog, enrich_catalog, curate_catalog, render_knowledge, build_corpus,
+    SemanticProfile, collect_value_samples, extract_catalog, enrich_catalog, curate_catalog, render_knowledge, build_corpus,
     verify_corpus, manage_store, import_corpus, verify_import, prepare_search, check_search,
     embed_corpus, EmbeddingSettings, OpenAIEmbedder,
 )
@@ -55,7 +55,7 @@ def run(args, settings) -> int:
         secrets += (embedding.api_key.get_secret_value(),)
         embedder = OpenAIEmbedder(embedding)
     if group == "catalog":
-        operation, private = "knowledge_catalog", action in {"extract", "enrich"}
+        operation, private = "knowledge_catalog", action in {"extract", "enrich", "values"}
     elif group == "corpus":
         operation, private = "knowledge_corpus", action == "render"
     else:
@@ -63,7 +63,7 @@ def run(args, settings) -> int:
                      "embed": "knowledge_embed"}.get(action, "knowledge_manage")
         private = False
     hashes = []
-    for name in ("catalog", "base", "plan", "semantic_file"):
+    for name in ("catalog", "base", "plan", "semantic_file", "values_file"):
         path = getattr(args, name, None)
         if path is not None and path.is_file():
             hashes.append(sha256(path.read_bytes()).hexdigest())
@@ -86,6 +86,19 @@ def run(args, settings) -> int:
             summary = {"database_id": result.database_id, "tables": len(result.tables),
                        "columns": sum(len(table.columns) for table in result.tables),
                        "foreign_keys": sum(len(table.foreign_keys) for table in result.tables),
+                       "output_file": str(args.output.resolve())}
+        elif group == "catalog" and action == "values":
+            profile = SemanticProfile.model_validate_json(args.semantic_file.read_bytes())
+            if profile.database_id != args.database_id:
+                raise ValueError("语义配置的 database_id 与 --database-id 不一致")
+            database = DatabaseRegistry(settings.data_dir).get(args.database_id)
+            result = collect_value_samples(args.database_id, database, private_columns={
+                (item.table_name, item.column_name) for item in profile.private_columns})
+            publish_json(args.output.resolve(), result.model_dump(mode="json"))
+            summary = {"database_id": result.database_id, "rule_version": result.rule_version,
+                       "columns": len(result.columns),
+                       "modes": dict(sorted(Counter(item.mode for item in result.columns).items())),
+                       "source_sqlite_sha256": result.source_sqlite_sha256,
                        "output_file": str(args.output.resolve())}
         elif group == "catalog" and action == "enrich":
             catalog = Catalog.model_validate_json(args.catalog.read_text(encoding="utf-8"))
@@ -118,7 +131,7 @@ def run(args, settings) -> int:
         elif group == "corpus" and action == "build":
             result = build_corpus(args.curated_dir, args.semantic_file, args.output_dir, args.database_id,
                                     BuildConfig(profile_version=args.profile_version), run_context=context,
-                                    settings=settings)
+                                    settings=settings, values_file=args.values_file)
             summary = result.model_dump(mode="json")
         elif group == "corpus":
             result = verify_corpus(args.corpus_dir)

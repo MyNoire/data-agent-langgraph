@@ -171,6 +171,13 @@ def _input_roles(files: dict[str, bytes]) -> dict[str, str]:
     _logical_path(semantic_path)
     _require(len(semantic_path.split("/")) == 3, "source_scope_violation", "语义配置必须保留 basename")
     roles[semantic_path] = "inferred_semantics"
+    # 取值样例文件可选，最多一份。
+    value_paths = [path for path in files if path.startswith("inputs/values/")]
+    _require(len(value_paths) <= 1, "source_scope_violation", "取值样例文件最多一份")
+    for value_path in value_paths:
+        _logical_path(value_path)
+        _require(len(value_path.split("/")) == 3, "source_scope_violation", "取值样例文件必须保留 basename")
+        roles[value_path] = "value_samples"
     _require(set(files) == set(roles), "source_scope_violation", "输入集合含未允许来源或缺失文件")
     return roles
 
@@ -185,6 +192,7 @@ def _prepare(files: dict[str, bytes], database_id: str) -> _Inputs:
         if path.endswith(".json"):
             _parse(files[path], path, "input_invalid")
     semantic_path = next(path for path, role in roles.items() if role == "inferred_semantics")
+    values_path = next((path for path, role in roles.items() if role == "value_samples"), None)
     try:
         enriched = EnrichedCatalog.model_validate(_parse(
             files["inputs/bundle/enriched_catalog.json"], "inputs/bundle/enriched_catalog.json", "input_invalid"))
@@ -201,6 +209,7 @@ def _prepare(files: dict[str, bytes], database_id: str) -> _Inputs:
                                    for path, raw in files.items()
                                    if path.startswith("inputs/bundle/") and path != manifest_path},
             files[semantic_path], Path(semantic_path).name,
+            values_bytes=files[values_path] if values_path else None,
         )
     except CorpusError:
         raise
@@ -212,8 +221,9 @@ def _prepare(files: dict[str, bytes], database_id: str) -> _Inputs:
 
 
 
-def _load_inputs(curated_dir: Path, semantic_file: Path, database_id: str) -> _Inputs:
-    """读取指定源。输入：包/语义/库；输出：固定输入；I/O 或契约失败抛 CorpusError。"""
+def _load_inputs(curated_dir: Path, semantic_file: Path, database_id: str,
+                 values_file: Path | None = None) -> _Inputs:
+    """读取指定源。输入：包/语义/库，可选取值样例文件；输出：固定输入；I/O 或契约失败抛 CorpusError。"""
     try:
         root = curated_dir.resolve()
         manifest_raw = _read(root, "curation_manifest.json")
@@ -230,6 +240,8 @@ def _load_inputs(curated_dir: Path, semantic_file: Path, database_id: str) -> _I
             files["inputs/bundle/" + relative] = _read(root, relative)
         name = _logical_path(semantic_file.name)
         files["inputs/semantics/" + name] = semantic_file.read_bytes()
+        if values_file is not None:
+            files["inputs/values/" + _logical_path(values_file.name)] = values_file.read_bytes()
         return _prepare(files, database_id)
     except OSError as exc:
         raise CorpusError("input_invalid", "无法读取指定的必需输入") from exc
@@ -487,17 +499,20 @@ def _run_record(corpus_id: str, started: float) -> BuildRunRecord:
 
 
 def build_knowledge_corpus(curated_dir: Path, semantic_file: Path, output_dir: Path,
-                           database_id: str, profile_version: str = "r1-4-v1") -> BuildSummary:
+                           database_id: str, profile_version: str = "r1-4-v1", *,
+                           values_file: Path | None = None) -> BuildSummary:
     """构建或只读复用正式离线语料。
 
     参数: curated_dir/semantic_file 为固定批准输入，output_dir 为目标，database_id
-        为显式单库范围，profile_version 为非空声明规则标签。
+        为显式单库范围，profile_version 为非空声明规则标签；values_file 为可选的取值样例文件，
+        给出时存进 inputs/values/ 并进入 Corpus 身份，列 Chunk 多一行取值。
     返回: 最终独立核验通过的 built 或一致复用的 reused 摘要。
     异常: CorpusError；写出失败不返回成功，保留底层 cause 和实际目录供独立核验。
     副作用: 只创建新目标；不覆盖/补写已有目标，不改输入，不调用模型/数据库。
     """
     started = time.perf_counter()
     curated_dir, semantic_file, output_dir = map(Path, (curated_dir, semantic_file, output_dir))
+    values_file = Path(values_file) if values_file is not None else None
     try:
         root = output_dir.resolve()
     except (OSError, RuntimeError) as exc:
@@ -506,14 +521,15 @@ def build_knowledge_corpus(curated_dir: Path, semantic_file: Path, output_dir: P
     _require(os.path.normcase(str(absolute)) == os.path.normcase(str(root)),
              "target_conflict", "输出路径含链接或别名目标")
     try:
-        source_roots = (curated_dir.resolve(), semantic_file.parent.resolve())
+        source_roots = (curated_dir.resolve(), semantic_file.parent.resolve(),
+                        *((values_file.parent.resolve(),) if values_file is not None else ()))
     except (OSError, RuntimeError) as exc:
         raise CorpusError("input_invalid", "输入路径无法解析") from exc
     for source in source_roots:
         _require(not root.is_relative_to(source) and not source.is_relative_to(root),
                  "target_conflict", "输入与输出目录重叠")
     config = _model(BuildConfig, {"profile_version": profile_version}, "build-config.json", "input_invalid")
-    inputs = _load_inputs(curated_dir, semantic_file, database_id)
+    inputs = _load_inputs(curated_dir, semantic_file, database_id, values_file)
     try:
         candidate = _candidate(inputs, config)
     except (ValueError, KeyError, TypeError) as exc:

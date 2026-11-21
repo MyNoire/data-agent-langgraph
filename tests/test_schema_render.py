@@ -1,6 +1,8 @@
 """渲染 Retrieval Context：用两个库的真实 Chunk 正文验证每一项"保留"和"去掉"，以及两种结构写法。"""
 
 import json
+from dataclasses import replace
+
 import pytest
 from uuid import NAMESPACE_URL, uuid5
 
@@ -141,6 +143,45 @@ def test_ddl_format_replaces_only_the_structure_lines_with_the_create_table_stat
 
     assert rendered == expected
     assert "bond_id TEXT)" not in rendered
+
+
+
+CONVENTION = "数据约定: 每条化学键正反各存一行。"
+ELEMENT_VALUES = "取值: 全部 3 个：'c', 'cl', 'h'"
+ATOM_ID_VALUES = "取值: 样例（出现最多的 3 个，共 9111 个不同值）：'TR000_1', 'TR000_2', 'TR000_3'"
+
+
+@pytest.mark.parametrize("structure_format", ["columns", "ddl"])
+def test_values_and_data_convention_are_kept_in_both_structure_formats(structure_format):
+    """输入：带取值样例和数据约定的新 Chunk。connected 的表 Chunk 在记录粒度后有数据约定；element 的取值
+    接在 15 行取值解释之后，atom_id 没有取值解释、直接是取值样例。
+
+    输出：与旧 Chunk 的渲染相比只多三行——表的记录粒度后面多"数据约定"，命中的列在说明后面多"取值"；
+    columns 和 ddl 两种写法一样。没被命中的列（如 molecule_id）仍然只在字段目录或建表语句里。
+    """
+    def with_line(content: str, after: str, line: str) -> str:
+        return content.replace(after, after + "\n" + line, 1)
+
+    atom, connected = _toxicology()
+    element, atom_id = atom.columns
+    context = [
+        replace(atom, columns=[
+            element.model_copy(update={"content": chunks.TOXICOLOGY_ATOM_ELEMENT + "\n" + ELEMENT_VALUES}),
+            atom_id.model_copy(update={"content": chunks.TOXICOLOGY_ATOM_ATOM_ID + "\n" + ATOM_ID_VALUES})]),
+        replace(connected, table_chunk=with_line(
+            chunks.TOXICOLOGY_CONNECTED_TABLE, "记录粒度: 一对原子及连接它们的化学键。", CONVENTION)),
+    ]
+    table_ddl = {"atom": 'CREATE TABLE "atom" (atom_id TEXT, molecule_id TEXT, element TEXT)',
+                 "connected": 'CREATE TABLE "connected" (atom_id TEXT, atom_id2 TEXT, bond_id TEXT)'}
+    old = render_context(_toxicology(), structure_format=structure_format, table_ddl=table_ddl)
+
+    rendered = render_context(context, structure_format=structure_format, table_ddl=table_ddl)
+
+    expected = with_line(old, "    • ca: Calcium", "    " + ELEMENT_VALUES)
+    expected = with_line(expected, '  列 "atom_id" TEXT: the unique id of atoms', "    " + ATOM_ID_VALUES)
+    expected = with_line(expected, "  记录粒度: 一对原子及连接它们的化学键。", "  " + CONVENTION)
+    assert rendered == expected
+    assert rendered.count("\n") == old.count("\n") + 3
 
 
 @pytest.mark.parametrize(("column", "display_name", "kept"), [

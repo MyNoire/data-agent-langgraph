@@ -10,13 +10,13 @@ from querypilot.runtime.api import publish_json, read_run_result
 TOP_LEVEL = (
     "dataset_sha256", "provider", "status", "run_id", "summary", "evidence_mode", "model",
     "model_temperature", "prompt_version", "graph_version", "count", "max_rows", "query_timeout_ms",
-    "max_response_bytes", "valid_sql_rate", "execution_accuracy", "p50_latency_ms", "p95_latency_ms",
+    "max_response_bytes", "valid_sql_rate", "execution_accuracy", "content_match_rate", "p50_latency_ms", "p95_latency_ms",
     "workers", "token_usage", "context_source", "structure_format", "schema_render_version", "knowledge_scopes",
     "method", "rerank", "top_k", "retrieval", "tables_complete",
 )
 RECORD = (
     "index", "question_id", "database_id", "graph_run_id", "evidence_used", "predicted_sql",
-    "valid_sql", "execution_match", "outcome", "latency_ms", "frozen", "prompt_tokens", "completion_tokens",
+    "valid_sql", "execution_match", "content_match", "outcome", "latency_ms", "frozen", "prompt_tokens", "completion_tokens",
     "tables_complete",
 )
 

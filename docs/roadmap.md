@@ -30,6 +30,7 @@
 | R4b 重排 | 检索之后可选的一步重排（硅基流动 `Qwen/Qwen3-Reranker-8B`，前 20 个候选，默认关闭）。BM25 + 重排的 Complete Recall@5 为 75.0%（BM25 为 64.8%），是前 5 最好的配置；hybrid + 重排的 @5 没有变化（67.0%），@10 从 85.2% 升到 89.8%。代价是延迟：单次检索的中位数在 1–11 秒之间波动 | [检索评测](evaluation/retrieval-evaluation.md)、[知识库](knowledge/knowledge-base.md) |
 | R5 检索接入查询图 | 查询图按编译时选的 Context Source 走一条路径（无条件边）：`schema`、`ddl`、`knowledge`（全部知识）、`retrieval`（用问题检索一次，默认 hybrid + 重排、`top_k=10`，只给命中的表）；Hit 按表组织并精简成 Schema（`r5-schema-v1`）；Knowledge Scope 经运行时 context 传入，不进图状态。两库 88 题六组对比：执行匹配 42–46/88，非冻结题 35–37/72，全部在噪声内；检索与全量知识持平而输入只有约 37%；表没拿全的 9 题只对 1 题 | [SQL 评测](evaluation/sql-evaluation.md) |
 | 检索评测并发 | `eval retrieval --workers N`：线程池同时检索多道题，线程里只做检索，计分和记录留在主线程，报告顺序不变；出错或中断时不再开始新题。hybrid + 重排的 88 题评测从 18.9 分钟降到 45 秒（8 个线程贡献约 8 倍，其余是服务当时更快），指标不变 | [检索评测](evaluation/retrieval-evaluation.md) |
+| 内容匹配与取值样例 | 新增内容匹配（形式可以不同、内容必须相同，[ADR 0003](adr/0003-content-match-as-primary-sql-metric.md)），与严格执行匹配并列；R5 八组离线重算，内容口径 57–63/88、非冻结 48–53/72，组间结论不变。列 Chunk 加取值样例（隐私列不取值）、8 张表加用户批准的数据约定，构建新 Corpus：BM25 前 5 拿全 64.8% → 71.6%；SQL ③⑤ 内容 64 / 63（非冻结各 +1，噪声内），R5 失败分析点名的题救回 3 道，渲染版本 `r5-schema-v3` | [SQL 评测](evaluation/sql-evaluation.md)、[检索评测](evaluation/retrieval-evaluation.md)、[知识库](knowledge/knowledge-base.md) |
 | 工程基础 | 模块边界测试，运行记录与安全事件 | [模块](architecture/modules.md)、[运行记录](architecture/observability.md) |
 
 ## 下一步

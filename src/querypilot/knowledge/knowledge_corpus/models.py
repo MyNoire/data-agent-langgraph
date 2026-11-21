@@ -99,7 +99,7 @@ class SourceEntry(CorpusModel):
 
     role: Literal[
         "curation_manifest", "enriched_catalog", "correction_report",
-        "import_warnings", "derived_csv", "inferred_semantics",
+        "import_warnings", "derived_csv", "inferred_semantics", "value_samples",
     ]
     logical_path: NonEmpty
     sha256: Hash

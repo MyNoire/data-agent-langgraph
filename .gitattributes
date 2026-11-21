@@ -2,3 +2,5 @@
 src/querypilot/knowledge/knowledge_store/migrations/*.sql text eol=lf
 # 停用词资源按 UTF-8 原字节计算摘要，禁止检出时转换为 CRLF。
 src/querypilot/retrieval/resources/zh-courtesy-v1.txt text eol=lf
+# Corpus 构建回归夹具按原字节核对 hash，检出时不转换换行。
+tests/fixtures/corpus-build-r1-4/** -text

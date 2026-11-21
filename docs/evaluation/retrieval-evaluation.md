@@ -166,6 +166,29 @@ BM25 的分数用到整个索引的统计量（文档数、词出现在多少文
 
 运行目录（本地，Git 忽略）：`artifacts/runs/evaluation/2026-11-13/` 下，lexical `473ac64621f14627969564e6348cd6fa/`（workers=1）和 `641304b445734a6ebe409f525325cdb9/`（workers=8），hybrid `fac48f7d76914be695bbde256b6c92f1/`，lexical + 重排 `01e273963dc941ca9c2f37469c8a790d/`，hybrid + 重排 `334e6224518e4419bcee636afe03585e/`；只跑一次集成测试之后的那次 lexical 是 `d2e9146a7d3c472ea2b27182246d099b/`。
 
+### 取值样例与数据约定进入检索文本（2026-11-21）
+
+新题集 `evals/retrieval/retrieval_cases_values.json` 指向两份新 Corpus（toxicology `50c156f8`、student_club `748167d2`，见[知识库](../knowledge/knowledge-base.md)第 1 节）：列块多一行取值，8 张表的表块多一行数据约定。题号、Relevant Set、`top_k=20`、K、Embedding / Rerank Profile 和配置版本都与上一节相同，`--workers 8`。对比对象是上一节干净索引上的结果（旧 Corpus）。
+
+| 整体（88 题） | lexical：旧 → 新 | hybrid + 重排：旧 → 新 |
+|---|---|---|
+| **Table Complete Recall@5** | 64.8% → **71.6%**（57 → 63 题） | 67.0% → 69.3%（59 → 61） |
+| **Table Complete Recall@10** | 84.1% → **88.6%**（74 → 78） | 89.8% → 90.9%（79 → 80） |
+| Table Recall@5 | 83.5% → 86.6% | 84.0% → 85.8% |
+| Table Recall@10 | 92.8% → 95.7% | 95.6% → 96.8% |
+| Hits to Cover 中位数 | 3 → 3 | 4 → 3 |
+| 20 个 Hit 内拿不全的题 | 3 → 1 | 2 → 3 |
+| Column Recall@10 | 67.9% → 68.6% | 78.4% → 78.8% |
+
+72 道非冻结题逐题看（±1–2 题当作噪声）：
+
+- **lexical 在 student_club 上明显变好**：Table Complete Recall@5 非冻结 48 → 54（救回 1322、1323、1331、1340、1356、1389、1427，丢了 1317），@10 61 → 66（救回 1322、1323、1331、1356、1359，没有丢的）。toxicology 两个 K 都没变。救回的题里问题的词正好出现在取值里：「Vice President」「President」在 `member.position`，「meetings」对应 `event.type` 的 `'Meeting'`，「MU 215」「guest speaker」在 event 的取值里，「Advertisement」在 `budget.category`。member、event 表原来排在第 9–17 名或不在 20 个 Hit 里，现在排第 1–6 名。第 4 节记下的"问题里的词是表里的取值"这类失败，职位、类型、地点这些有了取值就能找到；人名在隐私名单上，不进知识库，仍然找不到。
+- **hybrid + 重排的变化在噪声内**：@5 非冻结 49 → 50（救回 281、1331、1404，丢了 198、201），@10 67 → 68（救回 1338）。Column Recall@10 有 8 题升、8 题降，平均几乎不变。向量和重排原本就能从语义上找到这些表，取值多带来的帮助有限；它的变化里还混着查询向量和重排分数的抖动，分不开。
+- **lexical 的变化不是 BM25 统计量带来的**：导入新 Corpus 后索引里有 4 份 Corpus（168 个 Chunk），统计量变了。为了分开，在当前索引上用旧题集（旧 Corpus）再跑了一次 lexical（不收费）：和干净索引相比有 17 道题的命中名次不同，但所有指标都没变（Table Complete Recall@5 / @10 仍是 57 / 74 题）。所以上表 lexical 的提升来自正文的变化。hybrid + 重排没有做这个对照（要付费），它的变化本来也在噪声内。
+- 取值上限、样例个数和检索配置都没有因为这些结果调整。
+
+运行目录（本地，Git 忽略）：`artifacts/runs/evaluation/2026-11-21/` 下，lexical `e51cf5ef9e3b474e95c7c87ff78c6d0d/`，hybrid + 重排 `1222801265464fe0a8c6acd9e63cf20b/`，当前索引上的旧题集 lexical `6b655a9684cc428e9af3bb1614a1c3a3/`。hybrid + 重排调用 Embedding 88 次、Rerank 至多 88 次。
+
 ## 4. 失败分析（只看非冻结题）
 
 非冻结题共 72 道，其中 24 道在 K=5 时没拿全相关表；这 24 道里有 13 道到 K=10 就能拿全。主要有五类原因：
