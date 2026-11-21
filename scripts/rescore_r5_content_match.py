@@ -11,11 +11,11 @@
 import argparse
 import hashlib
 import json
-from collections import Counter
+import sqlite3
 from pathlib import Path
 
-from querypilot.databases.api import execute_sql
-from querypilot.evaluation.api import content_match
+from querypilot.databases.api import QueryLimitError, SqlRejected, execute_sql
+from querypilot.evaluation.api import content_match, strict_execution_match
 from querypilot.runtime.api import Settings, task_run
 
 RUN_ROOT = Path("artifacts/runs/evaluation/2026-11-17")
@@ -36,17 +36,15 @@ def _run_dir(prefix: str) -> Path:
     return matches[0]
 
 
-def _rows(database_id: str, sql: str, settings: Settings, context) -> list[list[object]] | None:
-    """执行一条 SQL 返回结果行；执行出错（超时、超限等）返回 None。"""
+def _rows(database_id: str, sql: str, settings: Settings, context) -> list[list[object]] | str:
+    """执行一条 SQL，返回结果行；执行器报的错（被拒、超时或超限、SQLite 执行失败）返回错误类别名。
+
+    这些题按不匹配计，题号和错误类别写进结果；其他异常照常抛出，中止重算。
+    """
     try:
         return execute_sql(database_id, sql, settings, run_context=context).rows
-    except Exception:  # 原运行能执行的 SQL 这次出错时，按不匹配计并报出题号
-        return None
-
-
-def _strict(rows: list[list[object]]) -> Counter:
-    """严格执行匹配的比较形式：忽略行顺序、保留重复行（与评测里的规则相同）。"""
-    return Counter(tuple(json.dumps(value, sort_keys=True, default=str) for value in row) for row in rows)
+    except (SqlRejected, QueryLimitError, sqlite3.DatabaseError) as exc:
+        return type(exc).__name__
 
 
 def _count(records: list[dict], key: str, *, database: str | None = None, frozen: bool | None = None) -> int:
@@ -89,10 +87,11 @@ def main() -> None:
                     if qid not in gold_rows:
                         gold_rows[qid] = _rows(record["database_id"], cases[qid]["SQL"], settings, context)
                     predicted = _rows(record["database_id"], record["predicted_sql"], settings, context)
-                    if predicted is None or gold_rows[qid] is None:
-                        rerun_failed.append(qid)
+                    failed = [rows for rows in (predicted, gold_rows[qid]) if isinstance(rows, str)]
+                    if failed:
+                        rerun_failed.append({"question_id": qid, "error_type": failed[0]})
                     else:
-                        strict = _strict(predicted) == _strict(gold_rows[qid])
+                        strict = strict_execution_match(predicted, gold_rows[qid])
                         content = content_match(predicted, gold_rows[qid])
                         if content is False and strict:
                             raise SystemExit(f"{label} {qid}: strict match without content match")

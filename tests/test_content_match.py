@@ -1,6 +1,6 @@
 """内容匹配：形式不同、内容相同的结果算对；内容有任何不同都不算（ADR 0003）。"""
 
-from querypilot.evaluation.api import content_match
+from querypilot.evaluation.api import content_match, strict_execution_match
 
 
 def test_extra_columns_and_column_order_do_not_matter():
@@ -36,6 +36,14 @@ def test_a_column_joining_several_gold_columns_with_a_space_covers_them():
     """1410：全名拼成一列，金标准是姓、名两列，另有一列金额。"""
     gold = [["Sacha", "Harrison", 866.25]]
     predicted = [["Sacha Harrison", 866.25]]
+
+    assert content_match(predicted, gold)
+
+
+def test_joined_columns_may_come_in_any_order_and_need_not_be_adjacent():
+    """拼接不限顺序和位置：姓在前（"Harrison Sacha"）也能覆盖名、姓两列，中间隔着金额列也一样。"""
+    gold = [["Sacha", 866.25, "Harrison"], ["Elijah", 20.2, "Allen"]]
+    predicted = [["Harrison Sacha", 866.25], ["Allen Elijah", 20.2]]
 
     assert content_match(predicted, gold)
 
@@ -91,3 +99,13 @@ def test_results_that_match_strictly_also_match_by_content():
     predicted = [["o", 1], ["c", 2], ["o", 1]]
 
     assert content_match(predicted, gold)
+
+
+def test_strict_execution_match_ignores_row_order_but_keeps_duplicates_and_column_layout():
+    """严格执行匹配：行顺序无所谓；重复行、列的顺序和值的写法都要相同。"""
+    gold = [["a", 1], ["b", 2], ["b", 2]]
+
+    assert strict_execution_match([["b", 2], ["a", 1], ["b", 2]], gold)
+    assert not strict_execution_match([["a", 1], ["b", 2]], gold)
+    assert not strict_execution_match([[1, "a"], [2, "b"], [2, "b"]], gold)
+    assert not strict_execution_match([["a", "1"], ["b", "2"], ["b", "2"]], gold)

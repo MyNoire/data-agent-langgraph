@@ -17,6 +17,11 @@ def normalized_rows(rows: list[list[object]]) -> Counter[tuple[str, ...]]:
     return Counter(tuple(json.dumps(value, sort_keys=True, default=str) for value in row) for row in rows)
 
 
+def strict_execution_match(predicted_rows: list[list[object]], gold_rows: list[list[object]]) -> bool:
+    """严格执行匹配：两边结果行的多重集合相同（行顺序无所谓，重复行、列的位置和值的写法都要相同）。"""
+    return normalized_rows(predicted_rows) == normalized_rows(gold_rows)
+
+
 NUMBER_TEXT = re.compile(r"[+-]?\d+(\.\d+)?")
 """能当作数字的文本：可带正负号的十进制整数或小数（去掉首尾空白和末尾一个 % 之后）。"""
 

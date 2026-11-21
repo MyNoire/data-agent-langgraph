@@ -11,7 +11,7 @@ from pathlib import Path
 from querypilot.runtime.api import Settings
 from querypilot.databases.api import execute_sql
 from querypilot.sql_generation.api import PROMPT_VERSION, generate_sql
-from ._compare import content_match, normalized_rows
+from ._compare import content_match, strict_execution_match
 from ._results import (
     CaseRecord, EvalReport, build_report, finish_case_record, new_case_record,
 )
@@ -99,7 +99,7 @@ def _case_record(position: int, case: dict, run: _CaseRun, graph_run_id: str,
         record["error_type"] = getattr(run.error, "error_type", None) or type(run.error).__name__
         record["error"] = f"{type(run.error).__name__}: {run.error}"
     else:
-        record["execution_match"] = normalized_rows(run.result["rows"]) == normalized_rows(run.gold_rows)
+        record["execution_match"] = strict_execution_match(run.result["rows"], run.gold_rows)
         record["content_match"] = content_match(run.result["rows"], run.gold_rows)
     return finish_case_record(record, run.started, finished=run.finished)
 
