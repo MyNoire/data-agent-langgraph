@@ -5,6 +5,7 @@ from querypilot.sql_generation.api import PROMPT_VERSION, SqlGenerator, generate
 from .models import QueryInput, QueryOutput, QueryState, QueryContext
 from ._context import TableContext, assemble_context
 from ._render import SCHEMA_RENDER_VERSION, StructureFormat, render_context
+from ._serving import start_serving
 from ._single_graph import (
     GRAPH_VERSION, KNOWLEDGE_SOURCES, RETRIEVAL_TOP_K, ContextSource, build_query_graph, query_result_row_count,
 )
@@ -34,4 +35,4 @@ def ask(database_id: str, question: str, settings: Settings, *, generator: SqlGe
         return result
 
 
-__all__ = ["ask", "build_query_graph", "GRAPH_VERSION", "ContextSource", "TableContext", "assemble_context", "render_context", "StructureFormat", "SCHEMA_RENDER_VERSION", "QueryInput", "QueryOutput", "QueryState", "SqlGenerator", "query_result_row_count", "QueryContext", "RETRIEVAL_TOP_K", "KNOWLEDGE_SOURCES"]
+__all__ = ["ask", "build_query_graph", "start_serving", "GRAPH_VERSION", "ContextSource", "TableContext", "assemble_context", "render_context", "StructureFormat", "SCHEMA_RENDER_VERSION", "QueryInput", "QueryOutput", "QueryState", "SqlGenerator", "query_result_row_count", "QueryContext", "RETRIEVAL_TOP_K", "KNOWLEDGE_SOURCES"]

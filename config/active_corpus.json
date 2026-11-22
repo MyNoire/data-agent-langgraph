@@ -1,0 +1,10 @@
+{
+  "student_club": {
+    "corpus_id": "748167d2fce64e4575d9de96495a4ed0ac1b8c2bbdd1b3dd07f873751b3092b7",
+    "schema_version": "20441054b528d9e52458069d101e8290f2698b873886d66f2e7a9a52803fe6c1"
+  },
+  "toxicology": {
+    "corpus_id": "50c156f8700b7312ea4391384c2a4f7cc64e750e6457edd7815463e08560a768",
+    "schema_version": "45b2e99ae191cbcde4fa377e702dcd498c98abaf0f7193565861601d653ba799"
+  }
+}
