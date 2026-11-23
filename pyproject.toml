@@ -10,9 +10,9 @@ dependencies = [
   "sqlglot>=26,<30",
   "openai>=1.60,<3",
   "langgraph>=1,<2",
-  # 检索 tool 直接导入它；它原本只经 langgraph 间接安装。
+  # 检索 tool 直接导入它，所以声明为直接依赖。
   "langchain-core>=1,<2",
-  # 查询图编译时用 langsmith.configure 关闭追踪；它原本只经 langgraph 间接安装。
+  # 查询图编译时和用户端启动时用 langsmith.configure 关闭追踪，所以声明为直接依赖。
   "langsmith>=0.14,<1",
 ]
 
