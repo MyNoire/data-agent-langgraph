@@ -369,3 +369,27 @@ def test_an_unexpected_validation_error_inside_the_tool_reaches_the_caller(tmp_p
         error = error.__cause__
     assert any(isinstance(error, ValidationError) for error in chain)   # 原来的错误留在异常链里，便于排查
     assert reads == []
+
+
+def test_an_unreachable_knowledge_base_is_reported_without_the_connection_string_or_the_query(tmp_path, monkeypatch):
+    """输入：用真实的检索和表 Chunk 读取；知识库连接串指向本机一个不监听的端口，里面带账号和密码；
+    Embedding 和 Reranker 也指向这个端口（检索在连上知识库之前不会调用它们）。
+
+    输出：tool 不抛错，类别沿用读取层的 connection_failed、不要重试；文本里没有连接串、密码、主机端口，也没有查询原文。
+    """
+    from querypilot.querying.api import build_retrieval_tool
+
+    for service in ("EMBEDDING", "RERANK"):
+        monkeypatch.setenv(f"QUERYPILOT_{service}_BASE_URL", "http://127.0.0.1:9/v1")
+        monkeypatch.setenv(f"QUERYPILOT_{service}_MODEL", "not-a-real-model")
+        monkeypatch.setenv(f"QUERYPILOT_{service}_API_KEY", "not-a-real-key")
+    dsn = "postgresql://querypilot_kb_reader:s3cret-pass@127.0.0.1:9/querypilot_knowledge"
+    monkeypatch.setenv("QUERYPILOT_KNOWLEDGE_READ_DSN", dsn)
+    monkeypatch.setenv("QUERYPILOT_KNOWLEDGE_CONNECT_TIMEOUT_S", "1")
+
+    message = _call_tool(build_retrieval_tool(), _serving(tmp_path), {"query": "order totals"})
+
+    assert "类别: connection_failed" in message.content
+    assert "不要重试" in message.content
+    for secret in (dsn, "s3cret-pass", "querypilot_kb_reader", "127.0.0.1", "order totals"):
+        assert secret not in message.content
