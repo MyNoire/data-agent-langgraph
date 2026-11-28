@@ -42,8 +42,15 @@ def build_retrieval_tool(
         table_chunk_reader: 按 Scope 读出被命中各表的表 Chunk；测试可注入假实现。
     返回:
         LangChain tool。成功时返回命中的表名（按名次）、"候选不保证足以回答"的固定说明和 columns 写法的
-        Retrieval Context，后者与 retrieval 来源逐字相同。预期内的失败（当前库没有在用语料、检索层报的
-        KnowledgeRetrievalError、没有候选）返回三行文本：类别、原因、能否改写查询后重试；其余异常照常抛出。
+        Retrieval Context，后者与 retrieval 来源逐字相同。不设分数阈值。
+
+        预期内的失败返回三行文本：类别、原因、能否改写查询后重试（input_error、no_match 可以，其余不要重试）：
+        当前库没有在用语料（scope_not_configured，不检索）；检索或读表 Chunk 时检索层报的 KnowledgeRetrievalError
+        （沿用类别，含查询不合格的 input_error）；没有候选（no_match）；命中的表缺表 Chunk（knowledge_state_error）。
+        失败时只检索一次，不换检索方法或知识来源。
+
+        其余异常照常抛给调用方。tool 内部意外的 ValidationError 换成 RuntimeError 抛出（原错误在异常链里），
+        否则 ToolNode 会把它当成模型传参错误回给模型。
     """
 
     @tool(parse_docstring=True)
@@ -69,15 +76,16 @@ def build_retrieval_tool(
             scope = runtime.context.knowledge_scopes.get(database_id)
             if scope is None:
                 return _failure("scope_not_configured", "当前数据库没有配置在用的知识语料")
+            # 检索和读表 Chunk 都可能报检索层已归类的失败，都转成失败文本。
             try:
                 result = retriever(build_retrieval_request(query=query, scope=scope, method="hybrid", rerank=True,
                                                            top_k=RETRIEVAL_TOP_K))
+                if result.outcome == "no_match":
+                    return _failure("no_match", "检索没有命中任何知识")
+                tables = list(dict.fromkeys(hit_table(hit) for hit in result.hits))
+                table_chunks = table_chunk_reader(scope, tables)
             except KnowledgeRetrievalError as exc:
                 return _failure(exc.error_type, str(exc))
-            if result.outcome == "no_match":
-                return _failure("no_match", "检索没有命中任何知识")
-            tables = list(dict.fromkeys(hit_table(hit) for hit in result.hits))
-            table_chunks = table_chunk_reader(scope, tables)
             for table in tables:
                 if table not in table_chunks:
                     return _failure("knowledge_state_error", "命中的表缺少表级知识，知识库状态不一致")

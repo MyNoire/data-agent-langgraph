@@ -203,28 +203,37 @@ def test_a_query_with_no_searchable_words_tells_the_model_to_rewrite_it(tmp_path
     assert reads == []
 
 
-def test_a_failed_embedding_call_keeps_its_category_and_tells_the_model_not_to_retry(tmp_path):
-    """输入：检索层报 embedding_error（Embedding 服务失败，检索层已归类，消息是固定的安全文本）。
+@pytest.mark.parametrize("error_type,reason", [
+    ("embedding_error", "Embedding 服务调用失败或返回结果不符合预期"),
+    ("rerank_error", "Reranker 服务调用失败或返回结果不符合预期"),
+], ids=["embedding", "rerank"])
+def test_a_failed_service_call_keeps_its_category_and_tells_the_model_not_to_retry(tmp_path, error_type, reason):
+    """输入：检索层报 embedding_error 或 rerank_error（外部服务失败，检索层已归类，消息是固定的安全文本）。
 
-    输出：tool 不抛错，返回给模型的文本里类别沿用 embedding_error、原因是检索层的消息，
-    并明说"不要重试"，不说"可以改写查询后重试"；文本不含查询原文；没有读取表 Chunk。
+    输出：tool 不抛错，返回给模型的文本里类别沿用检索层的、原因是检索层的消息，
+    并明说"不要重试"，不说"可以改写查询后重试"；文本不含查询原文；
+    只检索一次，仍是 hybrid + 重排（不退回其他方法，也不自己重试）；没有读取表 Chunk。
     """
     from querypilot.querying.api import build_retrieval_tool
     from querypilot.retrieval.api import KnowledgeRetrievalError
 
+    requests = []
+
     def failing_retriever(request):
-        raise KnowledgeRetrievalError("embedding_error", "Embedding 服务调用失败或返回结果不符合预期")
+        requests.append(request)
+        raise KnowledgeRetrievalError(error_type, reason)
 
     reads = []
     tool = build_retrieval_tool(retriever=failing_retriever, table_chunk_reader=_recording_table_reader(reads, {}))
 
     message = _call_tool(tool, _serving(tmp_path), {"query": "order totals"})
 
-    assert "类别: embedding_error" in message.content
-    assert "原因: Embedding 服务调用失败或返回结果不符合预期" in message.content
+    assert f"类别: {error_type}" in message.content
+    assert f"原因: {reason}" in message.content
     assert "不要重试" in message.content
     assert "可以改写查询后重试" not in message.content
     assert "order totals" not in message.content
+    assert [(request.method, request.rerank) for request in requests] == [("hybrid", True)]
     assert reads == []
 
 
@@ -393,3 +402,30 @@ def test_an_unreachable_knowledge_base_is_reported_without_the_connection_string
     assert "不要重试" in message.content
     for secret in (dsn, "s3cret-pass", "querypilot_kb_reader", "127.0.0.1", "order totals"):
         assert secret not in message.content
+
+
+def test_a_failure_while_reading_table_chunks_keeps_its_category_and_tells_the_model_not_to_retry(tmp_path):
+    """输入：检索命中 orders；按 Scope 读表 Chunk 时读取层报 connection_failed（消息是固定的安全文本）。
+
+    输出：tool 不抛错，类别沿用 connection_failed、原因是读取层的消息、不要重试；没有"命中的表"表头；
+    只检索一次、只读一次（不换来源，也不自己重试）。
+    """
+    from querypilot.querying.api import build_retrieval_tool
+    from querypilot.retrieval.api import KnowledgeRetrievalError
+
+    requests, reads = [], []
+
+    def failing_reader(scope, tables):
+        reads.append((scope, tables))
+        raise KnowledgeRetrievalError("connection_failed", "无法连接知识库")
+
+    tool = build_retrieval_tool(retriever=_recording_retriever(requests, ORDERS_HITS), table_chunk_reader=failing_reader)
+
+    message = _call_tool(tool, _serving(tmp_path), {"query": "order totals"})
+
+    assert "类别: connection_failed" in message.content
+    assert "原因: 无法连接知识库" in message.content
+    assert "不要重试" in message.content
+    assert "命中的表: " not in message.content
+    assert len(requests) == 1
+    assert reads == [(SHOP_SCOPE, ["orders"])]

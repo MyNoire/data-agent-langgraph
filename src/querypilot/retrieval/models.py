@@ -31,6 +31,8 @@ KnowledgeType = Literal["table", "column", "relationship"]
 # hybrid：BM25 与向量两路用 RRF 融合。
 RetrievalMethod = Literal["lexical", "vector", "hybrid"]
 TopK = Annotated[int, Field(strict=True, ge=1, le=50)]
+# 查询原文的最大字符数。
+MAX_QUERY_CHARS = 2000
 
 
 class KnowledgeRetrievalError(ValueError):
@@ -64,7 +66,7 @@ class RetrievalRequest(RetrievalModel):
     rerank 与 method 互相独立：开启后先按 method 取候选，再交给 Reranker 重新排序。
     """
 
-    query: Annotated[str, Field(min_length=1, max_length=2000)]
+    query: Annotated[str, Field(min_length=1, max_length=MAX_QUERY_CHARS)]
     scope: KnowledgeScope
     method: RetrievalMethod = "lexical"
     rerank: bool = False
@@ -99,7 +101,7 @@ class RetrievalRequest(RetrievalModel):
 
 
 def build_retrieval_request(**fields) -> RetrievalRequest:
-    """构造检索请求；只有查询本身不合格（空白、超过 2000 字、含 NUL 或无法编码）时报 input_error。
+    """构造检索请求；只有查询本身不合格（空白、超过 MAX_QUERY_CHARS 个字符、含 NUL 或无法编码）时报 input_error。
 
     给把外部查询直接交给检索的调用方用（如检索 tool）：查询不合格是可以改写的输入问题，
     其余字段出错是调用方的编程错误，原样抛出 ValidationError。直接构造 RetrievalRequest 的校验不变。
@@ -112,7 +114,7 @@ def build_retrieval_request(**fields) -> RetrievalRequest:
         return RetrievalRequest(**fields)
     except ValidationError as exc:
         if all(error["loc"][:1] == ("query",) for error in exc.errors()):
-            raise KnowledgeRetrievalError("input_error", "查询为空、超过 2000 字或含有无法处理的字符") from exc
+            raise KnowledgeRetrievalError("input_error", f"查询为空、超过 {MAX_QUERY_CHARS} 字或含有无法处理的字符") from exc
         raise
 
 
