@@ -6,8 +6,8 @@ from langchain_core.tools import BaseTool, tool
 from langgraph.prebuilt import ToolRuntime
 
 from querypilot.retrieval.api import (
-    KnowledgeRetrievalError, KnowledgeScope, RetrievalRequest, RetrievalResult, hit_table, load_table_chunks,
-    retrieve_knowledge,
+    KnowledgeRetrievalError, KnowledgeScope, RetrievalRequest, RetrievalResult, build_retrieval_request, hit_table,
+    load_table_chunks, retrieve_knowledge,
 )
 
 from ._context import assemble_context
@@ -68,8 +68,8 @@ def build_retrieval_tool(
         if scope is None:
             return _failure("scope_not_configured", "当前数据库没有配置在用的知识语料")
         try:
-            result = retriever(RetrievalRequest(query=query, scope=scope, method="hybrid", rerank=True,
-                                                top_k=RETRIEVAL_TOP_K))
+            result = retriever(build_retrieval_request(query=query, scope=scope, method="hybrid", rerank=True,
+                                                       top_k=RETRIEVAL_TOP_K))
         except KnowledgeRetrievalError as exc:
             return _failure(exc.error_type, str(exc))
         if result.outcome == "no_match":

@@ -3,7 +3,9 @@
 import json
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
+from pydantic import (
+    BaseModel, ConfigDict, Field, ValidationError, computed_field, field_validator, model_validator,
+)
 
 from querypilot.knowledge.api import Hash, KnowledgeScope, ObjectID
 
@@ -94,6 +96,24 @@ class RetrievalRequest(RetrievalModel):
         if self.rerank and self.top_k > _rerank.RERANK_CANDIDATES:
             raise ValueError(f"开启重排时 top_k 不能超过 {_rerank.RERANK_CANDIDATES}")
         return self
+
+
+def build_retrieval_request(**fields) -> RetrievalRequest:
+    """构造检索请求；只有查询本身不合格（空白、超过 2000 字、含 NUL 或无法编码）时报 input_error。
+
+    给把外部查询直接交给检索的调用方用（如检索 tool）：查询不合格是可以改写的输入问题，
+    其余字段出错是调用方的编程错误，原样抛出 ValidationError。直接构造 RetrievalRequest 的校验不变。
+
+    异常：
+        KnowledgeRetrievalError(input_error)：消息是固定文本，不含查询原文；ValidationError 留在异常链里。
+        ValidationError：除查询外还有字段不合格。
+    """
+    try:
+        return RetrievalRequest(**fields)
+    except ValidationError as exc:
+        if all(error["loc"][:1] == ("query",) for error in exc.errors()):
+            raise KnowledgeRetrievalError("input_error", "查询为空、超过 2000 字或含有无法处理的字符") from exc
+        raise
 
 
 class RetrievalHit(RetrievalModel):

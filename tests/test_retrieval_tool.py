@@ -8,6 +8,7 @@ import re
 from typing import Annotated, TypedDict
 
 import langsmith
+import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from langgraph.graph import END, START, StateGraph
@@ -269,4 +270,26 @@ def test_a_database_without_an_active_corpus_is_reported_without_retrieving(tmp_
     assert "不要重试" in message.content
     assert "可以改写查询后重试" not in message.content
     assert requests == []
+    assert reads == []
+
+
+@pytest.mark.parametrize("query", ["", "   ", "x" * 2001], ids=["empty", "blank", "over-2000-chars"])
+def test_an_empty_or_overlong_query_tells_the_model_to_rewrite_it(tmp_path, query):
+    """输入：模型给的查询为空、只有空白，或超过 2000 字。用真实的检索函数，它在连接知识库、调用 Embedding 之前就报错。
+
+    输出：tool 不抛错，也不是框架的传参错误：返回给模型的文本里有类别 input_error、一句原因，以及
+    "可以改写查询后重试"；文本不含查询原文；没有读取表 Chunk。
+    """
+    from querypilot.querying.api import build_retrieval_tool
+
+    reads = []
+    tool = build_retrieval_tool(table_chunk_reader=_recording_table_reader(reads, {}))
+
+    message = _call_tool(tool, _serving(tmp_path), {"query": query})
+
+    assert "类别: input_error" in message.content
+    assert re.search(r"原因: \S", message.content)
+    assert "可以改写查询后重试" in message.content
+    if query.strip():
+        assert query not in message.content
     assert reads == []

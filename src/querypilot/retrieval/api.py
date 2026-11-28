@@ -20,6 +20,7 @@ from .models import (
     RetrievalRequest,
     RetrievalResult,
     ScopeFile,
+    build_retrieval_request,
     hit_table,
 )
 
@@ -183,6 +184,7 @@ __all__ = [
     "load_scope_chunks",
     "load_table_chunks",
     "RetrievalRequest",
+    "build_retrieval_request",
     "RetrievalMethod",
     "RetrievalResult",
     "RetrievalHit",
