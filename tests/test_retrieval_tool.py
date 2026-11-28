@@ -245,7 +245,7 @@ def test_no_candidates_tells_the_model_to_rewrite_the_query(tmp_path):
     assert "类别: no_match" in message.content
     assert re.search(r"原因: \S", message.content)
     assert "可以改写查询后重试" in message.content
-    assert "命中的表" not in message.content
+    assert "命中的表: " not in message.content
     assert "mars weather" not in message.content
     assert len(requests) == 1
     assert reads == []
@@ -293,3 +293,30 @@ def test_an_empty_or_overlong_query_tells_the_model_to_rewrite_it(tmp_path, quer
     if query.strip():
         assert query not in message.content
     assert reads == []
+
+
+def test_a_hit_table_without_its_table_chunk_is_reported_as_a_knowledge_state_error(tmp_path):
+    """输入：检索命中 orders 的一列和一条关系，但按 Scope 读表 Chunk 时读不到 orders（读取层按契约略过不存在的表）。
+
+    输出：tool 不抛错，返回给模型的文本里有类别 knowledge_state_error、一句原因和"不要重试"，
+    没有"命中的表"表头，也没有只剩列和关系、缺了表级说明的 Context。
+    """
+    from querypilot.querying.api import build_retrieval_tool
+
+    reads = []
+
+    def reader_without_orders(scope, tables):
+        """与 load_table_chunks 的契约一致：Scope 里没有的表不出现在结果里，不报错。"""
+        reads.append((scope, tables))
+        return {}
+
+    tool = build_retrieval_tool(retriever=_recording_retriever([], ORDERS_HITS), table_chunk_reader=reader_without_orders)
+
+    message = _call_tool(tool, _serving(tmp_path), {"query": "order totals"})
+
+    assert reads == [(SHOP_SCOPE, ["orders"])]
+    assert "类别: knowledge_state_error" in message.content
+    assert re.search(r"原因: \S", message.content)
+    assert "不要重试" in message.content
+    assert "命中的表: " not in message.content
+    assert '列 "total"' not in message.content
