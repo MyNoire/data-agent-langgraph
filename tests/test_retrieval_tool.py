@@ -4,6 +4,7 @@ ToolNode 在这里只充当调用方：tool 没有接进查询图。
 """
 
 import json
+import re
 from typing import Annotated, TypedDict
 
 import langsmith
@@ -179,3 +180,93 @@ def test_the_tool_is_not_traced_even_when_the_environment_turns_tracing_on(tmp_p
     finally:
         langsmith.configure(enabled=False)
         get_env_var.cache_clear()
+
+
+def test_a_query_with_no_searchable_words_tells_the_model_to_rewrite_it(tmp_path):
+    """输入：模型给的查询只有标点，没有可检索的词。用真实的检索函数，它在连接知识库、调用 Embedding 之前就报错。
+
+    输出：tool 不抛错，返回给模型的文本里有类别 input_error、一句原因，以及"可以改写查询后重试"；
+    文本不含查询原文；没有读取表 Chunk。
+    """
+    from querypilot.querying.api import build_retrieval_tool
+
+    reads = []
+    tool = build_retrieval_tool(table_chunk_reader=_recording_table_reader(reads, {}))
+
+    message = _call_tool(tool, _serving(tmp_path), {"query": "¿¡？！"})
+
+    assert "类别: input_error" in message.content
+    assert re.search(r"原因: \S", message.content)
+    assert "可以改写查询后重试" in message.content
+    assert "¿¡？！" not in message.content
+    assert reads == []
+
+
+def test_a_failed_embedding_call_keeps_its_category_and_tells_the_model_not_to_retry(tmp_path):
+    """输入：检索层报 embedding_error（Embedding 服务失败，检索层已归类，消息是固定的安全文本）。
+
+    输出：tool 不抛错，返回给模型的文本里类别沿用 embedding_error、原因是检索层的消息，
+    并明说"不要重试"，不说"可以改写查询后重试"；文本不含查询原文；没有读取表 Chunk。
+    """
+    from querypilot.querying.api import build_retrieval_tool
+    from querypilot.retrieval.api import KnowledgeRetrievalError
+
+    def failing_retriever(request):
+        raise KnowledgeRetrievalError("embedding_error", "Embedding 服务调用失败或返回结果不符合预期")
+
+    reads = []
+    tool = build_retrieval_tool(retriever=failing_retriever, table_chunk_reader=_recording_table_reader(reads, {}))
+
+    message = _call_tool(tool, _serving(tmp_path), {"query": "order totals"})
+
+    assert "类别: embedding_error" in message.content
+    assert "原因: Embedding 服务调用失败或返回结果不符合预期" in message.content
+    assert "不要重试" in message.content
+    assert "可以改写查询后重试" not in message.content
+    assert "order totals" not in message.content
+    assert reads == []
+
+
+def test_no_candidates_tells_the_model_to_rewrite_the_query(tmp_path):
+    """输入：检索正常返回，但没有任何候选（outcome 为 no_match，hits 为空）；检索层不抛错。
+
+    输出：返回给模型的文本里有类别 no_match、一句原因和"可以改写查询后重试"，没有"命中的表"表头；
+    文本不含查询原文；只检索一次（不换方法再查，也不自己重试）；没有读取表 Chunk。
+    """
+    from querypilot.querying.api import build_retrieval_tool
+
+    requests, reads = [], []
+    tool = build_retrieval_tool(retriever=_recording_retriever(requests, []),
+                                table_chunk_reader=_recording_table_reader(reads, {}))
+
+    message = _call_tool(tool, _serving(tmp_path), {"query": "mars weather"})
+
+    assert "类别: no_match" in message.content
+    assert re.search(r"原因: \S", message.content)
+    assert "可以改写查询后重试" in message.content
+    assert "命中的表" not in message.content
+    assert "mars weather" not in message.content
+    assert len(requests) == 1
+    assert reads == []
+
+
+def test_a_database_without_an_active_corpus_is_reported_without_retrieving(tmp_path):
+    """输入：运行状态里的库是 california_schools，Active Corpus 配置里只有 club 和 shop。
+
+    输出：tool 不抛错，返回给模型的文本里有类别 scope_not_configured、一句原因和"不要重试"，
+    不说"可以改写查询后重试"；没有检索（也就没有改用 club 或 shop 的知识），没有读取表 Chunk。
+    """
+    from querypilot.querying.api import build_retrieval_tool
+
+    requests, reads = [], []
+    tool = build_retrieval_tool(retriever=_recording_retriever(requests, ORDERS_HITS),
+                                table_chunk_reader=_recording_table_reader(reads, {"orders": ORDERS_TABLE}))
+
+    message = _call_tool(tool, _serving(tmp_path), {"query": "order totals"}, database_id="california_schools")
+
+    assert "类别: scope_not_configured" in message.content
+    assert re.search(r"原因: \S", message.content)
+    assert "不要重试" in message.content
+    assert "可以改写查询后重试" not in message.content
+    assert requests == []
+    assert reads == []

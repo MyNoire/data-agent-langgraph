@@ -6,13 +6,23 @@ from langchain_core.tools import BaseTool, tool
 from langgraph.prebuilt import ToolRuntime
 
 from querypilot.retrieval.api import (
-    KnowledgeScope, RetrievalRequest, RetrievalResult, hit_table, load_table_chunks, retrieve_knowledge,
+    KnowledgeRetrievalError, KnowledgeScope, RetrievalRequest, RetrievalResult, hit_table, load_table_chunks,
+    retrieve_knowledge,
 )
 
 from ._context import assemble_context
 from ._render import render_context
 from ._single_graph import RETRIEVAL_TOP_K
 from .models import QueryContext
+
+# 模型改写查询后可能有用的失败类别；其余类别与查询写法无关，换词再查也是同样的结果。
+_RETRYABLE = ("input_error", "no_match")
+
+
+def _failure(error_type: str, reason: str) -> str:
+    """把一次预期内的失败写成给模型看的三行：类别、原因、能否改写查询后重试。"""
+    advice = "可以改写查询后重试" if error_type in _RETRYABLE else "不要重试"
+    return f"类别: {error_type}\n原因: {reason}\n{advice}"
 
 
 def build_retrieval_tool(
@@ -31,8 +41,8 @@ def build_retrieval_tool(
         table_chunk_reader: 按 Scope 读出被命中各表的表 Chunk；测试可注入假实现。
     返回:
         LangChain tool。成功时返回命中的表名（按名次）、"候选不保证足以回答"的固定说明和 columns 写法的
-        Retrieval Context，后者与 retrieval 来源逐字相同。失败还没有分类：当前库不在对照表里时抛 KeyError，
-        检索失败时 KnowledgeRetrievalError 原样抛出。
+        Retrieval Context，后者与 retrieval 来源逐字相同。预期内的失败（当前库没有在用语料、检索层报的
+        KnowledgeRetrievalError、没有候选）返回三行文本：类别、原因、能否改写查询后重试；其余异常照常抛出。
     """
 
     @tool(parse_docstring=True)
@@ -53,9 +63,17 @@ def build_retrieval_tool(
                 for another part of the question or for a column that has no explanation yet.
         """
         database_id = runtime.state["database_id"]
-        scope = runtime.context.knowledge_scopes[database_id]
-        result = retriever(RetrievalRequest(query=query, scope=scope, method="hybrid", rerank=True,
-                                            top_k=RETRIEVAL_TOP_K))
+        # 只把"这个库没有在用语料"转成失败；运行状态里缺 database_id 是调用方的编程错误，照常抛出。
+        scope = runtime.context.knowledge_scopes.get(database_id)
+        if scope is None:
+            return _failure("scope_not_configured", "当前数据库没有配置在用的知识语料")
+        try:
+            result = retriever(RetrievalRequest(query=query, scope=scope, method="hybrid", rerank=True,
+                                                top_k=RETRIEVAL_TOP_K))
+        except KnowledgeRetrievalError as exc:
+            return _failure(exc.error_type, str(exc))
+        if result.outcome == "no_match":
+            return _failure("no_match", "检索没有命中任何知识")
         tables = list(dict.fromkeys(hit_table(hit) for hit in result.hits))
         table_contexts = assemble_context(result.hits, table_chunk_reader(scope, tables))
         return ("命中的表: " + ", ".join(f'"{table_context.table}"' for table_context in table_contexts)
