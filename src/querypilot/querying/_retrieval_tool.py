@@ -4,6 +4,7 @@ from collections.abc import Callable
 
 from langchain_core.tools import BaseTool, tool
 from langgraph.prebuilt import ToolRuntime
+from pydantic import ValidationError
 
 from querypilot.retrieval.api import (
     KnowledgeRetrievalError, KnowledgeScope, RetrievalRequest, RetrievalResult, build_retrieval_request, hit_table,
@@ -62,25 +63,28 @@ def build_retrieval_tool(
                 names, e.g. "order amount per customer". One topic per call; call again with other words
                 for another part of the question or for a column that has no explanation yet.
         """
-        database_id = runtime.state["database_id"]
-        # 只把"这个库没有在用语料"转成失败；运行状态里缺 database_id 是调用方的编程错误，照常抛出。
-        scope = runtime.context.knowledge_scopes.get(database_id)
-        if scope is None:
-            return _failure("scope_not_configured", "当前数据库没有配置在用的知识语料")
         try:
-            result = retriever(build_retrieval_request(query=query, scope=scope, method="hybrid", rerank=True,
-                                                       top_k=RETRIEVAL_TOP_K))
-        except KnowledgeRetrievalError as exc:
-            return _failure(exc.error_type, str(exc))
-        if result.outcome == "no_match":
-            return _failure("no_match", "检索没有命中任何知识")
-        tables = list(dict.fromkeys(hit_table(hit) for hit in result.hits))
-        table_chunks = table_chunk_reader(scope, tables)
-        for table in tables:
-            if table not in table_chunks:
-                return _failure("knowledge_state_error", "命中的表缺少表级知识，知识库状态不一致")
-        table_contexts = assemble_context(result.hits, table_chunks)
-        return ("命中的表: " + ", ".join(f'"{table_context.table}"' for table_context in table_contexts)
-                + "\n以下是与查询最相关的候选知识，不保证足以回答问题。\n\n"
-                + render_context(table_contexts, structure_format="columns"))
+            database_id = runtime.state["database_id"]
+            # 只把"这个库没有在用语料"转成失败；运行状态里缺 database_id 是调用方的编程错误，照常抛出。
+            scope = runtime.context.knowledge_scopes.get(database_id)
+            if scope is None:
+                return _failure("scope_not_configured", "当前数据库没有配置在用的知识语料")
+            try:
+                result = retriever(build_retrieval_request(query=query, scope=scope, method="hybrid", rerank=True,
+                                                           top_k=RETRIEVAL_TOP_K))
+            except KnowledgeRetrievalError as exc:
+                return _failure(exc.error_type, str(exc))
+            if result.outcome == "no_match":
+                return _failure("no_match", "检索没有命中任何知识")
+            tables = list(dict.fromkeys(hit_table(hit) for hit in result.hits))
+            table_chunks = table_chunk_reader(scope, tables)
+            for table in tables:
+                if table not in table_chunks:
+                    return _failure("knowledge_state_error", "命中的表缺少表级知识，知识库状态不一致")
+            table_contexts = assemble_context(result.hits, table_chunks)
+            return ("命中的表: " + ", ".join(f'"{table_context.table}"' for table_context in table_contexts)
+                    + "\n以下是与查询最相关的候选知识，不保证足以回答问题。\n\n"
+                    + render_context(table_contexts, structure_format="columns"))
+        except ValidationError as exc:
+            raise RuntimeError("检索 tool 内部出错") from exc
     return search_knowledge

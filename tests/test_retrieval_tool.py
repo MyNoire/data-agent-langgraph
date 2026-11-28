@@ -320,3 +320,52 @@ def test_a_hit_table_without_its_table_chunk_is_reported_as_a_knowledge_state_er
     assert "不要重试" in message.content
     assert "命中的表: " not in message.content
     assert '列 "total"' not in message.content
+
+
+@pytest.mark.parametrize("args", [{}, {"query": 123}], ids=["missing-query", "query-not-a-string"])
+def test_malformed_arguments_get_the_framework_error_and_the_tool_does_not_run(tmp_path, args):
+    """输入：模型没给 query，或 query 不是字符串。
+
+    输出：由框架按传参错误回给模型（status 为 error），不是 tool 的失败文本；没有检索，也没有读取表 Chunk。
+    不断言框架提示的措辞。
+    """
+    from querypilot.querying.api import build_retrieval_tool
+
+    requests, reads = [], []
+    tool = build_retrieval_tool(retriever=_recording_retriever(requests, ORDERS_HITS),
+                                table_chunk_reader=_recording_table_reader(reads, {"orders": ORDERS_TABLE}))
+
+    message = _call_tool(tool, _serving(tmp_path), args)
+
+    assert message.status == "error"
+    assert "类别: " not in message.content
+    assert requests == []
+    assert reads == []
+
+
+def test_an_unexpected_validation_error_inside_the_tool_reaches_the_caller(tmp_path):
+    """输入：检索函数内部意外抛出 pydantic 的 ValidationError（例如返回的结果对象不合格），这是程序错误。
+
+    输出：异常抛到调用方，ToolNode 不把它当成模型传参错误、改成消息回给模型；原来的 ValidationError
+    在异常链里（抛出的可以是它本身，也可以是由它引起的其他异常）；也没有读取表 Chunk。
+    """
+    from pydantic import ValidationError
+
+    from querypilot.querying.api import build_retrieval_tool
+    from querypilot.retrieval.api import RetrievalResult
+
+    def broken_retriever(request):
+        return RetrievalResult.model_validate({"outcome": "matched"})
+
+    reads = []
+    tool = build_retrieval_tool(retriever=broken_retriever, table_chunk_reader=_recording_table_reader(reads, {}))
+
+    with pytest.raises(Exception) as caught:
+        _call_tool(tool, _serving(tmp_path), {"query": "order totals"})
+
+    chain, error = [], caught.value
+    while error is not None:
+        chain.append(error)
+        error = error.__cause__
+    assert any(isinstance(error, ValidationError) for error in chain)   # 原来的错误留在异常链里，便于排查
+    assert reads == []
