@@ -182,7 +182,7 @@ BM25 的分数用到整个索引的统计量（文档数、词出现在多少文
 
 72 道非冻结题逐题看（±1–2 题当作噪声）：
 
-- **lexical 在 student_club 上明显变好**：Table Complete Recall@5 非冻结 48 → 54（救回 1322、1323、1331、1340、1356、1389、1427，丢了 1317），@10 61 → 66（救回 1322、1323、1331、1356、1359，没有丢的）。toxicology 两个 K 都没变。救回的题里问题的词正好出现在取值里：「Vice President」「President」在 `member.position`，「meetings」对应 `event.type` 的 `'Meeting'`，「MU 215」「guest speaker」在 event 的取值里，「Advertisement」在 `budget.category`。member、event 表原来排在第 9–17 名或不在 20 个 Hit 里，现在排第 1–6 名。第 4 节记下的"问题里的词是表里的取值"这类失败，职位、类型、地点这些有了取值就能找到；人名在隐私名单上，不进知识库，仍然找不到。
+- **lexical 在 student_club 上明显变好**：Table Complete Recall@5 非冻结 48 → 54（救回 1322、1323、1331、1340、1356、1389、1427，丢了 1317），@10 61 → 66（救回 1322、1323、1331、1356、1359，没有丢的）。toxicology 两个 K 都没变。救回的题里问题的词正好出现在取值里：「Vice President」「President」在 `member.position`，「meetings」对应 `event.type` 的 `'Meeting'`，「MU 215」「guest speaker」在 event 的取值里，「Advertisement」在 `budget.category`。member、event 表原来排在第 9–17 名或不在 20 个 Hit 里，现在排第 1–6 名。第 4 节记下的"问题里的词是表里的取值"这类失败，职位、类型、地点这些有了取值就能找到；人名列在隐私名单上，不取值，所以按人名仍然找不到（例外：BIRD 对 `member.last_name` 的原始说明用一个表里真实存在的姓名举例，这个姓名随说明进了两版 Corpus，等下次重建时修正）。
 - **hybrid + 重排的变化在噪声内**：@5 非冻结 49 → 50（救回 281、1331、1404，丢了 198、201），@10 67 → 68（救回 1338）。Column Recall@10 有 8 题升、8 题降，平均几乎不变。向量和重排原本就能从语义上找到这些表，取值多带来的帮助有限；它的变化里还混着查询向量和重排分数的抖动，分不开。
 - **lexical 的变化不是 BM25 统计量带来的**：导入新 Corpus 后索引里有 4 份 Corpus（168 个 Chunk），统计量变了。为了分开，在当前索引上用旧题集（旧 Corpus）再跑了一次 lexical（不收费）：和干净索引相比有 17 道题的命中名次不同，但所有指标都没变（Table Complete Recall@5 / @10 仍是 57 / 74 题）。所以上表 lexical 的提升来自正文的变化。hybrid + 重排没有做这个对照（要付费），它的变化本来也在噪声内。
 - 取值上限、样例个数和检索配置都没有因为这些结果调整。
